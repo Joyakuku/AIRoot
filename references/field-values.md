@@ -74,7 +74,7 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `items[].kind` | `managed_tool` / `runtime`† | 待回收对象的种类。判据是"AIROOT 装的 + 已退役 + 无人引用"三者同时成立；`runtime` 这一版不会出现 | `caps/lifecycle.py`, `tx/artifact.py`, `tx/simulate.py` |
+| `items[].kind` | `managed_tool`† / `runtime`† | 待回收对象的种类。判据是"AIROOT 装的 + 已退役 + 无人引用"三者同时成立。**这一版连这份文档本身都没有写者**：`gc-plan` 是一份**批量**回收计划，而本版的 `build_gc_plan` 出的是 `plan.schema.json`（一次一份 payload，`operation=gc_apply`）；`tool gc --plan` 打印的那份 `operation=gc_plan` 是**报告信封**，不是这份 schema。这一栏原来写的三个模块写的是 `plan` 的 `target.kind`——**同样两个词、不同字段**，于是那是一次**同名词假覆盖**：（§74/§77 记的正是这条盲点，§92 把它修掉） | （没有写者） |
 
 ## `registry-projection.schema.json`
 
@@ -223,7 +223,7 @@
 | `explain` | `search explain`：会用索引还是实时遍历 | `cli.py` |
 | `refresh` | `search refresh`：重建索引 | `cli.py` |
 | `pin` | `tool pin`：记下一个愿望 | `cli.py` |
-| `gc_plan` | `tool gc --plan`：回收预演 | `cli.py` |
+| `gc_plan` | `tool gc --plan`：回收预演。**这个名字和已发布的 `gc-plan.schema.json` 只差一个连字符，指的却不是它**——那份 schema 描述的是一份**批量**回收计划（`items`/`blocked_items`/`requires_approval`），而这条是报告信封；本版真正的回收计划是 `plan.schema.json`（`operation=gc_apply`，一次一份 payload）。两者同名不同物，交叉记录在 `docs/schema/README.md`，守卫第三十四组两个方向都查 | `cli.py` |
 | `rebuild_plan` | `rebuild --plan`：重建预演 | `cli.py` |
 | `rebuild` | `rebuild`：真的重写派生投影 | `caps/rebuild.py` |
 | `plan_dry_run` | `plan --dry-run`：只出计划不落盘 | `cli.py` |

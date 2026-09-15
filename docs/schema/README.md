@@ -39,12 +39,24 @@ is printed (AGENTS.md §7), so the names passed to it *are* the printed set — 
 fixture**, and guard group 32 holds those two sets to exact equality in both directions (a printed
 document with no fixture has no acceptance face; a fixture for a document nothing prints is a wish).
 
-The other ten are not printed by this build: six are never named by any code at all
-(`broker-request`, `broker-response`, `common`, `desired-manifest`, `gc-plan`, `runtime-instance`) and
-four are named but not self-validated (`approval-token`, `extension-manifest`, `root-marker`,
-`search-request` — these are validated on the way *in*, or written to disk rather than printed). That
-is a fact about this slice, not a defect list: the schema set is the contract, and printing is one
-way to exercise it.
+The other ten are not printed by this build. Five of them are **used elsewhere**: four are validated on
+the way *in*, or written to disk rather than printed (`approval-token`, `extension-manifest`,
+`root-marker`, `search-request`), and `common` is the fragment the others `$ref`. That is a fact about
+this slice, not a defect list: the schema set is the contract, and printing is one way to exercise it.
+
+The remaining **five have no writer at all in this build** — nothing validates them and nothing `$ref`s
+them — and each says why, because "published ahead of implementation" and "describes a document that
+does not exist" look identical from the outside:
+
+- `broker-request.schema.json` — P2's protected local IPC; the design lives in `docs/broker/`
+- `broker-response.schema.json` — same boundary, same reason
+- `desired-manifest.schema.json` — the **manifest boundary**: provenance plus the memory policies that skip confirmation. It is **not** `state/desired.json`: that file carries the same field names but omits `source` and `policies.auto_approve`, and filling them would invent provenance and pre-empt the memory channel (ADR-0026)
+- `gc-plan.schema.json` — a **batch** collection plan (`items`/`blocked_items`/`requires_approval`). This slice's collection plan is a `plan` (one payload per plan, `operation=gc_apply`), and the `operation: "gc_plan"` document `tool gc --plan` prints is a report envelope, not this schema
+- `runtime-instance.schema.json` — runtime instances arrive with P5
+
+Guard group 34 derives "in use" from the validation call sites **and** the `$ref` graph, and holds this
+list to exact equality with the remainder — so a schema cannot silently join either side, and neither
+can a reason go missing.
 
 Compatibility rules:
 

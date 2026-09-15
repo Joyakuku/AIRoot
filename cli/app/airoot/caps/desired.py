@@ -3,10 +3,14 @@
 The five-layer model (desired / declared / physical / effective / historical) had exactly one
 layer with no code at all. This module is it, and the boundary is what makes it useful:
 
-* **desired is an input, not an authority.** It lives in ``state/desired.json`` following the
-  shape 规划 §17 prescribes (``schema_version``, ``manifest_id``, ``manifest_revision``,
-  ``platform``, ``architectures``, ``capabilities[]``). It never replaces the registry, and
-  nothing here writes declared state;
+* **desired is an input, not an authority.** It lives in ``state/desired.json``. **That file is not the
+  published ``desired-manifest`` document** (ADR-0026): it carries the same field names 规划 §17
+  prescribes (``schema_version``, ``manifest_id``, ``manifest_revision``, ``platform``,
+  ``architectures``, ``capabilities[]``) but deliberately omits the two the build cannot fill honestly —
+  ``source`` (provenance: writing an object here would invent it) and ``policies.auto_approve`` (the
+  memory channel, which stays read-only until P2). Measured: the file is **rejected** by
+  ``desired-manifest.schema.json``, and nothing validates it either way. It never replaces the registry,
+  and nothing here writes declared state;
 * **``pin`` expresses intent and produces a plan** (§15.4:1604). It must not change the active
   binding directly — that still happens only at the transaction's ``ACTIVE_BOUND`` point, after
   an approval. So pinning is: record the wish, then *offer* a plan that would satisfy it;
@@ -111,10 +115,18 @@ def load_desired(root: Path) -> DesiredManifest:
             evidence=[str(exc), "fix or delete it; a wrong manifest silently plans the wrong thing"],
         ) from exc
     if int(document.get("schema_version", 0)) != MANIFEST_SCHEMA_VERSION:
+        # §92: this message used to call the file a `desired-manifest`, which it is not (ADR-0026) —
+        # that schema requires `source` to be an object and `policies.auto_approve` to be present, and
+        # this build writes neither. Naming the file we actually read keeps the reader from looking up a
+        # contract that does not describe it.
         raise AirootError(
             "INVALID_INPUT",
-            f"unsupported desired-manifest schema_version: {document.get('schema_version')}",
-            evidence=[f"this build reads {MANIFEST_SCHEMA_VERSION}"],
+            f"unsupported {DESIRED_RELATIVE} schema_version: {document.get('schema_version')}",
+            evidence=[
+                f"this build reads {MANIFEST_SCHEMA_VERSION}",
+                f"{DESIRED_RELATIVE} is this build's own desired-layer state, not the published "
+                "desired-manifest document (ADR-0026)",
+            ],
         )
     text = json.dumps(document, ensure_ascii=False).lower()
     for fragment in FORBIDDEN_MANIFEST_FRAGMENTS:

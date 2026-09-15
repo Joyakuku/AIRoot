@@ -7619,3 +7619,128 @@ ticks = iter([0.0] + [10_000.0] * 64)
 5. 写守卫：分母双向、动作类行为、查询类行为；四个变异逐个验红，其中"搬家"那个**没有按预想的方式红**，如实记下来；
 6. 顺手修并发 flake，并如实写"绕开，未解释"；
 7. 回写计数（`AGENTS.md` 5 处：阶段范围 2 处、当前测试总数 3 处；审查报告 2 处）；跑全量 + 旧切片 + 真机验收；提交。
+## 92. 第 92 阶段：一份已发布的 schema、一份真实存在的文件、和一句"这就是它的形状"
+
+### 92.1 这一阶段要解决什么
+
+§90 把"核心打印的文档"定义成 `validate_self` 的调用点，那是对的。但它紧接着写了一句更宽的话：那六个 schema"**在任何代码里连名字都没出现**"。这句话是**从更窄的测量里得出的更宽的断言**——它只扫了 `validate_self` 的调用点。**同一个错误 §85 刚在仓库地图的文件行数上犯过**（把一个抄来的数当成推出来的数）。
+
+所以这一轮换一个轴，问一个更粗的问题：
+
+> **19 个已发布的 schema 里，哪几个真的有人用？没人用的那几个，读者能不能查到一个"为什么"？**
+
+### 92.2 实测：14 个在用，5 个没有写者
+
+推导规则（不是清单）：一个 schema 算"在用"，当且仅当**代码把它的名字传给 `validate_self`/`validate_document`**（字面量），**或者别的 schema `$ref` 它**。19 个的结果：
+
+| 侧 | 数量 | 内容 |
+|---|---|---|
+| 代码在校验 | 13 | `plan`(8 处)、`transaction`(3)、`approval-token`(2)、`root-marker`(2)、`managed-tool-instance`(2)、`reference-plan`(2)、`where-response`、`doctor-response`、`registry-projection`、`search-request`、`search-response`、`extension-envelope`、`extension-manifest` |
+| 只被 `$ref` | 1 | `common`（**其余 18 个全都 `$ref` 它**，实测 0 例外） |
+| **没有写者** | **5** | `broker-request`、`broker-response`、`desired-manifest`、`gc-plan`、`runtime-instance` |
+
+**§90 那句"六个在任何代码里连名字都没出现"是错的**，两处：
+- `desired-manifest` 的名字出现在 `caps/desired.py` 的**报错消息**里（`unsupported desired-manifest schema_version: ...`）——代码**声称**它写的就是那份 manifest；
+- `common` 的名字当然"出现"——每个 schema 都用 `$ref` 指它。
+
+正确的说法是"**5 个没有写者**"，而且它现在是**推出来的**。
+
+**然后是这一轮真正的发现。** 拿这 5 个去对三份文档：
+
+| schema | `references/field-values.md` 说的写者 | 实情 |
+|---|---|---|
+| `broker-request` / `broker-response` | "没有任何代码写出或读入它" | ✅ 一致 |
+| `desired-manifest` | （没有写者），并写明 `source` 恒为 `null` | ⚠️ 与取值表一致，但**与它自己的 schema 冲突**（见 92.4） |
+| `runtime-instance` | （没有写者） | ✅ 一致 |
+| **`gc-plan`** | **`caps/lifecycle.py`, `tx/artifact.py`, `tx/simulate.py`** | ❌ **没有任何代码写出 `gc-plan`** |
+
+### 92.3 那条假声明为什么能一路绿到现在
+
+取值表那组守卫（§74）判"这一版谁写出"的方式是：**在被点名的文件里搜这个取值的字符串**。`gc-plan.items[].kind` 的两个取值是 `managed_tool`/`runtime`；而 `caps/lifecycle.py` 造的那份 `plan` 里，`target.kind` 写的**正好也是这两个词**——字符串当然找得到，守卫因此通过。
+
+**这条盲点早就写在草案里**（§74/§77："守卫比的是值集合，不是某一行有没有被写到错误的路径上"），这一轮是它第一次**真的产出一条假声明**：一份**参考文档**（它自称描述当前版本）把一个 schema 的写者写成三个只在写**另一个字段**的模块。
+
+### 92.4 第二处：`state/desired.json` 不是那份 manifest，而且没有人在校验它
+
+实测：`tool pin` 写出的 `state/desired.json`（317 字节），拿去跑 `validate_self("desired-manifest", ...)` **被拒**：
+
+```text
+source: None is not of type 'object'
+policies: 'auto_approve' is a required property
+```
+
+而**三处**都把它当成那份 manifest：模块 docstring 说它 "following the shape 规划 §17 prescribes"；`load_desired` 的报错说它是 `desired-manifest`；schema 目录的边界行说 `desired-manifest` = "Desired state supplied by project or signed manifest"。**三处指向一份它不满足的契约**，而这个文件**从来没有被任何代码校验过**——分歧因此一直不可见。
+
+处置（**ADR-0026**，这一轮新增）：**两侧都不改形状，改的是"谁在说它是什么"。**
+
+- **不把文件改成 schema-valid**：要满足 schema 就得往里写一个 `source` 对象，而这一版**没有**来源证明（ADR-0025 的 D1 裁决维持现状），写进去就是**编造来源**——为了让校验变绿而发明字段，比校验不绿更糟；`policies.auto_approve`（跳过确认的 `memory` 规则）同理，`.ai/tooling.json` 刻意保持只读（ADR-0025 的 D3）。
+- **不改 schema**：改必填字段要新 schema id（README 规则 2），落在 ADR-0021 的图层级豁免里；而且那份 schema 描述的是**真正的 manifest 边界**（项目清单、带来源与签名的远程 manifest），它是对的，只是这一版没有实现它。
+- **改称呼**：报错消息改成念**实际读的那个文件**，并说明它不是那份 manifest（`reason_code` 仍是 `INVALID_INPUT`(8)）；docstring 与 schema 目录的话跟着改。
+
+### 92.5 第三处：一个名字，两份契约
+
+同一个推导顺带量到的：代码里 **14 个** `"operation"` 字面量（13 个是信封标签；第 14 个 `install_tool` 是 `plan` 自己的字段——取值表早就写明这是两个不同字段），对上 **19 个** schema 名，把 `_`/`-` 归一化之后，**恰好一处完全碰撞**：
+
+> 打印出来的信封标签 `gc_plan`（`tool gc --plan`）⟷ 已发布的 schema 名 `gc-plan`
+
+那份 schema 描述的是**批量**回收计划（`items`/`blocked_items`/`requires_approval`），本版没有写者；`tool gc --plan` 打印的是**报告信封**；本版真正的回收计划是 `plan.schema.json`（`operation=gc_apply`，一次一份 payload）。查这个词的人会被送到一份与手上文档无关的契约——**而目录里没有一句话说这件事**。
+
+### 92.6 做了什么
+
+1. **`references/field-values.md`**：`gc-plan` 那一行改成 `（没有写者）`、两个取值都打 †、含义里写明旧声明错在"**同样两个词、不同字段**"；`operation` 表的 `gc_plan` 行点名 `gc-plan.schema.json` 并说明**它不是它**。
+2. **`caps/desired.py`**：`load_desired` 的 schema_version 报错改成念 `state/desired.json`，并附一句"它不是已发布的 `desired-manifest`（ADR-0026）"；模块 docstring 同样改，并列出刻意省略的两个字段与理由。
+3. **`docs/schema/README.md`**：把 §90 那段"六个连名字都没出现"换成**推导出来的**陈述 + **5 条带理由的声明**。**用列表不用表格**：§80 的边界行解析器按 `| \`x.schema.json\` | ... |` 的形状取行，**加一张第二列以 schema 名开头的表等于悄悄改边界表**（§90 为此用过散文，这一轮用列表，两种都不落进那个形状）。
+4. **ADR-0026**：记录这次裁决、`state/desired.json` 的形状这一版只有代码定义这一**缺口**、以及"同名词假覆盖总体上仍可能发生"。
+5. **新增守卫第三十四组**（`test_l0_consistency.py`，3 条）：在用 ⟷ 声明的**双向**等集；声明为无写者的 schema **不许**被取值表说成有写者；标签 ⟷ schema 名碰撞必须在取值表里申报。
+6. 回写计数。
+
+### 92.7 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| **把 `gc-plan` 的三个"写者"放回去**（回到这一轮发现的状态） | 红 | ✅ 红——**这一条拿真实缺陷验的，不是合成变异** |
+| 把 `gc-plan` 的声明条目从 schema 目录删掉 | 红 | ✅ 红（`gc-plan is neither used by any code nor declared as having no writer`） |
+| 声明一个并不存在的 schema（`ghost-schema`） | 红 | ✅ 红 |
+| 声明一个无写者的 schema 但理由留空 | 红 | ✅ 红 |
+| 把 `gc_plan` 那一行里的 `gc-plan.schema.json` 拿掉 | 红 | ✅ 红（"the row must name that schema and say the label is not it"） |
+| 多一个与 schema 同名的标签（`plan`） | 红 | ✅ 红 |
+
+**第一个变异是这一轮最重要的证据**：它跑的是**修之前的真实内容**，报出的正是原始缺陷——
+
+```text
+field-values.md names ['caps/lifecycle.py', 'tx/artifact.py', 'tx/simulate.py']
+as writers of gc-plan, which no code builds
+```
+
+前面每个阶段的验红都是"写完守卫再造一个坏版本"；这一条是**守卫对着真实缺陷跑**——它本来就该红，只是当时还没有它。
+
+### 92.8 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **846 → 849**（新增 3 条） |
+| 审计检查（`test_l0_consistency.py`） | **92 → 95** |
+| golden fixture | **32 → 32**（不变） |
+| 被修的实现 | **1 处**（`caps/desired.py`：一句报错消息 + 一段 docstring） |
+| 被修的文档 | **3 份**（取值表、schema 目录、ADR 日志新增一条） |
+| schema | **19 → 19**（一个字节没动） |
+| 语料重生 | **不需要**：重跑 `golden.py` 后语料**逐字节不变**（改的是一句错误消息，不在任何 fixture 的路径上） |
+
+### 92.9 如实记录的边界
+
+1. **"在用"是推出来的，但推导有两处近似。** 它只看**字面量**调用（`validate_self("plan", ...)`）与 `$ref`；用变量传 schema 名的地方扫不到（当前代码里没有，但规则抓不到"下一处"）。而且"有人校验它"**不等于**"校验的是这份文档"——这正是 §90 那条边界的同一句话。
+2. **`state/desired.json` 的形状这一版仍然只有代码定义**（`caps/desired.py` 的 `to_document()`），没有任何已发布契约钉它。ADR-0026 把它记成**缺口**而不是"以后会补"：解锁要么是一条新的 desired-state schema，要么给 `desired-manifest` 发新 id，两条都是契约变更。
+3. **同名词假覆盖没有根治。** 取值表的守卫仍然按"字符串出现在被点名的文件里"判断写者，这一轮只清掉已经发生的那一处。要根治得按**字段路径**查写者，那是一次独立的改动（要动 §74 那组守卫的核心判据）。
+4. **`gc-plan` 与 `runtime-instance` 这两份 schema 我没有动。** 它们是 P4/P5 的契约，删掉是契约变更；这一轮只让"这一版没有写者"变得可查、可守。
+5. **`operation` 字面量的集合是"扫出来的"，不是"协议规定的"**：权威是代码（§77），所以 `install_tool` 这种"其实是 `plan` 的字段"也会进来。守卫因此**比它需要的更严**（多查一个词），这是**有意**的：多查不会漏，少查会。
+6. **这一轮没有做"每个 `_emit` 之前是否自校验"那件更细的事**（§90.6-1 记的那条未做项）。这一轮查的是**schema 这一层**有没有人用；`_emit` 与它打印的那份文档之间是否自校验是另一个问题——量过一次（**51 个 `_emit` 调用点、41 个函数**，其中 17 个函数在调用链上有一次可达的自校验、24 个没有），但**没有做数据流分析**，记在这里。
+
+### 92.10 实施顺序
+
+1. 先把"在用"**从 artefact 推出来**（调用点 + `$ref`），不列清单；
+2. 与 §90 的散文对账，发现它把窄测量的结论写宽了（"连名字都没出现"）；
+3. 拿这 5 个去对三份文档，找到唯一的**假声明**（`gc-plan`）与唯一的**称呼冲突**（`state/desired.json`）；
+4. 量 `state/desired.json` 到底能不能过那份 schema——**不能**；于是选"不改形状、改称呼"，并把这次裁决写成 ADR-0026；
+5. 量标签碰撞：14 个 `operation` 字面量 ⟷ 19 个 schema 名，归一化后恰好一处；
+6. 修三份文档 + 一句错误消息；写守卫（3 条），**先用真实缺陷验红**，再补合成变异；
+7. 回写计数（`AGENTS.md` 5 处：3 处计数、1 处 ADR 范围、1 处仓库地图的 desired 行；审查报告 2 处）；跑全量 + 旧切片 + 真机验收；提交。

@@ -1131,6 +1131,71 @@ C 应等 P2 的受保护存储。** 这条推荐不改变任何代码行为—�
   理由逐条引上面的教义；
 - **不用"讨论过"改台账**（见 D1 的最后两条）。
 
+## ADR-0026：`state/desired.json` **不是** `desired-manifest`；这一版有 5 个 schema 没有写者
+
+**状态：已裁决。** 本条处理一类冲突：**一份已发布的 schema、一份真实存在的文件、和代码里对它的
+称呼，三者说的不是同一件事。** 它由 §92 的实测触发，裁决是**两侧都不改形状**：schema 维持原样，
+文件维持原样，改的是"谁在说它是什么"。
+
+### 冲突是什么（实测，不是推断）
+
+- **发布侧**：`desired-manifest.schema.json` 要求 `source` 是**对象**（`kind`/`identity`/`signer`），
+  并要求 `policies.auto_approve` **存在**。规划 §17 的示例与它一致（manifest 要有来源、版本、平台、
+  架构、digest、策略版本）。
+- **实现侧**：`caps/desired.py` 写出的 `state/desired.json` 是
+  `{"schema_version":1,"manifest_id":...,"manifest_revision":1,"platform":"windows",`
+  `"architectures":["x64"],"capabilities":[...],"policies":{},"source":null}`。
+  拿它去跑 `validate_self("desired-manifest", ...)`，**被拒**：`source: None is not of type 'object'`
+  与 `policies: 'auto_approve' is a required property`。**这个文件从来没有被任何代码校验过**，
+  所以这个分歧一直不可见。
+- **称呼侧**：三处都把它当成那份 manifest——模块 docstring 说它"following the shape 规划 §17
+  prescribes"、`load_desired` 的报错写的是 `unsupported desired-manifest schema_version`、
+  schema 目录的边界行写的是 "Desired state supplied by project or signed manifest"。
+  **三处都指向一份它并不满足的契约。**
+
+### 裁定：不改形状，改称呼，并把"没有写者"变成可查的清单
+
+1. **不把 `state/desired.json` 改成 schema-valid。** 要满足 schema 就得往里写一个 `source` 对象——
+   而这一版**没有**来源证明（ADR-0025 的 D1：维持现状，等 P2 的受保护 broker），写进去就是
+   **编造来源**，违反 §8 的诚实规则。`policies.auto_approve`（跳过确认的 `memory` 规则）同理：
+   `.ai/tooling.json` 刻意保持只读（ADR-0025 的 D3）。**为了让校验变绿而发明字段，比校验不绿更糟。**
+2. **不改 schema。** 把 `source` 变成可空、把 `auto_approve` 变成可选，是**改必填字段**——
+   README 规则 2 说这需要新的 schema id，代价落在**图层级**（ADR-0021 的豁免之一）。
+   这份 schema 描述的是**真正的 manifest 边界**（`reconcile <manifest>`、项目清单、带签名的远程
+   manifest），它是**对的**，只是这一版没有实现它。
+3. **所以：`state/desired.json` 是"本 build 自己的 desired 层状态"，不是那份 manifest。**
+   改掉代码与文档里的称呼，让读者不再去查一份不描述它的契约。
+4. **把"这一版没有写者"从散文变成清单。** 派生规则：一个 schema 只要**没有任何
+   `validate_self`/`validate_document` 调用点**、也**不被别的 schema `$ref`**，它就是"没有写者"。
+   19 个里正好 **5 个**：`broker-request`、`broker-response`、`desired-manifest`、`gc-plan`、
+   `runtime-instance`（`common` 被 `$ref`，算在用）。清单与理由写在 `docs/schema/README.md`，
+   守卫第三十四组把它与推导结果**双向**钉死。
+5. **顺手修掉这条盲点已经造成的一处假声明**：`references/field-values.md` 的 `gc-plan` 一节原先
+   把 `caps/lifecycle.py`/`tx/artifact.py`/`tx/simulate.py` 写成 `items[].kind` 的写者——那三个模块
+   写的是 `plan` 的 `target.kind`，**同样两个词、不同字段**。取值表的守卫按"文件里有没有出现这个
+   字符串"判，于是**同名词假覆盖**（§74/§77 已记下这条已知漏法）让它一路绿到现在。改判为
+   `（没有写者）`，两个取值都打 †。
+
+### 没有改变什么
+
+- **没有改任何 schema、任何必填字段、任何枚举**；19 个文件一个字节没动。
+- **没有改任何对外 JSON 形状**：`state/desired.json` 的内容与 `tool pin` 的输出一字未改，
+  改的是一句错误消息（`reason_code` 仍是 `INVALID_INPUT`(8)）与三处关于"这是什么"的说明。
+- **没有新增命令、没有改变任何退出码。**
+
+### 这一版仍然挡住的（诚实清单）
+
+- **`state/desired.json` 的形状这一版只有代码定义**（`caps/desired.py` 的 `to_document()`），
+  **没有任何已发布契约钉它**。这是本条目**如实记录的缺口**，不是"以后会补上"的承诺：
+  解锁它要么是一条新的 desired-state schema（P6 的项目/会话层），要么按 README 规则 2 给
+  `desired-manifest` 发一个新 id——两条都是**契约变更**，不在 P1 收口期做。
+- **5 个"没有写者"的 schema 仍然没有写者。** 本条目做的是让这件事**可查、可守**，
+  不是让它们有写者：`broker-*` 属 P2，`runtime-instance` 属 P5，`desired-manifest` 等来源证明与
+  记忆通道，`gc-plan` 等 P4 的批量回收。
+- **`field-values.md` 取值表的守卫仍然按"字符串出现在被点名的文件里"判断**，所以同名词假覆盖
+  这一类**总体上仍然可能发生**；本条只清掉了已经发生的那一处，并把机制写在取值表里。
+  要根治需要按**字段路径**而不是按字符串查写者，那是一次独立的改动。
+
 ## 尚未决策（本日志自己的一份清单）
 
 **§86 更正了标题。** 它原来写的是"（仍属规划 §23 的未冻结项）"——**那句话从来不是真的**：规划 §23

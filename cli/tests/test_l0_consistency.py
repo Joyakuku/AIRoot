@@ -37,6 +37,7 @@ REASON_TABLE = REPO / "docs" / "AIROOT-v0.3-诊断码与ReasonCode表.md"
 SCHEMA_README = REPO / "docs" / "schema" / "README.md"
 SKILL = REPO / "SKILL.md"
 AGENT_META = REPO / "agents" / "airoot.json"
+FIELD_VALUES = REPO / "references" / "field-values.md"
 DRAFT = REPO / "docs" / "AIROOT-v0.3-管家模型与数据根契约草案.md"
 PROTOCOL = REPO / "docs" / "AIROOT-搜索能力与工具集成协议方案.md"
 REVIEW = REPO / "docs" / "AIROOT-v0.3-规范审查报告.md"
@@ -843,6 +844,232 @@ def test_the_documents_the_core_prints_and_the_corpus_are_the_same_set() -> None
     assert _printed_vs_fixture_problems(printed, covered | {"runtime-instance"}) == [
         "runtime-instance has a fixture but the core never self-validates it"
     ]
+
+
+# --- Guard group 34: a schema is either used, or declared unwritten with a reason (draft §92) -----
+#
+# Group 32 asked which documents the core **prints**. This asks the wider question §90 answered in
+# prose: which published schemas is *any* code using at all?
+#
+# §90 wrote "six are never named by any code at all" — a claim measured only from `validate_self` call
+# sites, and it is not true of `desired-manifest`: `caps/desired.py` names it when it rejects a file
+# that fails *that* schema, while the file it writes and reads is not that document at all (ADR-0026).
+# A narrower measurement had been read as a wider statement, which is the same defect §85 found in the
+# repo map's file-size literal.
+#
+# Two ways to be "used", both derived from artefacts: code passes the name to `validate_self` /
+# `validate_document`, or another schema `$ref`s it (that is `common`). Everything left over has no
+# writer in this build, and each of those says why in the catalog — because "published ahead of
+# implementation" and "describes a document nobody writes" look identical from outside, and §92 found a
+# reference document that had confused the two.
+
+VALIDATORS = ("validate_self", "validate_document")
+
+#: A declaration bullet in `docs/schema/README.md`: ``- `gc-plan.schema.json` — why``. A **bullet**, not
+#: a table row: §80's boundary-table parser accepts any row shaped `| \`x.schema.json\` | ... |`, so a
+#: second table there would silently join the boundary table (the same reason §90 used prose).
+UNWRITTEN_DECLARATION = re.compile(r"(?m)^- `([a-z0-9-]+)\.schema\.json` — (.+)$")
+
+#: The section of `references/field-values.md` that documents the envelope's `operation` label.
+OPERATION_SECTION = re.compile(r"(?m)^### `operation`")
+OPERATION_ROW = re.compile(r"(?m)^\| `([a-z_]+)` \| (.+?) \| `?([^|`]+)`? \|$")
+
+
+def _schema_stems() -> set[str]:
+    return {name[: -len(".schema.json")] for name in schema_names()}
+
+
+def _used_schema_names() -> set[str]:
+    """Derived: schemas code validates by literal name, plus schemas another schema `$ref`s."""
+
+    import ast
+
+    used: set[str] = set()
+    for path in sorted(APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if called in VALIDATORS and node.args and isinstance(node.args[0], ast.Constant):
+                used.add(str(node.args[0].value))
+    for stem in _schema_stems():
+        body = json.dumps(load_schema(stem), sort_keys=True)
+        used |= {
+            match.group(1)
+            for match in re.finditer(r'"\$ref": "([a-z0-9-]+)\.schema\.json', body)
+            if match.group(1) != stem
+        }
+    return used
+
+
+def _declared_unwritten_schemas() -> dict[str, str]:
+    return {
+        match.group(1): match.group(2).strip()
+        for match in UNWRITTEN_DECLARATION.finditer(SCHEMA_README.read_text(encoding="utf-8"))
+    }
+
+
+def _unwritten_schema_problems(used: set[str], declared: dict[str, str], every: set[str]) -> list[str]:
+    return (
+        [f"{name} is declared to have no writer, but this build uses it" for name in sorted(used & set(declared))]
+        + [
+            f"{name} is neither used by any code nor declared as having no writer"
+            for name in sorted(every - used - set(declared))
+        ]
+        + [
+            f"{name} is declared as having no writer but is not a published schema"
+            for name in sorted(set(declared) - every)
+        ]
+        + [
+            f"{name} is declared as having no writer with no reason given"
+            for name in sorted(name for name, reason in declared.items() if not reason)
+        ]
+    )
+
+
+def test_every_published_schema_is_used_or_declared_unwritten() -> None:
+    used = _used_schema_names()
+    declared = _declared_unwritten_schemas()
+    every = _schema_stems()
+
+    problems = _unwritten_schema_problems(used, declared, every)
+    assert problems == [], "; ".join(problems)
+    assert len(used) >= 10, f"only {len(used)} schemas look used; the walk is no longer reaching them"
+    assert declared, "no schema is declared unwritten; the derivation must have gone wrong"
+
+    # Non-vacuity, one mutation per direction: a declaration dropped while the schema is still unused,
+    # a schema that becomes used while remaining declared, and a declaration for nothing.
+    assert _unwritten_schema_problems(used, {k: v for k, v in declared.items() if k != "gc-plan"}, every) != []
+    assert _unwritten_schema_problems(used | {"gc-plan"}, declared, every) != []
+    assert _unwritten_schema_problems(used, {**declared, "ghost-schema": "why not"}, every) != []
+    assert _unwritten_schema_problems(used, {**declared, "runtime-instance": ""}, every) != []
+
+
+def _producer_claim_problems(declared: dict[str, str]) -> list[str]:
+    """A schema nobody writes must not be given writers by the value table (draft §92)."""
+
+    from test_l1_field_values import ROWS
+
+    return [
+        f"field-values.md names {row.producers} as writers of {row.schema}, which no code builds"
+        for row in ROWS
+        if row.schema in declared and row.producers
+    ]
+
+
+def test_a_schema_declared_unwritten_is_not_claimed_to_have_a_writer() -> None:
+    """§92's real defect: `gc-plan` was credited to three modules that write a **plan** instead.
+
+    The value table's own guard searches the named files for the value *string*, so a field that
+    reuses the same words (`managed_tool`, `runtime`) passes while the field it names is never written
+    — the same-word false coverage the draft already records (§74/§77). This is the check that closes
+    the direction that actually lied.
+    """
+
+    declared = _declared_unwritten_schemas()
+    problems = _producer_claim_problems(declared)
+    assert problems == [], "; ".join(problems)
+
+    # Non-vacuity: a declared-unwritten schema that **does** have rows crediting writers must be
+    # reported. `registry-projection` is the control — its rows legitimately name producers, so it
+    # fails the moment it is declared unwritten, which is what makes this check load-bearing rather
+    # than a restatement of the table. (§92 also verified it red against the real defect, by putting
+    # `gc-plan`'s three modules back.)
+    assert _producer_claim_problems({**declared, "registry-projection": "pretend"}) != [], (
+        "a schema declared unwritten while the value table credits writers must be reported"
+    )
+
+
+def _operation_label_rows() -> dict[str, str]:
+    """The envelope `operation` table from `references/field-values.md`: label -> meaning cell."""
+
+    body = OPERATION_SECTION.split(FIELD_VALUES.read_text(encoding="utf-8"))[-1].split("\n### ", 1)[0]
+    return {match.group(1): match.group(2) for match in OPERATION_ROW.finditer(body)}
+
+
+def _printed_operation_labels() -> set[str]:
+    """Every `"operation": "..."` literal the app writes — envelope labels and plan operations both.
+
+    Deliberately a superset: `plan`'s own `operation` field is a *different* field with its own
+    vocabulary (field-values.md says so), and including it can only make this check stricter.
+    """
+
+    import ast
+
+    labels: set[str] = set()
+    for path in sorted(APP.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "operation"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    labels.add(value.value)
+    return labels
+
+
+def _label_collision_problems(labels: set[str], table: dict[str, str]) -> list[str]:
+    """A label and a schema may share a name, but then the row has to say they are not the same thing.
+
+    §92 measured exactly one such pair in this build: the `gc_plan` envelope label and
+    `gc-plan.schema.json` — a batch collection plan that no code writes, while the slice's real
+    collection plan is a `plan`. A reader who looks the label up in the catalog lands on the wrong
+    contract, and nothing said so.
+    """
+
+    problems: list[str] = []
+    for stem in sorted(_schema_stems()):
+        for label in sorted(labels):
+            if label.replace("_", "-") != stem:
+                continue
+            if label not in table:
+                problems.append(
+                    f"`{label}` is both an operation label and the name of {stem}.schema.json: "
+                    "declare it in the value table and say which one it is"
+                )
+            elif f"{stem}.schema.json" not in table[label]:
+                problems.append(
+                    f"`{label}` shares its name with {stem}.schema.json: the row must name that schema "
+                    "and say the label is not it"
+                )
+    every = _schema_stems()
+    named = {
+        match.group(1)
+        for cell in table.values()
+        for match in re.finditer(r"([a-z0-9-]+)\.schema\.json", cell)
+    }
+    problems += [
+        f"the operation table names {name}.schema.json, which is not a published schema"
+        for name in sorted(named - every)
+    ]
+    return problems
+
+
+def test_an_operation_label_that_shares_a_schema_name_says_so() -> None:
+    table = _operation_label_rows()
+    labels = _printed_operation_labels()
+
+    assert len(labels) >= 8, f"only {len(labels)} operation literals found; the walk is broken"
+    assert len(table) >= 8, f"only {len(table)} operation rows parsed; the section moved"
+    assert _label_collision_problems(labels, table) == [], "; ".join(
+        _label_collision_problems(labels, table)
+    )
+
+    # Non-vacuity: the collision that exists, with its declaration removed; a new collision with no
+    # row at all; and a row pointing at a schema that does not exist.
+    stripped = dict(table)
+    stripped["gc_plan"] = stripped["gc_plan"].replace("gc-plan.schema.json", "the gc report")
+    assert _label_collision_problems(labels, stripped) != [], "a collision with no declaration must be reported"
+    assert _label_collision_problems(labels | {"plan"}, table) != [], "a new collision must be reported"
+    assert _label_collision_problems(labels, {**table, "gc_plan": "see ghost.schema.json"}) != [], (
+        "a row naming a schema that does not exist must be reported"
+    )
 
 
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
