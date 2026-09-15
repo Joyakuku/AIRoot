@@ -35,17 +35,17 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "这台电脑上有没有 X / 在哪" | `airoot where X --json` | 不用 `where` 之外的命令去猜；不递归 `shell` 搜索 |
 | "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足 |
 | "这台机器上都有什么" | `airoot inventory --class … --json` | 不把 `unmanaged` 说成"AIROOT 管的" |
-| "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准 | 不直接 `install`；不在未确认时落盘计划 |
+| "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（这个 build 签不出 token：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
 | "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件 |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
-| "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token | **没有 token 就不要写**；不发明 `--force` |
+| "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（这个 build 签不出 token：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
 | "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json` | **对 reference 一律拒绝**：那不是 AIROOT 的东西 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
-| "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准 |
+| "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（这个 build 签不出 token：见《批准》） |
 | "PATH 有没有被弄乱" | `airoot path verify --json` | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
 | "某个文件在哪 / 它叫什么名字" | `airoot search <query> --json` | **`search` 不是 `where`**：前者定位文件，后者解析能力。要按名搜一个叫 `status` 的文件用 `airoot search --query status --json` |
 | "搜得太慢 / 想要它快点" | `airoot search refresh --json` 建一次索引（crawl 建的，**不是 USN 索引**），之后查询走索引 | 不声称它是 Everything 级性能；`freshness.state=current` 只表示"上次遍历是最近做的" |
@@ -76,7 +76,7 @@ cancel             取消
 
 规则：
 
-- 选 `data-root` 是**权限提升**，需要它自己的批准；项目目录里的 manifest 不能自己升级自己
+- 选 `data-root` 是**权限提升**，需要它自己的批准（这个 build 签不出 token：见《批准》）；项目目录里的 manifest 不能自己升级自己
   （`airoot plan … --scope data-root --project <项目>` 会返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`）。
 - **简单的必须不问**：被项目清单引用的依赖、单文件通用 CLI，CLI 已经直接给答案；
   你不要再问一遍，否则确认会退化成噪音，真正高风险的三类（装包 / 建环境 / 超 300 MB）也会失效。

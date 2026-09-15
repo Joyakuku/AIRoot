@@ -238,6 +238,42 @@ def test_the_skill_does_not_offer_an_approval_it_cannot_obtain() -> None:
     assert "ADR-0024" in text, "the honest block must point at the pending decision"
     assert "提案" in text, "ADR-0024 is a proposal, not a decision; the Skill must not overstate it"
 
+    # Widened in §68: one caveat in the 批准 section is ~50 lines away from the command map the agent
+    # *acts on*, and §67's own lesson was that a caveat must sit where the presumption is. So every
+    # site that prescribes approval carries this marker. Exempt by reason, not by line number: the
+    # 批准 section *is* the pointer, the 绝不做的清单 lists prohibitions (no "how" to point at), and a
+    # fenced block is a legend. Backticked spans are stripped first, or a reason code whose *name*
+    # contains APPROVAL would look like a prescription.
+    for line_no, line in _outside_approval_lines(text):
+        if re.search(r"批准|approval|token", re.sub(r"`[^`]*`", "", line), re.I):
+            assert APPROVAL_POINTER in line, (
+                f"SKILL.md:{line_no} prescribes approval without the pointer, so an agent reading that "
+                f"line alone describes a step this build cannot perform: {line.strip()[:120]!r}"
+            )
+
+
+#: The compact per-site pointer. It is short on purpose: it has to fit inside a table cell that an
+#: agent reads while deciding what to run.
+APPROVAL_POINTER = "（这个 build 签不出 token：见《批准》）"
+
+
+def _outside_approval_lines(text: str) -> list[tuple[int, str]]:
+    """Lines that may prescribe something, i.e. outside the 批准 section, 绝不做的清单 and fences."""
+
+    exempt_headings = ("## 批准", "## 绝不做的清单")
+    exempt = False
+    in_fence = False
+    kept: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if line.startswith("## "):
+            exempt = line.startswith(exempt_headings)
+        if not exempt and not in_fence:
+            kept.append((line_no, line))
+    return kept
+
 
 def test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain() -> None:
     """The third document with the same defect, and the one the agent reads *first*.
@@ -246,19 +282,64 @@ def test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain() -> Non
     and run install" — the same unavailable step SKILL.md pointed at. The guard is deliberately
     narrow: the caveat must sit in the *same note* that presumes approval, not merely somewhere in
     the file, or a reader of that lane is still sent to a step nobody can perform (draft §67).
+
+    §68 widened it from that one lane to **every** lane whose note so much as mentions a token,
+    because the same measurement found two more (`env persist`, `tool gc --plan`) that were only
+    fixed by hand — a guard that names one lane cannot protect the next one.
     """
 
     from airoot.tx.approval import ISSUER_PENDING
 
     presuming = [
-        entry.get("notes", "")
+        entry["notes"]
         for entry in agents_document()["invocation"]
-        if "approve it and run install" in entry.get("notes", "")
+        if re.search(r"token|approv", entry.get("notes", ""), re.I)
     ]
-    assert presuming, "no lane presumes approval any more; this guard is about nothing"
+    assert any("approve it and run install" in note for note in presuming), (
+        "the import lane this guard was written for is gone; the guard is now about something else"
+    )
     for note in presuming:
         assert ISSUER_PENDING in note, f"lane note presumes approval without the boundary: {note!r}"
         assert "ADR-0024" in note, "the boundary must point at the pending decision"
+
+
+def test_the_reason_code_reference_does_not_prescribe_an_approval_nobody_can_give() -> None:
+    """Exit 4's reference page told the agent to wait for a human approval, full stop (draft §68).
+
+    `references/reason-codes.md` already carried this kind of caveat for exit 5 ("P1 has no broker,
+    do not tell the user to edit HKLM") — exit 4 was the section that had none, and an agent that
+    consulted it would ask the user to produce something nothing in this build can produce. The
+    boundary must sit in that section, not merely in the file.
+    """
+
+    from airoot.tx.approval import ISSUER_PENDING
+
+    text = (REFERENCES / "reason-codes.md").read_text(encoding="utf-8")
+    section = text.split("## 4 —", 1)[1].split("\n## ", 1)[0]
+    assert "等人工批准" in section, "the hand-off prescription is gone; this guard is about nothing"
+    assert ISSUER_PENDING in section, (
+        "the exit-4 reference prescribes waiting for an approval without saying that this build "
+        "cannot issue one"
+    )
+    assert "ADR-0024" in section and "提案" in section, "it must point at the pending decision, as a proposal"
+
+
+def test_the_entry_document_marks_the_commands_it_cannot_complete() -> None:
+    """AGENTS.md §6 is the block commands get copied from, and it carries `--token-file` (draft §68).
+
+    §1 and §8 both state the boundary, but the rule since §67 is that the caveat sits where the
+    instruction is — and this is the document an operator opens first. Same rule as the Skill's
+    command map and the metadata lanes.
+    """
+
+    from airoot.tx.approval import ISSUER_PENDING
+
+    text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    assert "--token-file" in text, "the token commands are gone; this guard is about nothing"
+    assert ISSUER_PENDING in text, (
+        "AGENTS.md shows `--token-file` commands without saying that this build cannot issue a token"
+    )
+    assert "ADR-0024" in text, "and without pointing at the pending decision"
 
 
 def test_the_reference_set_is_present() -> None:

@@ -100,7 +100,7 @@
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
-      "notes": "without --token-file this stops at exit 4 and writes nothing"
+      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (ADR-0024 is the pending decision), so the write cannot be completed on a real machine"
     },
     {
       "question": "undo what AIROOT persisted",
@@ -163,7 +163,7 @@
       "question": "what may be collected, and collect it",
       "command": ["tool", "gc", "--plan"],
       "read": ["candidates[].blockers", "plans[].plan_hash"],
-      "notes": "--apply needs an approval token bound to the plan hash"
+      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (ADR-0024 is the pending decision), so only --plan is reachable today"
     },
     {
       "question": "remove an AIROOT-owned payload",
