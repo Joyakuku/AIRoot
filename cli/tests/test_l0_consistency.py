@@ -1085,8 +1085,11 @@ def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int]]:
     """Per stage section: ``(stage, stated_from_or_None, to, heading_line)``.
 
     A section that states a single total (`**684 项全绿**`) has no `from` of its own; the pair form
-    (`681 → **684 项**`) does. The first pair in a section wins, because that is the one the section
-    labels as its own change; §71 states the same pair twice (table row + prose) and both agree.
+    (`681 → **684 项**`) does. When a section holds several pairs — a stage record quoting an earlier
+    stage's numbers, or (as in §84) explaining a mutation — the one that belongs to the section is the
+    pair with the largest `to`: the chain is monotone, so a *quoted* historical pair always ends below
+    the section's own end. Positional rules (first, last) are what §84 broke: its prose quotes
+    `826 → 827` above its own row, and taking the first pair read the section as ending there.
     """
 
     starts = [(int(match.group(1)), match.start()) for match in _STAGE_HEADING.finditer(text)]
@@ -1097,7 +1100,8 @@ def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int]]:
         line = text.count("\n", 0, index) + 1
         pairs = _STAGE_PAIR.findall(body)
         if pairs:
-            chain.append((stage, int(pairs[0][0]), int(pairs[0][1]), line))
+            own = max(pairs, key=lambda pair: int(pair[1]))
+            chain.append((stage, int(own[0]), int(own[1]), line))
             continue
         solos = _STAGE_SOLO.findall(body)
         if solos:
@@ -1217,9 +1221,162 @@ def test_the_stage_records_count_the_suite_without_an_unexplained_jump() -> None
     assert stale != text and "the chain does not have" in problems(stale), (
         "a declaration for a jump that is not there must be reported"
     )
-    shortened = text.replace("| 测试 | **826 → 827**", "| 测试 | **826 → 826**", 1)
+    # The last-stage mutation is **derived**, not spelled out. §84 opened by re-pointing the literal
+    # version of this line at the wrong stage: `**826 → 827**` was the last row when §83 wrote it,
+    # and appending a stage made the same string match §83's own row instead, so the mutation still
+    # went red while no longer testing the chain's *end*. A mutation anchored on a value the next
+    # stage will reuse silently retargets itself; deriving it from the chain cannot.
+    last_stage, _, last_to, _ = _stage_count_chain(text)[-1]
+    tail = f"| 测试 | **{last_to - 1} → {last_to}**"
+    assert text.count(tail) == 1, f"§{last_stage}'s own count row is not in the shape this mutation needs"
+    shortened = text.replace(tail, f"| 测试 | **{last_to - 1} → {last_to - 1}**", 1)
     assert shortened != text and "the suite has" in problems(shortened), (
         "a chain that ends below the real total must be reported"
+    )
+
+
+# --- Guard group 26: the bytes on disk (draft §84) -----------------------------------------------
+#
+# `.gitattributes` calls the golden corpus a **byte-for-byte** acceptance face and justifies its one
+# line (`* -text`) with that claim plus the `airoot.cmd`/`cmd.exe` trap. All of it was prose. §84
+# measured the hole: the acceptance test compared *parsed* documents, so every fixture could be
+# rewritten from CRLF to LF — `index.json` goes from 840 bytes to 812 — with the whole suite green,
+# and the generator's own line endings came from the platform's text mode rather than from a decision.
+#
+# These are the rules that claim needs. Deliberately **not** policed: the general CRLF/LF split across
+# the tree. `* -text` makes both legal, and the split that exists (a few documents and the corpus are
+# CRLF) is historical rather than load-bearing — a rule about it would be style, and a style rule is
+# where a guard starts demanding rewrites nobody asked for.
+
+#: Suffixes that are not read as text. Anything that fails to decode is skipped anyway; this only keeps
+#: the walk from trying.
+_BINARY_SUFFIXES = frozenset(
+    {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".zip", ".gz", ".exe", ".dll", ".whl"}
+)
+_WALK_SKIP = frozenset({".git", ".tmp", "__pycache__", ".pytest_cache", "node_modules"})
+
+#: The one file whose ending is a functional contract: `cmd.exe` splits its `rem` lines into commands
+#: if they are not CRLF-terminated.
+COMMAND_LAUNCHER = "cli/bin/airoot.cmd"
+GITATTRIBUTES = REPO / ".gitattributes"
+
+
+def _endings(data: bytes) -> tuple[int, int, int]:
+    """(CRLF, lone LF, lone CR). A file with two of these is a file some tool wrote twice."""
+
+    crlf = data.count(b"\r\n")
+    rest = data.replace(b"\r\n", b"")
+    return crlf, rest.count(b"\n"), rest.count(b"\r")
+
+
+def _walked_text_files() -> dict[str, bytes]:
+    """Every readable text file in the tree, keyed by its repo-relative posix path."""
+
+    files: dict[str, bytes] = {}
+    for path in sorted(REPO.rglob("*")):
+        if not path.is_file() or path.suffix.lower() in _BINARY_SUFFIXES:
+            continue
+        relative = path.relative_to(REPO)
+        if any(part in _WALK_SKIP for part in relative.parts):
+            continue
+        data = path.read_bytes()
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        files[relative.as_posix()] = data
+    return files
+
+
+def _byte_contract_problems(
+    files: dict[str, bytes], attributes: str, fixtures: dict[str, bytes]
+) -> list[str]:
+    """BOMs, files with two endings, and the four byte rules the contracts state."""
+
+    problems: list[str] = []
+    for name, data in sorted(files.items()):
+        if data.startswith(b"\xef\xbb\xbf"):
+            problems.append(f"{name} starts with a UTF-8 BOM")
+        crlf, lone_lf, lone_cr = _endings(data)
+        if crlf and (lone_lf or lone_cr):
+            problems.append(f"{name} mixes CRLF with {lone_lf} lone LF / {lone_cr} lone CR")
+
+    launcher = files.get(COMMAND_LAUNCHER)
+    if launcher is None:
+        problems.append(f"{COMMAND_LAUNCHER} is missing, so its ending cannot be checked")
+    elif _endings(launcher) != (launcher.count(b"\r\n"), 0, 0) or launcher.count(b"\r\n") == 0:
+        problems.append(f"{COMMAND_LAUNCHER} is not CRLF-only; cmd.exe splits its rem lines")
+
+    for name, data in sorted(fixtures.items()):
+        crlf, lone_lf, lone_cr = _endings(data)
+        if lone_lf or lone_cr or crlf == 0:
+            problems.append(f"golden fixture {name} is not CRLF-only")
+        elif not data.endswith(b"\r\n"):
+            problems.append(f"golden fixture {name} does not end with exactly one CRLF")
+
+    directives = [
+        line.strip() for line in attributes.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if directives != ["* -text"]:
+        problems.append(
+            f".gitattributes carries {directives}; `* -text` is the single line that keeps the corpus "
+            "byte-identical and the launcher CRLF on a fresh clone"
+        )
+    return problems
+
+
+def test_the_bytes_on_disk_are_the_ones_the_contracts_claim() -> None:
+    """A byte contract with no byte check is a sentence, not a contract."""
+
+    files = _walked_text_files()
+    attributes = GITATTRIBUTES.read_text(encoding="utf-8")
+    fixtures = {path.name: path.read_bytes() for path in sorted(GOLDEN.glob("*.json"))}
+
+    assert files, "the tree walk found no text files, so this guard is about nothing"
+    assert fixtures, "the golden corpus is gone, so the fixture rule is about nothing"
+    assert _byte_contract_problems(files, attributes, fixtures) == [], "; ".join(
+        _byte_contract_problems(files, attributes, fixtures)
+    )
+
+    # Non-vacuity, one mutation per rule. Every one of them is a byte sequence that would have passed
+    # the pre-§84 test, which is the whole reason this group exists.
+    def problems(
+        files: dict[str, bytes] | None = None, attributes: str | None = None, fixtures: dict[str, bytes] | None = None
+    ) -> str:
+        return "; ".join(
+            _byte_contract_problems(
+                files if files is not None else _walked_text_files(),
+                attributes if attributes is not None else GITATTRIBUTES.read_text(encoding="utf-8"),
+                fixtures if fixtures is not None else {path.name: path.read_bytes() for path in sorted(GOLDEN.glob("*.json"))},
+            )
+        )
+
+    bommed = dict(files)
+    bommed["seeded.md"] = b"\xef\xbb\xbf# seeded\n"
+    assert "UTF-8 BOM" in problems(files=bommed), "a BOM must be reported"
+
+    mixed = dict(files)
+    mixed["seeded.md"] = b"one\r\ntwo\n"
+    assert "mixes CRLF" in problems(files=mixed), "a file with two endings must be reported"
+
+    converted = dict(files)
+    converted[COMMAND_LAUNCHER] = files[COMMAND_LAUNCHER].replace(b"\r\n", b"\n")
+    assert "not CRLF-only" in problems(files=converted), "an LF launcher must be reported"
+
+    lf_fixture = dict(fixtures)
+    first = sorted(lf_fixture)[0]
+    lf_fixture[first] = lf_fixture[first].replace(b"\r\n", b"\n")
+    assert "not CRLF-only" in problems(fixtures=lf_fixture), "an LF fixture must be reported"
+
+    assert "does not end with exactly one CRLF" in problems(
+        fixtures={**fixtures, sorted(fixtures)[0]: fixtures[sorted(fixtures)[0]].rstrip(b"\r\n")}
+    ), "a fixture with no trailing newline must be reported"
+
+    assert "text=auto" in problems(attributes=attributes.replace("* -text", "* text=auto")), (
+        "re-enabling conversion in .gitattributes must be reported"
+    )
+    assert "carries []" in problems(attributes=attributes.replace("* -text", "")), (
+        "deleting the directive must be reported"
     )
 
 

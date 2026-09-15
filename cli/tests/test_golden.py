@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from airoot import schema_io
-from golden import GOLDEN_DIR, build_documents
+from golden import GOLDEN_DIR, build_documents, render
 
 SCHEMA_FOR_FIXTURE = {
     "where_not_found": "where-response",
@@ -63,15 +63,31 @@ def test_discover_report_fixture_has_the_steward_shape() -> None:
 
 
 def test_golden_fixtures_reproduce_exactly(tmp_path: Path) -> None:
+    """Byte for byte, not "the same document once parsed" (draft §84).
+
+    `.gitattributes` and `AGENTS.md` §9 both call this corpus the **byte-for-byte** acceptance face
+    for the port, and until §84 the check was `json.loads(committed) == generated` — a comparison two
+    different byte sequences can win. Measured: `index.json` as CRLF is 840 bytes and as LF is 812,
+    and both parse to the same value, so converting every fixture to LF would have left this test
+    green while the corpus stopped matching what the port is supposed to reproduce.
+
+    The parsed comparison is kept *after* the byte one, so a failure says what drifted and not merely
+    that two blobs differ.
+    """
+
     documents = build_documents(tmp_path)
     for name, payload in documents.items():
         path = _fixture_path(name)
         assert path.is_file(), f"missing golden fixture {name}; regenerate with python cli/tests/golden.py"
-        expected = json.loads(path.read_text(encoding="utf-8"))
-        assert expected == payload["document"], f"{name} drifted from the current core"
+        assert path.read_bytes() == render(payload["document"]), (
+            f"{name} drifted from the current core at the byte level; regenerate with "
+            "python cli/tests/golden.py (and check that .gitattributes still says `* -text`)"
+        )
+        assert json.loads(path.read_text(encoding="utf-8")) == payload["document"]
 
-    index = json.loads(_fixture_path("index").read_text(encoding="utf-8"))
-    assert index == {name: payload["exit_code"] for name, payload in sorted(documents.items())}
+    index = {name: payload["exit_code"] for name, payload in sorted(documents.items())}
+    assert _fixture_path("index").read_bytes() == render(index)
+    assert json.loads(_fixture_path("index").read_text(encoding="utf-8")) == index
 
 
 def test_every_golden_document_satisfies_its_schema() -> None:

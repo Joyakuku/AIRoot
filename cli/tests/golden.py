@@ -40,6 +40,11 @@ from scenario_ledger import build_ledger
 from execution_bounds import build_bounds
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "golden"
+#: The line ending every fixture is stored with, on every platform (draft §84). CRLF because that is
+#: what the committed corpus already is: `write_text` translated on Windows and nowhere else, so the
+#: bytes in git were an accident of the machine that generated them. Pinning it turns that accident
+#: into a decision, and `.gitattributes` (`* -text`) keeps git from rewriting it on checkout.
+NEWLINE = "\r\n"
 #: Repository root, needed by the catalogues that are derived from the documents rather than
 #: from a simulated root (``scenario_ledger``, draft §49).
 REPO = Path(__file__).resolve().parents[2]
@@ -560,6 +565,19 @@ def _normalize_versions(value: Any) -> Any:
     return value
 
 
+def render(document: dict[str, Any]) -> bytes:
+    """The exact bytes a fixture is stored as — pinned, not left to the platform's text mode (§84).
+
+    `Path.write_text` translates `\\n` to `\\r\\n` on Windows and to nothing anywhere else, so the
+    bytes a regeneration produced used to depend on the operating system. That was invisible because
+    the acceptance test compared *parsed* documents, and two byte sequences that parse to the same
+    value are equal by that measure. This function is now the single definition: the generator writes
+    what it returns, and the test compares against it byte for byte.
+    """
+
+    return (json.dumps(document, indent=2, sort_keys=True) + "\n").replace("\n", NEWLINE).encode("utf-8")
+
+
 def write_all(directory: Path = GOLDEN_DIR) -> list[Path]:
     directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -573,17 +591,11 @@ def write_all(directory: Path = GOLDEN_DIR) -> list[Path]:
         shutil.rmtree(base, ignore_errors=True)
     for name, payload in documents.items():
         path = directory / f"{name}.json"
-        path.write_text(json.dumps(payload["document"], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_bytes(render(payload["document"]))
         written.append(path)
     index = directory / "index.json"
-    index.write_text(
-        json.dumps(
-            {name: payload["exit_code"] for name, payload in sorted(documents.items())},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    index.write_bytes(
+        render({name: payload["exit_code"] for name, payload in sorted(documents.items())})
     )
     written.append(index)
     return written

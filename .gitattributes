@@ -2,12 +2,18 @@
 #
 # Two contracts in this repository depend on the bytes on disk, not on the text:
 #
-#   * `cli/tests/fixtures/golden/` is the byte-for-byte acceptance face for the Rust port
-#     (`test_golden.py` compares generated documents to the committed files), and those files are
-#     written in text mode, so on Windows they are CRLF;
+#   * `cli/tests/fixtures/golden/` is the byte-for-byte acceptance face for the Rust port.
+#     `test_golden.py` compares generated **bytes** against the committed files, and `golden.render`
+#     pins those bytes to CRLF on every platform (draft §84: until then the comparison parsed both
+#     sides, so a fixture could be rewritten from CRLF to LF — 840 bytes to 812 — with the whole
+#     suite still green, and the endings came from the running platform's text mode rather than from
+#     a decision);
 #   * `cli/bin/airoot.cmd` must stay CRLF, or `cmd.exe` splits its `rem` lines into commands.
 #
-# The tree already mixes CRLF and LF, so `text=auto` would rewrite half of it on the first commit and
-# make a fresh clone differ from the working tree. Disabling conversion for everything is the only
-# policy under which "the corpus reproduces exactly" is true for every clone.
+# The tree mixes CRLF and LF, so `text=auto` would rewrite half of it on the first commit and make a
+# fresh clone differ from the working tree. Disabling conversion for everything is the only policy
+# under which "the corpus reproduces exactly" is true for every clone.
+#
+# One non-comment line, held to exactly that by `test_l0_consistency.py`'s byte guard: re-enabling
+# conversion here is what would silently make the two contracts above untrue.
 * -text
