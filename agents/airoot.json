@@ -50,6 +50,19 @@
       "read": ["revision", "capabilities"]
     },
     {
+      "question": "which directories does AIROOT watch, and with what role",
+      "command": ["data-root", "add", "<path>", "--id", "<data_root_id>", "--role", "<runtime|tool|mixed>"],
+      "read": [
+        "data_root.data_root_id",
+        "data_root.path",
+        "data_root.role",
+        "data_root.volume_serial",
+        "reason_code",
+        "files_touched"
+      ],
+      "notes": "the first step of the steward domain: nothing is discovered or adopted before a data root is registered, and registering writes no files (files_touched is 0)"
+    },
+    {
       "question": "record an existing object without taking ownership",
       "command": ["adopt", "<path>", "--mode", "reference"],
       "read": ["reference", "ownership", "files_touched"],
@@ -305,6 +318,24 @@
       "category": "needs-admin",
       "why": "15.5 defines it as migrating the whole AIROOT\\cli data root: establish the new root marker, copy and verify the persistent data, then switch the active root. The switch moves the machine PATH entry, and the frozen contract allows exactly one AIROOT entry there (AGENTS.md, section 5, item 8). A directory copy cannot do that, so it is a protected commit.",
       "unblocked_by": "p2-protected-state"
+    }
+  },
+  "uncovered_verbs": {
+    "approve": {
+      "why_no_lane": "A lane is a question an agent can act on. The only issuer in this build is the test one (ADR-0024), so every lane ending at `approve` would point at a step nobody can take; the honesty block already says so in prose.",
+      "unblocked_by": "decision"
+    },
+    "install": {
+      "why_no_lane": "Same reason as `approve`: it needs a token only the test issuer can mint (ADR-0024). The plan-shaped part of the question does have lanes (`plan`, `scope decide`), which is what an agent can actually complete today.",
+      "unblocked_by": "decision"
+    },
+    "extension": {
+      "why_no_lane": "Extension diagnostics (`extension list`, `extension status <id> --operation <status|probe|invoke>`). It is not on an agent's question surface: SKILL.md's command map does not carry it, and an agent that meets an extension meets it through `search implementations`, which has a lane.",
+      "unblocked_by": null
+    },
+    "unadopt": {
+      "why_no_lane": "It is the frozen name from the planning document for what is clearer as `forget`; the CLI registers it as a compatibility alias, so it has no question of its own and `forget` carries the lane.",
+      "unblocked_by": null
     }
   },
   "honesty": {

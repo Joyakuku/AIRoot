@@ -171,7 +171,12 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         results[command] = run(capsys, *base, *argv)
 
     # --- setup that the observation verbs need (also the `adopt` scenario) --------------------
-    run(capsys, *base, "data-root", "add", str(data_root), "--id", DATA_ROOT_ID, "--role", "runtime")
+    # §79 gave `data-root add` its own lane, so this invocation is recorded rather than run: the
+    # field list in `agents/airoot.json` now has to resolve against the document this prints.
+    record(
+        "data-root add <path> --id <data_root_id> --role <runtime|tool|mixed>",
+        "data-root", "add", str(data_root), "--id", DATA_ROOT_ID, "--role", "runtime",
+    )
     record("adopt <path> --mode reference", "adopt", str(data_root / "python"), "--mode", "reference")
     # `import` is a different question and a different document (a plan, not a reference), so it gets
     # its own recorded scenario. A real PE file is the input: the backend refuses script payloads.
