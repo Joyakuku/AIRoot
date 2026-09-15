@@ -12,8 +12,16 @@
     "verification: `signature` stays null, and a digest is never described as a signature.",
     "Growth path: only hosts and capabilities that were actually verified end up here. An entry",
     "that has never been resolved successfully must not be added 'for completeness'. Each entry's",
-    "notes carry its own verification status: 'verified online' means a resolution and a download",
-    "actually ran against the live upstream (draft §59), and an entry that has not says so."
+    "notes carry its own verification status, and a test requires that statement to be present.",
+    "Draft §72 measured the `archive` capability against the real upstream and removed its entry.",
+    "The artifact template was right (`7z<version_nodots>-extra.7z` exists: 7z2603-extra.7z), but",
+    "the upstream publishes no checksum *file* on an allowed host: `checksums.txt` and five other",
+    "plausible names return 404 for every tag probed, and a release carries no .txt asset at all.",
+    "The per-asset digests appear only in the release page UI, which `single`/`sha256sums` cannot",
+    "fetch and parse. A digest source that does not exist is worse than no entry at all: `archive`",
+    "is now a capability without a source, so `source resolve` answers NOT_FOUND(1) — 'a capability",
+    "without a source is a reference-only capability, not an installable one' — instead of surfacing",
+    "an HTTP 404 as PROVENANCE_FAILED(7)."
   ],
   "allowed_hosts": [
     "static.rust-lang.org",
@@ -47,19 +55,6 @@
       "filename": "cmake-{version}-windows-x86_64.zip",
       "publisher": "Kitware",
       "notes": "a portable archive with no installer script; the checksum file lists the archive by name. Verified online in draft §59: this is the `sha256sums` name-matching path, and it resolved a real digest for the real filename. The artifact itself was not downloaded."
-    },
-    {
-      "capability_id": "archive",
-      "kind": "https",
-      "artifact_url": "https://github.com/ip7z/7zip/releases/download/{version}/7z{version_nodots}-extra.7z",
-      "checksum": {
-        "kind": "https",
-        "url": "https://github.com/ip7z/7zip/releases/download/{version}/checksums.txt",
-        "format": "sha256sums"
-      },
-      "filename": "7z{version_nodots}-extra.7z",
-      "publisher": "Igor Pavlov",
-      "notes": "listed for completeness of the pattern; not verified on this machine, so treat it as untested"
     }
   ]
 }

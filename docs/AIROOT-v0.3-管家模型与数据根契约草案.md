@@ -1470,7 +1470,7 @@ Skill 漂移守卫加 1 项）；旧切片 `validate-schemas`（`schema_count: 1
 
 | 子阶段 | 交付物 | 状态 |
 |---|---|---|
-| S23.1 | `policy/sources.json`（`src-1`）：4 个允许 host、3 个来源条目（`rust-toolchain` / `build` / `archive`），**不含任何 digest** | ✅ |
+| S23.1 | `policy/sources.json`（`src-1`）：4 个允许 host、3 个来源条目（`rust-toolchain` / `build` / `archive`），**不含任何 digest** | ✅ **§72 改为 2 条**：`archive` 被移除，因为它取不到上游校验和文件（实测结论见 §72.2）。本行保留 §23 当时的数字，只加这一句指向改判 |
 | S23.2 | `caps/sources.py`：清单加载期校验（未知键/重复/缺校验和来源/未知格式全拒）、host 允许列表、`parse_sha256sums()` + `parse_single_digest()`、`digest_for()`、`resolve_source()` | ✅ |
 | S23.3 | `airoot source list` / `airoot source resolve <cap> --version <v> [--offline-checksum <file>] [--source-out <file>]` | ✅ |
 | S23.4 | `airoot plan <cap> --source-json <file>`：构造**真实 artifact 计划**，接上 §20 路由与 §21 runner | ✅ |
@@ -4579,7 +4579,7 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 | S59.2 在线解析（两个上游） | ✅ | `rust-toolchain`（`single`）与 `build`（`sha256sums` 按文件名匹配）都解析出真实摘要 |
 | S59.3 真实下载 + 真实校验 | ✅ | `rustup-init.exe` **12 721 664 字节**，`verify` → `verified: true`，摘要与上游发布值一致 |
 | S59.4 可复现的可选步骤 | ✅ | `real_machine_acceptance.py --online`；不传时**打印 not run** 而不是静默通过 |
-| S59.5 目录如实记录 | ✅ | `policy/sources.json` 的 `notes` 现在**逐条写明验证状态**：两个"verified online（并写明**哪些**步骤做过、哪些没做）"，`archive` 仍标注"未验证" |
+| S59.5 目录如实记录 | ✅ | `policy/sources.json` 的 `notes` 现在**逐条写明验证状态**：两个"verified online（并写明**哪些**步骤做过、哪些没做）"，`archive` 仍标注"未验证" | **§72 已改判**：那条"未验证"没有被留下来当装饰——量下来它的校验和来源根本不存在，于是按目录自己的成长规则**移除**（§72.2）。"逐条写明验证状态"这条要求保留，并升级成守卫：每条 `notes` 必须写明**怎么验的** |
 | S59.6 测试 + 回写 | ✅ | `pytest cli/tests` **756 项**不变（本阶段没加 pytest 测试，**故意的**：网络测试会让套件不再自足）；真机验收两种模式都 PASS |
 
 **本阶段没有新增 pytest 测试，这是一个判断而不是遗漏**：要测的东西要么是网络（会让套件不自足），
@@ -5668,6 +5668,103 @@ ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 i
 5. 把扫描搬进 `caps/layout.py`，保持"在不在 store 里"仍只有一处拼写；
 6. 两个读者各自换用，核对 `doctor` 的对外形状**没有**变；
 7. 补测试（三个形状 + 干净 root 的反方向），逐个验红（含修正一个方向写错的变异）；回写 §66 的旁注、模块表与计数，跑全量 + 切片 + 两种验收模式，提交。
+
+## 72. 第 72 阶段：来源清单违反了自己写下的成长规则（`archive` 条目）
+
+### 72.1 这一阶段要解决什么
+
+`policy/sources.json` 的文件级 `notes` 写着一条成长规则：
+
+> Growth path: only hosts and capabilities that were actually verified end up here. **An entry that has never been resolved successfully must not be added 'for completeness'.**
+
+而同一份文件的 `archive` 条目自己的 `notes` 写着：
+
+> listed for completeness of the pattern; not verified on this machine, so treat it as untested
+
+**一句话是规则，另一句话是它的反例，两份都在同一个文件里，而且已经共存了好几轮。** §59 甚至已经"如实记录"过这条未验证状态（S59.5），却没有人问过：既然规则说不该在这里，它为什么还在？
+
+### 72.2 实测：那个条目根本不可能被验证
+
+对着真实上游量（draft §72）：
+
+| 量什么 | 结果 |
+|---|---|
+| 制品 URL 模板的形状 | **对**：`7z<version_nodots>-extra.7z` 是真的（`7z2603-extra.7z` 存在）；模板替换 `{version_nodots}` 的实现在 `caps/sources.py`，加载期校验占位符 |
+| 校验和 URL（`checksums.txt`） | **404**（`25.01` / `25.00` / `24.09` / `24.08` / `23.01` 逐版试过） |
+| 另外五个可能的名字 | **全 404**：`checksums.sha256` / `SHA256SUMS` / `sha256sums.txt` / `7z2603-extra.7z.sha256` / `7z2603-extra.7z.txt` |
+| 这个 release 的资产清单 | **没有任何 `.txt`**：只有 `.exe` / `.7z` / `.msi` / `.tar.xz` |
+| 上游到底公布不公布摘要 | 公布，但只在**发布页 UI** 里（页面 HTML 里有 12 个 64 位十六进制串），而 `single` / `sha256sums` 两种格式都**取不到也解析不了** |
+
+所以这个条目**按目录自己的契约不可能成立**：唯一可接受的摘要来源是"上游发布的校验和**文件**"（§23.3-1），而这样的文件在允许的 host 上不存在。
+
+**今天的实际后果**（也实测了）：
+
+```text
+source resolve archive --version 26.03
+  -> PROVENANCE_FAILED(7)  could not fetch the checksum file .../checksums.txt
+     evidence: HTTP Error 404: Not Found
+
+source resolve python        # 一个"没有来源"的能力
+  -> NOT_FOUND(1)  no trusted source is declared for python
+     evidence: a capability without a source is a reference-only capability, not an installable one
+```
+
+也就是说：**列着但取不到**给出的是一句 HTTP 404；**不列**给出的是一句能读懂的政策结论。后者才是 `archive` 今天真实的状态。
+
+### 72.3 修法：执行规则，并把量到的东西留下
+
+1. **移除 `archive` 条目**（这正是文件自己要求的）。它不是能力消失：`archive` 仍在冻结能力清单里，仍可被发现、`--mode reference` 登记、`--mode import` 导入——**只是没有可信来源，因此 v1 里不可从上游安装**。
+2. **把实测写进文件级 `notes`**：为什么移除、量了什么、以及"一个不存在的摘要来源比没有条目更糟"。这样下一个人不会因为模板"看起来很合理"而把它加回来。
+3. **把"逐条验证状态"升级成守卫**：`test_every_shipped_source_entry_states_how_it_was_verified` —— 每条 `notes` 必须写明**怎么验的**（`Verified online in draft §N` 或 `Verified offline (…)`），也就是把 §59 那句"逐条写明验证状态"从散文变成可执行检查。规则说"没验过的不该在这里"，而"验过"是关于过去的事实——**但它的证据是可检查的**，这就是这一轮把规则落到地上的方式。
+4. **另加一条守卫钉住"缺席 + 理由"**：`archive` 不在目录里，**并且**文件里记着移除它的那次测量。只钉"不在"会让理由随条目一起消失，下一次有人带着同样的模板回来。
+
+### 72.4 连带影响
+
+`archive` 是项目里最常用的"通用单文件工具"例子（`scope decide archive`、`plan archive`、`import --capability archive`、真机验收），但它作为**来源条目**只被 `source resolve` 消费。所以移除只影响一个入口：`source resolve archive`。已在 §23 与 §59 的阶段记录里各加一句"§72 已改判"（**原地保留当时的数字**，不重写历史）。
+
+### 72.5 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 把 `archive` 条目按原样加回来（note 写"for completeness"） | 危险 | **红**（两条守卫同时红：它没有验证陈述，且能力不该有来源） |
+| 删掉文件里那段 §72 实测记录，但保持条目缺席 | 危险 | **红**（"缺席 + 理由"那条） |
+| 让一条已验证条目的 note 失去验证陈述（改成"checked once"） | 危险 | **红**（证明守卫盯的是**陈述**，不是条目是否存在） |
+
+第三条是关键：它证明守卫不是"只要文件里有 `Verified` 这个词就行"，而是**逐条**要求。
+
+### 72.6 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S72.1 量出"规则 vs 反例"共存 | ✅ | 72.1 的两段引文（同一文件） |
+| S72.2 量出模板哪一半对、哪一半不存在 | ✅ | 72.2 的表：制品命名对、六种校验和名字全 404、release 无 `.txt` 资产、摘要只在页面 UI |
+| S72.3 量出两种失败模式的差别 | ✅ | `PROVENANCE_FAILED(7)+404` vs `NOT_FOUND(1)+政策结论` |
+| S72.4 移除条目 + 记录实测 | ✅ | `policy/sources.json`：两条来源、文件级 `notes` 记着 §72 的测量 |
+| S72.5 逐条验证状态变成守卫 | ✅ | `test_l1_sources.py#test_every_shipped_source_entry_states_how_it_was_verified` |
+| S72.6 缺席 + 理由都被钉住 | ✅ | `test_l1_sources.py#test_the_archive_capability_has_no_source_and_the_reason_is_recorded` |
+| S72.7 历史记录标注 | ✅ | §23 的 S23.1 与 §59 的 S59.5 各加一句"§72 已改判"，数字保留 |
+| S72.8 计数与语料 | ✅ | 测试 **787 → 789**；审计检查 **74 不变**；台账**不变**；无需重生语料（policy 文件不进 golden）；AGENTS.md 的来源清单行与 §6 命令块各补一句 |
+
+### 72.7 如实记录的边界
+
+1. **这是一次能力收缩，而且是刻意的。** 移除条目让 `archive` 从"名义上可安装"变成"明确不可安装"。它换到的是：不再有一个 HTTP 404 冒充政策结论。**没有东西是"本来能用、现在不能用了"**——那个条目从来没有成功解析过。按 ADR-0021，这属于"放宽会摧毁更强规则"的反面：这里守的是诚实规则（§8），所以不收窄反而是错的。
+2. **没有新增 host、没有新增解析格式。** 一条更"宽容"的做法是把校验和来源指向发布页 HTML 并加一种 `html_release_page` 格式，把页面里的摘要抠出来。**没做**：那等于为了保住一个条目而发明一种来源，而契约说摘要的来源必须是**上游发布的校验和文件**。真要支持它，那是契约变更（新的 checksum kind + 解析器 + schema），不是这一轮该顺手塞进去的东西。
+3. **`rust-toolchain` 条目保留，尽管它不是冻结能力。** 量的时候顺手发现：`source resolve rust-toolchain` 能解析，但 `plan` 会以 `CAPABILITY_NOT_DECLARED` 拒绝它，因为冻结清单里没有这个 id。这不是缺陷：它由 ADR-0001/§59 为 **P2 的语言切换**建立并**真的验证过**，而"冻结能力"是另一条轴（P2 才冻结它）。两条守卫都只要求"验过"，不要求"已冻结"——这正是它们该管的范围。
+4. **`archive` 仍是冻结能力、仍有白名单谓词。** 移除的只是**来源条目**。发现、`where`、`reference`、`import` 全都不经过 `sources.json`，所以它们不受影响（套件里那些用 `archive` 的路由/计划/导入测试全绿即为证据）。
+5. **文件级 `notes` 现在长了**（多了 9 行测量记录）。这是有意的：那一段是**下一次有人想加条目时唯一会读的东西**。policy 文件不进 golden 语料，所以没有语料成本。
+6. **守卫盯的是"验证陈述"的形式，不是真实性。** 一个撒谎的 note（写"Verified online in draft §999"）会通过。可检查的边界就在这里：**陈述的存在**可以自动化，**陈述的真假**不能——后者只能由像 §72 这样的实测轮次来管。写清楚，免得把守卫当成证据。
+7. **台账与计数**：台账不变；测试 787 → 789；审计检查 74 不变。
+
+### 72.8 实施顺序
+
+1. 读到"规则"与"反例"在同一份文件里（72.1）——先确认这不是笔误，而是真的共存了几轮；
+2. **对着真实上游量模板的每一半**：制品命名对、校验和来源不存在（72.2）；
+3. 量**两种失败模式**的实际输出（列着但 404 vs 不列的 NOT_FOUND），确认哪一种更诚实；
+4. 执行规则：移除条目，把测量写进文件级 `notes`；
+5. 把"逐条验证状态"升级成守卫，并成对地钉住"缺席 + 理由"；
+6. 给两条阶段记录加"已改判"旁注（保留原数字）；补测试、逐个验红；回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
 
 
 

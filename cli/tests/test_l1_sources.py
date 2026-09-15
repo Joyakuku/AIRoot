@@ -69,6 +69,46 @@ def test_the_catalog_never_contains_a_digest() -> None:
     assert "sha256:" not in raw, "a digest written next to a download and never checked is decoration"
 
 
+#: How an entry is allowed to say it was verified. The file's own notes define the convention
+#: ("'verified online' means a resolution and a download actually ran against the live upstream");
+#: the offline form exists because a hermetic resolution is evidence too.
+VERIFICATION_STATEMENTS = ("Verified online in draft §", "Verified offline (")
+
+
+def test_every_shipped_source_entry_states_how_it_was_verified() -> None:
+    """The catalog's growth rule, made checkable at the point where it can be (draft §72).
+
+    "Only capabilities that were actually verified end up here" is a claim about the past, so it
+    cannot be tested directly — but its *evidence* can: every entry must state how it was verified.
+    Draft §72 removed the one entry that stated the opposite ("listed for completeness of the
+    pattern; not verified on this machine") after measuring that its checksum source does not exist.
+    A bare re-add now has to carry a statement it cannot honestly make.
+    """
+
+    for entry in load_sources().sources:
+        assert any(marker in entry.notes for marker in VERIFICATION_STATEMENTS), (
+            f"{entry.capability_id} does not state how it was verified, and the growth rule says an "
+            f"unverified entry must not be listed at all: {entry.notes[:140]}"
+        )
+
+
+def test_the_archive_capability_has_no_source_and_the_reason_is_recorded() -> None:
+    """Absence alone is not the fix — the reason has to stay where the next reader looks (§72)."""
+
+    catalog = load_sources()
+    assert catalog.by_capability("archive") is None, (
+        "archive was re-added; §72 measured that no checksum file exists on an allowed host, so it "
+        "cannot satisfy the growth rule"
+    )
+    raw = (Path(__file__).resolve().parents[2] / "cli" / "app" / "airoot" / "policy" / "sources.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Draft §72 measured the `archive` capability" in raw, (
+        "the entry is gone but the measurement that removed it is not recorded; the next reader "
+        "would re-add it from the same plausible-looking template"
+    )
+
+
 def test_a_catalog_entry_without_a_checksum_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "sources.json"
     path.write_text(
