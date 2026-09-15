@@ -2014,6 +2014,27 @@ STAGE_RECORD = DRAFT
 #: contract phrase, so this guard expires if someone deletes the sentence rather than rewording it.
 STAGE_RECORD_MARKER = "逐阶段的实现记录"
 
+#: Where the delegated range begins: §31 is the first stage whose detail was ever written into the
+#: entry document, so it is the honest lower bound.
+FIRST_DELEGATED_SECTION = "§31"
+
+
+def _newest_stage_section() -> str:
+    """The highest ``## N.`` in the record document — derived, so this cannot go stale.
+
+    A hard-coded upper bound rots the moment a stage is added, and it *did*: the delegation read
+    "§31–§54" while §55 already existed. Worse, it rots in the direction that keeps passing — the
+    guard would go on accepting a range that is no longer the whole record, which is precisely the
+    "points somewhere real but no longer correct" failure this file exists to catch.
+    """
+
+    numbers = [
+        int(match)
+        for match in re.findall(r"(?m)^## (\d+)\.", STAGE_RECORD.read_text(encoding="utf-8"))
+    ]
+    assert numbers, "the record document has no numbered sections"
+    return f"§{max(numbers)}"
+
 
 def test_the_entry_document_fits_the_reader_budget() -> None:
     size = len(AGENTS.read_bytes())
@@ -2056,9 +2077,13 @@ def test_the_entry_document_says_where_the_stage_record_lives() -> None:
         "the entry document must say where the per-stage detail went (draft §54)"
     )
     # The delegation must name the *range* it hands off, not merely the file: a reader has to be able
-    # to tell that the record continues where this document stops.
-    assert "§31" in delegating[0] and "§54" in delegating[0], (
-        f"the delegation must name the section range it hands off: {delegating[0].strip()[:160]}"
+    # to tell that the record continues where this document stops. The upper bound is derived from the
+    # record document, so adding a stage forces this sentence to keep up.
+    newest = _newest_stage_section()
+    assert int(newest[1:]) >= 31, f"{newest} is not a stage section; the derivation picked up a heading"
+    assert FIRST_DELEGATED_SECTION in delegating[0] and newest in delegating[0], (
+        f"the delegation must name the range it hands off "
+        f"({FIRST_DELEGATED_SECTION}–{newest}): {delegating[0].strip()[:160]}"
     )
 
     # Non-vacuity: all three ways to fail must actually be reported, on synthetic input — so the

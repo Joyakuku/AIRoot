@@ -377,18 +377,20 @@
       "witness": null
     },
     {
-      "blocked_by": "none",
-      "cited_by": [],
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_exposure.py"
+      ],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#test_env_persist_outside_every_data_root_is_refused",
+      "evidence": null,
       "family": "C",
       "id": "C-024",
       "no_witness_reason": null,
-      "note": "**\u539f\u6307\u9488\u6307\u9519\u4e86\u6d4b\u8bd5**\uff08\u5b83\u843d\u5728 C-0'outside every data root'\u90a3\u6761\u4e0a\uff0c\u662f\u540c\u7801\u4e0d\u540c\u5224\u636e\uff09\uff0c\u800c\u4e14\u590d\u6838\u53d1\u73b0\uff1a**\u6ca1\u6709\u4efb\u4f55\u6d4b\u8bd5\u771f\u7684\u53bb\u6301\u4e45\u5316\u4e00\u4e2a `cli\\exposure\\bin` \u503c**\u2014\u2014\u5168\u4ed3\u5e93\u53ea\u6709\u4e24\u5904 `shim` \u5b57\u6837\uff0c\u90fd\u5728 docstring \u91cc\u3002\u8fd9\u6761\u671f\u671b\u6210\u7acb\u7684\u673a\u5236\u662f\u540c\u4e00\u6761\uff1a`validate_target_in_data_root` \u8981\u6c42\u503c\u5728**\u5df2\u6ce8\u518c\u6570\u636e\u6839**\u5185\uff0c\u800c `cli\\exposure\\bin` \u5728 CLI root \u5185\u3001\u6c38\u8fdc\u4e0d\u662f\u6570\u636e\u6839\u3002\u6240\u4ee5\u5b83\u7531'\u6570\u636e\u6839\u4e4b\u5916'\u7684\u540c\u4e00\u6761\u6d4b\u8bd5\u8986\u76d6\uff0c**\u800c\u4e0d\u662f**\u7531\u4e00\u6761\u70b9\u540d shim \u7684\u6d4b\u8bd5\u8986\u76d6",
-      "status": "uncited",
+      "note": null,
+      "status": "evidenced",
       "superseded": null,
       "witness": null
     },
@@ -409,8 +411,10 @@
       "witness": null
     },
     {
-      "blocked_by": "unchecked-invariant",
-      "cited_by": [],
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_exposure.py"
+      ],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
@@ -419,8 +423,8 @@
       "family": "C",
       "id": "C-026",
       "no_witness_reason": null,
-      "note": "**\u672c\u6b21\u590d\u6838\u6539\u6b63\u7684\u7b2c\u4e8c\u6761**\uff1a\u539f\u8bb0 `blocked_by=none` + \u6307\u9488 `test_l1_exposure.py#template`\uff0c\u4f46\u90a3\u6761\u6d4b\u8bd5\u6d4b\u7684\u662f**\u672a\u77e5\u6a21\u677f token**\uff08`<object_rootd>` \u2192 `INVALID_INPUT`\uff09\uff0c\u4e0e'\u503c\u542b\u6362\u884c / `%VAR%`'\u662f\u4e24\u4ef6\u4e8b\u3002\u590d\u6838\u5b9e\u6d4b\uff1a**\u884c\u4e3a\u5df2\u5b9e\u73b0\u3001\u6d4b\u8bd5\u4e00\u6761\u90fd\u6ca1\u6709**\u2014\u2014`caps/environment.py::validate_value` \u6070\u597d\u5b9e\u73b0\u4e86\u6362\u884c\u3001\u672a\u914d\u5bf9\u5f15\u53f7\u3001`%...%` \u5728 `REG_SZ` \u4e0b\u4f1a\u88ab\u5b57\u9762\u5b58\u50a8\u3001\u4ee5\u53ca\u6b67\u4e49 `%` \u5c55\u5f00\u56db\u79cd\u62d2\u7edd\uff0c\u5168\u90e8\u629b `PERSISTENCE_TARGET_FORBIDDEN`\uff08\u9000\u51fa\u7801 8\uff0c\u4e0e\u671f\u671b\u4e00\u81f4\uff09\uff1b\u5b83\u5728 `caps/exposure.py` \u7684\u4e24\u5904\u88ab\u8c03\u7528\uff0c\u800c `PERSISTENCE_TARGET_FORBIDDEN` \u5728\u6d4b\u8bd5\u91cc\u53ea\u51fa\u73b0\u5728**\u53e6\u5916\u4e09\u6761\u5224\u636e**\u4e0a\uff08\u6570\u636e\u6839\u4e4b\u5916\u3001\u7981\u7528\u53d8\u91cf\u540d\uff09\u3002\u6240\u4ee5\u8fd9\u6761\u662f**\u6d4b\u8bd5\u503a**\u800c\u4e0d\u662f\u7f3a\u80fd\u529b\u6216\u6ca1\u8bbe\u8ba1\u2014\u2014\u6b63\u662f `unchecked-invariant` \u8fd9\u4e2a\u8bcd\u6c47\u503c\u5b58\u5728\u7684\u7406\u7531",
-      "status": "uncited",
+      "note": null,
+      "status": "evidenced",
       "superseded": null,
       "witness": null
     },
@@ -1799,7 +1803,7 @@
   ],
   "schema_version": 1,
   "summary": {
-    "evidenced": 40,
+    "evidenced": 42,
     "families": {
       "C": 33,
       "P": 21,
@@ -1807,6 +1811,6 @@
       "T": 17
     },
     "total": 107,
-    "uncited": 67
+    "uncited": 65
   }
 }

@@ -227,6 +227,128 @@ def test_a_forbidden_variable_is_refused_by_the_code(registered: Path) -> None:
     assert caught.value.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
 
 
+# --------------------------------------------------------------------------- #
+# The two §13.2 hard rules that draft §53 found implemented-but-unwatched.
+# --------------------------------------------------------------------------- #
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_C026_a_value_that_could_inject_a_statement_is_refused(
+    registered: Path, tests_tmp: Path
+) -> None:
+    """C-026: a persisted value carrying a newline or an ambiguous `%` is refused, exit 8.
+
+    Draft §53 audited the forty-one scenarios the ledger called "nothing is missing" and found this
+    rule **implemented and completely untested**: `caps/environment.py::validate_value` refuses four
+    shapes, and nothing in the tree had ever built a value containing a newline. The ledger carried it
+    as `unchecked-invariant` — test debt, not a missing capability — and §55 is the stage that pays it.
+
+    The assertions are about *why* each value is refused, not merely that it is. All four shapes share
+    the reason code `PERSISTENCE_TARGET_FORBIDDEN` with the unrelated "outside every data root" rule,
+    so a reason code alone would also be satisfied by an implementation that refused everything — and
+    a rule that refuses everything protects nothing.
+    """
+
+    def refusal(
+        object_root: Path,
+        variables: dict[str, str],
+        *,
+        kind: str = "REG_EXPAND_SZ",
+        data_roots: tuple[Path, ...] | None = None,
+    ) -> AirootError:
+        entry = {"variables": variables, "path_prepend": [], "value_kind": kind}
+        with pytest.raises(AirootError) as caught:
+            resolve_exposure(make_request(object_root, entry=entry, data_roots=data_roots))
+        return caught.value
+
+    # (1) a newline written into the declaration itself ...
+    declared = refusal(registered, {"JAVA_HOME": "<object_root>\nset EVIL=1"})
+    assert declared.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
+    assert declared.exit_code == 8
+    assert "newline" in declared.message, declared.message
+
+    # (2) ... and a newline arriving through a **path**, which is the vector that actually matters:
+    # the declaration is shipped data, a path is the user's. Measured while writing this: Win32 will
+    # not create a directory whose name contains a newline (`WinError 123`), so on this filesystem the
+    # vector is a *path string* rather than a directory that exists. The assertion still means
+    # something precise, because `validate_value` runs **before** the containment check — the refusal
+    # below can only be about the newline. If a future filesystem does allow the name, the `else`
+    # branch uses the real directory and the case gets strictly stronger.
+    hostile_root = tests_tmp / "exposure-newline-root"
+    hostile_root.mkdir(parents=True, exist_ok=True)
+    real_directory = hostile_root / "jdk\nset EVIL=1"
+    try:
+        real_directory.mkdir()
+    except OSError:
+        object_root = Path(f"{hostile_root}\\jdk\nset EVIL=1")
+    else:
+        object_root = real_directory
+    through_path = refusal(object_root, {"JAVA_HOME": "<object_root>"}, data_roots=(hostile_root,))
+    assert through_path.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
+    assert through_path.exit_code == 8
+    assert "newline" in through_path.message, through_path.message
+
+    # (3) an unpaired quote: half a quoted string is how a value escapes into the next token.
+    quoted = refusal(registered, {"AIROOT_TEST_MODE": 'a"b'})
+    assert "unpaired quote" in quoted.message, quoted.message
+
+    # (4) `%...%` under REG_SZ, which would freeze the expansion as a literal.
+    literal = refusal(registered, {"AIROOT_TEST_MODE": "%SystemRoot%"}, kind="REG_SZ")
+    assert "REG_SZ" in literal.message and "literally" in literal.message, literal.message
+
+    # (5) an ambiguous expansion: `100%` has a `%` that pairs with nothing.
+    ambiguous = refusal(registered, {"AIROOT_TEST_MODE": "100%"})
+    assert "ambiguous" in ambiguous.message, ambiguous.message
+
+    # The negative control, and the reason this test is worth having: `%VAR%` is *legitimate* under
+    # REG_EXPAND_SZ. Without this case, (4) above would also be satisfied by "refuse any value with a
+    # percent sign" — which is not the rule and would break every real declaration.
+    resolved = resolve_exposure(
+        make_request(registered, entry={"variables": {"AIROOT_TEST_MODE": "%SystemRoot%"}, "path_prepend": []})
+    )
+    assert resolved.variables["AIROOT_TEST_MODE"] == "%SystemRoot%"
+
+
+def test_C024_persisting_a_pointer_at_the_exposure_shim_is_refused(registered: Path) -> None:
+    """C-024: a persisted value may not point at `AIROOT\\cli\\exposure\\bin`, exit 8.
+
+    Draft §53 found that **no test had ever persisted a value at the shim path** — the ledger's
+    pointer named a test about a *different* rule that happens to share the reason code, and the only
+    two `shim` occurrences in the tree were in docstrings. §13.2 is one of the three hard rules the
+    steward model promises, and this is the one that keeps AIROOT's removal from leaving dangling
+    pointers: the shim lives inside the CLI root, which is never a data root, so it goes away with
+    AIROOT and anything pointing at it would rot.
+    """
+
+    shim = REPO / "cli" / "exposure" / "bin"
+
+    # Route 1 — as a **value**. Refused by §13.2's own rule: a persisted pointer must live inside a
+    # registered data root, and this one is inside the CLI root.
+    with pytest.raises(AirootError) as caught:
+        resolve_exposure(
+            make_request(registered, entry={"variables": {"JAVA_HOME": str(shim)}, "path_prepend": []})
+        )
+    assert caught.value.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
+    assert caught.value.exit_code == 8
+    assert str(shim) in caught.value.message, caught.value.message
+    assert "data root" in caught.value.message, caught.value.message
+
+    # Route 2 — as a `path_prepend` climbing out of the object root. A **different** rule refuses it
+    # (a declaration may not use an absolute path or `..`), so it carries a different code. Recorded
+    # as its own route rather than folded into route 1: merging two rules under one assertion is how
+    # a suite starts reporting a refusal without knowing which rule produced it.
+    with pytest.raises(AirootError) as climbed:
+        resolve_exposure(
+            make_request(
+                registered,
+                entry={"variables": {}, "path_prepend": ["../../../cli/exposure/bin"]},
+            )
+        )
+    assert climbed.value.reason_code == "INVALID_INPUT"
+    assert "non-relative" in climbed.value.message, climbed.value.message
+
+
 def test_machine_scope_needs_the_protected_broker(registry, registered: Path) -> None:
     request = make_request(registered, scope=SCOPE_MACHINE)
     with pytest.raises(AirootError) as caught:

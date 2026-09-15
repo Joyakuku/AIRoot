@@ -567,31 +567,14 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "`cli/tests/real_machine_acceptance.py`（`exec ... cmd /c echo %JAVA_HOME%`）"
         ),
     },
-    "C-024": {
-        "blocked_by": "none",
-        "evidence": "test_cli_env.py#test_env_persist_outside_every_data_root_is_refused",
-        "note": (
-            "**原指针指错了测试**（它落在 C-0'outside every data root'那条上，是同码不同判据），"
-            "而且复核发现：**没有任何测试真的去持久化一个 `cli\\exposure\\bin` 值**——"
-            "全仓库只有两处 `shim` 字样，都在 docstring 里。这条期望成立的机制是同一条："
-            "`validate_target_in_data_root` 要求值在**已注册数据根**内，而 `cli\\exposure\\bin` 在 CLI root 内、"
-            "永远不是数据根。所以它由'数据根之外'的同一条测试覆盖，**而不是**由一条点名 shim 的测试覆盖"
-        ),
-    },
+    # C-024 and C-026 used to sit here — the two §13.2 hard rules that §53's audit found implemented
+    # but unwatched (C-024 as `blocked_by=none` pointing at a test about a *different* rule that shares
+    # the reason code; C-026 as `unchecked-invariant`). §55 paid both debts by writing the missing
+    # tests, so the dispositions are **deleted rather than rewritten** — the same treatment §52 gave
+    # C-021. `status` is a measurement and flips to `evidenced` on its own once a test names the ID;
+    # keeping a stale "nothing checks this" note next to a test that now checks it would be exactly the
+    # kind of record that reads as information while carrying none.
     "C-025": {"blocked_by": "p2-protected-state"},
-    "C-026": {
-        "blocked_by": "unchecked-invariant",
-        "note": (
-            "**本次复核改正的第二条**：原记 `blocked_by=none` + 指针 `test_l1_exposure.py#template`，"
-            "但那条测试测的是**未知模板 token**（`<object_rootd>` → `INVALID_INPUT`），与'值含换行 / `%VAR%`'"
-            "是两件事。复核实测：**行为已实现、测试一条都没有**——"
-            "`caps/environment.py::validate_value` 恰好实现了换行、未配对引号、`%...%` 在 `REG_SZ` 下会被字面存储、"
-            "以及歧义 `%` 展开四种拒绝，全部抛 `PERSISTENCE_TARGET_FORBIDDEN`（退出码 8，与期望一致）；"
-            "它在 `caps/exposure.py` 的两处被调用，而 `PERSISTENCE_TARGET_FORBIDDEN` 在测试里只出现在"
-            "**另外三条判据**上（数据根之外、禁用变量名）。所以这条是**测试债**而不是缺能力或没设计——"
-            "正是 `unchecked-invariant` 这个词汇值存在的理由"
-        ),
-    },
     "C-027": {
         "blocked_by": "none",
         "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
