@@ -120,6 +120,12 @@
       "read": ["environment_persist"]
     },
     {
+      "question": "take ownership of a portable file I already have",
+      "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
+      "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "target.instance_id"],
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null"
+    },
+    {
       "question": "what does AIROOT own on this machine",
       "command": ["tool", "list"],
       "read": ["instances[].capability_id", "instances[].version", "instances[].lifecycle_status", "instances[].active_binding", "instances[].source"]

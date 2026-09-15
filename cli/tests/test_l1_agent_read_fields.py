@@ -157,6 +157,21 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     # --- setup that the observation verbs need (also the `adopt` scenario) --------------------
     run(capsys, *base, "data-root", "add", str(data_root), "--id", DATA_ROOT_ID, "--role", "runtime")
     record("adopt <path> --mode reference", "adopt", str(data_root / "python"), "--mode", "reference")
+    # `import` is a different question and a different document (a plan, not a reference), so it gets
+    # its own recorded scenario. A real PE file is the input: the backend refuses script payloads.
+    import_source = tmp_path / "imported-python.exe"
+    shutil.copy2(PE, import_source)
+    record(
+        "adopt <file> --mode import --capability <id>",
+        "adopt",
+        str(import_source),
+        "--mode",
+        "import",
+        "--capability",
+        "python",
+        "--version",
+        "3.11.11",
+    )
 
     # A persisted record has to be seeded through the module API with an *injected* store: the CLI
     # would write the real HKCU, which tests may never do (conftest's host-mutation guard). The CLI

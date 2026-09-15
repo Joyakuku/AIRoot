@@ -4979,6 +4979,99 @@ PROPOSED count: 2        generation: 2
 5. 写点名测试（含手工构造的链、dry run、无记录、CLI 拒绝），逐个验红；
 6. 补 agent 面登记与场景录制，删掉台账处置，重生语料、回写计数，跑全量 + 切片 + 两种验收模式，提交。
 
+## 64. 第 64 阶段：给"我已经有的那个文件"一条入口（`adopt --mode import`）
+
+### 64.1 这一阶段要解决什么
+
+§63 挑的是"机制已交付、命令没写"的那一类。这一阶段是同一类的第二条：`adopt --mode import`。它自己的**错误信息**就是证据——那条拒绝说的是
+
+```text
+import/recreate need the P4 portable transaction
+```
+
+而那个事务**早就交付了**：真实 backend（`portable_file` / `https_artifact`）、sha256 校验、stage、commit、绑定、`gc`，§21.5 全套。也就是说这句话在某个更早的阶段之后就变成了**过时的事实**，而它一直挂在一条拒绝路径上。这正是 §60/§61 反复抓到的那一类腐烂。
+
+再量一遍"今天到底有没有别的入口"，因为 §60 的教训是**先确认它不是同义词**：
+
+| 命令 | 能不能装一个本机已有的文件 |
+|---|---|
+| `plan build <capability>` | 不能：产出的是 `fake_fixture` 的**模拟**计划 |
+| `plan build --source-json <doc>` | 不能：`--source-json` 只接受 `source resolve` 的产物，即**从可信上游取来**的 artifact |
+| `install <plan_file>` | 不能：它执行计划，不产生计划 |
+| `adopt <dir> --mode reference` | 不能：登记外部引用，**不拥有**，`store/` 里什么都没有 |
+
+所以没有入口：v1 能拥有的 payload 只能来自可信上游，用户**手里已经有的**那个文件没有路可走。
+
+### 64.2 形状：产出计划，不越权安装
+
+规划 §15.5 写的是"`adopt --mode import` 通过 **plan/approval** 将可验证的 portable 对象复制到 `tools`"。所以这一阶段交付的是**计划**，而不是安装：核心永远不铸造批准（`AGENTS.md` §7），而 `approve` + `install` 已经能驱动任何 backend（`_runner_for`）。`import` 补的是**入口**。
+
+两个身份都不发明：
+
+* **`--capability` 是入参，不是发现**。`classify_object` 读的是"数据根的直接子目录"，而松散文件没有这个上下文。P1 对**观察不到的身份**一贯只接受显式输入（`machine_id`/`session_id`/`project_id`，规划 §17），这里照同一条规则办；
+* **`--version` 缺省记 `unversioned`**，并在文档里说明"文件里没有版本证据"（`metadata.import.version_source`）。不编一个 `1.0.0` 出来。
+
+### 64.3 provenance：digest 不是来源
+
+`create_artifact_plan` 会把 `requested_by` 填进 `source.provenance.publisher`。对**导入**来说那是凭空造一个出版者：文件是调用者递过来的。所以 `provenance` 被改成 `{"source_id": "local-import", "publisher": null}`，而"这个摘要只钉住这些字节、不证明它们来自哪里"这句话写进 `metadata.import.note`——**不是**写进 `provenance` 旁边，因为 `source.provenance` 在已发布 schema 里是**封闭对象**（`additionalProperties: false`，只允许 `source_id`/`publisher`/`retrieved_at`）。
+
+这一点是本轮真正学到的形状：第一版把 `note` 放进 `provenance`，于是核心**拒绝了自己产出的文档**，报 `SELF_VALIDATION_FAILED`。守卫按设计工作了——自校验失败是**实现缺陷**，不是可以挥手放行的东西；修的是实现（把说明搬到 `metadata`，那里 `additionalProperties: true`），不是 schema。
+
+### 64.4 顺带修正的一条过时事实
+
+`--mode recreate` 的拒绝理由跟着改了：它不再是"需要 P4 portable transaction"（那个事务现在被 `import` 用着），而是规划 §15.5 的原文——按版本与项目声明**重建 runtime/环境**，属 **P5**。台账里 C-009 的判断随之改准：`import` 那一半已交付、`recreate` 那一半仍缺，**证人换成 `test_adopt_recreate_is_not_implemented`**。
+
+### 64.5 一个差点被"散文"骗过去的测量
+
+C-009 在这一轮里**两次**被误报成 `evidenced`，两次都是**散文**干的：
+
+1. 新测试的 docstring 写了"the remaining half of C-009"；
+2. 把这句话改掉、解释"为什么不能写编号"时，解释里**又写了那个编号**。
+
+台账的 `status` 是**测量**（"有没有测试点名它"），而扫描是**逐文件的**——所以任何一行散文都能把它翻成 evidenced，哪怕那条测试断言的正是"这一半**还是缺的**"。这正是台账存在的理由（自证的绿）。处置：**在那个文件里连编号都不写**，把"为什么不能写"写进本节；`status` 回到 `uncited`，处置与证人保留。
+
+### 64.6 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| `--capability` 缺失时不再拒绝 | 危险 | **红**（"needs --capability"断言） |
+| 路径形状的 capability（`../../evil`）不再拒绝 | 危险 | **红** |
+| 目录不再被拒（改成继续走文件路径） | 危险 | **红** |
+| `provenance` 里塞回 `note` | 危险 | **红**——但**红在 `SELF_VALIDATION_FAILED`**，也就是核心拒绝自己的产物。这一格是**实测**过的（64.3 记的就是它），不是想象 |
+
+三个危险方向都变了红，全部按**字节**施加与恢复。
+
+### 64.7 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S64.1 先确认没有同义词 | ✅ | 64.1 的四行表；`plan build --source-json` 只吃上游来源文档 |
+| S64.2 `adopt --mode import` 产出真实 artifact 计划 | ✅ | `cli.py` 的 `_adopt_import`；`backend_id=portable_file`，计划落盘 |
+| S64.3 全链路：plan → approve → install | ✅ | `test_cli_steward.py#test_adopt_import_plans_and_installs_a_script_free_file`：**真实 payload 进 `store/`**、`tool list` 报 active、**源文件一字不动** |
+| S64.4 身份不发明 | ✅ | `--capability` 必填、路径形状被拒、缺 `--version` 记 `unversioned` 并说明来源 |
+| S64.5 provenance 诚实 | ✅ | `publisher: null` + "attests no origin"；`SELF_VALIDATION_FAILED` 那一次是守卫抓的 |
+| S64.6 修正 `recreate` 的过时理由 + 台账改准 | ✅ | 证人换成 `test_adopt_recreate_is_not_implemented`；C-009 的 note 重写 |
+| S64.7 agent 面 + 计数 | ✅ | `agents/airoot.json` 新增 `adopt --mode import` 调用元数据；`test_l1_agent_read_fields.py` 补录该场景；测试 **771 → 774** |
+
+### 64.8 如实记录的边界
+
+1. **`import` 只吃单文件**。`portable_file` 的 `stage` 复制**一个文件**（`artifact.path.name`），所以 `adopt --mode import <dir>` 被拒并指向 `--mode reference`。目录型 payload 需要一个新的 backend（"把整棵树 stage 进 store"），那是新能力，不是这一轮的接线。
+2. **`--capability` 不校验冻结清单**。`plan build` 今天也不校验，所以这里**照它办**而不是顺手加一条它没有的规则。后果是 `--capability 任意名` 能产出一个计划；把它变成一条规则（"install 目标必须是冻结能力"）需要同时改 `plan build`，属**另一个判断**，记在这里。
+3. **没有跑真实 approve/install 的 `--mode import` 到真机**：全链路测试用的是测试签发方（`cli/tests/fake_issuer.py`），因为 P1 没有生产签发方——与 §59 同一条边界，不是新的。
+4. **`--mode recreate` 仍是 `UNSUPPORTED_BACKEND`**，现在指向 P5 而不是 P4；C-009 因此**仍是 `undesigned`**（evidenced 52 / uncited 56 不变）——这一轮让台账**更准**，而不是更好看。
+5. **`adopt --mode import` 没有独立 schema**：它的文档就是 `plan`（已发布 schema，`validate_self` 通过），外加 `plan_file`/`required_action`/`reason_code` 三个 CLI 字段。所以这一轮**没有** golden fixture 变化，语料 diff 只有台账那一份。
+
+### 64.9 实施顺序
+
+1. 先量"有没有同义词"（64.1）——**先确认这条路是空的**，再动手；
+2. 读 `create_artifact_plan` 与 `_runner_for`，确认 `import` 只是**接线**而不是新事务；
+3. 写 `_adopt_import`：拒绝两档不该走的输入（目录、路径形状的 capability），产出计划；
+4. provenance 按实测改（`SELF_VALIDATION_FAILED` 那次是守卫教的），计划重新哈希；
+5. 写四个点名测试（正面全链路 + 两种拒绝 + `recreate` 证人），逐个验红；
+6. 修正 `recreate` 的过时理由、改准台账、补 agent 面与场景、回写计数，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

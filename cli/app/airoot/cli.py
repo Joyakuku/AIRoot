@@ -450,16 +450,24 @@ def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any
     from .registry import ExternalReference
     from .registry.entities import data_root_from_row
 
-    if args.mode != "reference":
+    if args.mode == "recreate":
+        # `recreate` is not a portable-artifact transaction: 规划 §15.5 defines it as rebuilding a
+        # runtime/environment from a version and a project declaration, which needs the P5 runtime
+        # extension. The evidence used to blame "the P4 portable transaction" for both modes; §64
+        # implemented `import` on top of that transaction, so the claim had to be corrected rather
+        # than left standing (draft §64.4).
         raise AirootError(
             "UNSUPPORTED_BACKEND",
-            f"adopt --mode {args.mode} is not implemented",
+            "adopt --mode recreate is not implemented",
             evidence=[
-                "v1 only accepts script-free portable artifacts (三大核心契约 决策3)",
-                "import/recreate need the P4 portable transaction",
-                "use --mode reference to record without taking ownership",
+                "规划 §15.5: recreate rebuilds a runtime/environment from a version and a project declaration",
+                "that needs the P5 runtime extension, not a portable artifact transaction",
+                "use --mode import for a script-free portable file, or --mode reference to record without owning",
             ],
         )
+
+    if args.mode == "import":
+        return _adopt_import(args, context)
 
     registry = context.registry()
     try:
@@ -543,6 +551,129 @@ def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any
         ],
     )
     return document, EXIT_SUCCESS
+
+
+def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
+    """`adopt --mode import`: plan the controlled copy of a local script-free payload (draft §64).
+
+    What is delivered here is the **plan**, not the install, and that is the contract's shape rather
+    than a shortcut: 规划 §15.5 says import copies a verifiable portable object "通过 plan/approval",
+    the core may never mint an approval (`AGENTS.md` §7), and `approve` + `install` already drive any
+    backend a plan names (`_runner_for`, draft §21.5). So this command is the missing **entry point**
+    for a file the user already has — until §64 there was none: `plan build` can only take a resolved
+    document from `source resolve`, i.e. an artifact fetched from a trusted upstream.
+
+    Two things are deliberately *not* invented. The capability is taken from `--capability` rather
+    than guessed from the file name — the classifier reads a directory against a data root, and a
+    loose file has no such context; P1's rule for identities it cannot discover is to accept them as
+    explicit input (`machine_id`/`session_id`/`project_id`, §17). And the digest is computed from the
+    file, which is honest for an import (it pins *these* bytes so the transaction can notice them
+    changing) but is **not** provenance, so the plan says so in as many words.
+    """
+
+    from .canon import plan_hash
+    from .caps.backends import assert_script_free, resolve_backend, sha256_file
+    from .paths import canonicalize
+    from .schema_io import validate_self
+    from .tx.artifact import create_artifact_plan
+
+    if not args.capability:
+        raise AirootError(
+            "INVALID_INPUT",
+            "adopt --mode import needs --capability",
+            evidence=[
+                "a loose file carries no data-root context, so its capability cannot be discovered",
+                "P1 accepts an identity it cannot observe as explicit input rather than guessing it",
+                "example: adopt D:\\downloads\\jq.exe --mode import --capability jq --version 1.7.1",
+            ],
+        )
+    capability = str(args.capability)
+    if "/" in capability or "\\" in capability or ".." in capability:
+        # The published `id` pattern allows `/` and `.`, because an *instance* id nests
+        # (`jq/jq/1.7.1/win-x64`). A capability id is a name: it becomes a path component under
+        # `store/` and part of the binding key, so a separator or a traversal is refused here with a
+        # stable code instead of surfacing later as a schema/self-validation failure.
+        raise AirootError(
+            "INVALID_INPUT",
+            f"a capability id is a name, not a path: {capability!r}",
+            evidence=["it becomes part of store/<instance_id> and of the binding key"],
+        )
+
+    target = canonicalize(args.path, must_exist=True)
+    if target.is_dir():
+        raise AirootError(
+            "INVALID_INPUT",
+            "adopt --mode import takes one script-free portable file",
+            evidence=[
+                f"{target} is a directory",
+                "a runtime tree is not a v1 portable artifact (三大核心契约 决策3)",
+                "use --mode reference to record a directory without taking ownership",
+            ],
+        )
+    assert_script_free(target)
+
+    registry = context.registry()
+    try:
+        version = str(args.version or "unversioned")
+        plan = create_artifact_plan(
+            registry,
+            resolve_backend("portable_file", root=context.path()),
+            capability_id=capability,
+            version=version,
+            kind="managed_tool",
+            locator=str(target),
+            source_digest=sha256_file(target),
+            clock=context.clock,
+        )
+        # `create_artifact_plan` fills a publisher from `requested_by`, which for an imported file
+        # would name whoever ran the command as if they were the publisher. There is no publisher:
+        # the caller handed over bytes. Replaced, and the plan is hashed again after the change.
+        #
+        # The caveat itself goes in `metadata` rather than beside the digest, because
+        # `source.provenance` is a **closed** object in the published schema (`additionalProperties:
+        # false`, exactly `source_id`/`publisher`/`retrieved_at`). The first version of this put a
+        # `note` in there and the core refused its own document with `SELF_VALIDATION_FAILED` —
+        # which is the guard working: a plan this build cannot validate is an implementation defect,
+        # never something to wave through (draft §64.4).
+        plan["source"]["provenance"] = {"source_id": "local-import", "publisher": None}
+        plan["metadata"]["import"] = {
+            "origin": "local_file",
+            "version": version,
+            "version_source": "declared-by-caller" if args.version else "no-version-in-the-file",
+            "note": (
+                "supplied by the caller; the sha256 pins these bytes and attests no origin "
+                "(v1 verifies digests, never signatures)"
+            ),
+        }
+        plan["plan_hash"] = plan_hash(plan)
+        validate_self("plan", plan)
+        plan_file = _plan_path(context, plan["plan_id"])
+        plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan_file.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    finally:
+        registry.close()
+
+    plan["plan_file"] = str(plan_file)
+    plan["reason_code"] = "SUCCESS"
+    plan["required_action"] = (
+        f"approve {plan['plan_hash']}, then `airoot install {plan_file} --token-file <token.json>`"
+    )
+    _emit(
+        plan,
+        as_json=args.json,
+        lines=[
+            f"import plan {plan['plan_id']} -> {plan_file}",
+            f"  artifact {target}",
+            f"  digest {plan['source']['integrity']['artifact_digest']} (pins these bytes; attests no origin)",
+            *(
+                ["  no version in the file: recorded as 'unversioned'; pass --version to name it"]
+                if not args.version
+                else []
+            ),
+            "  nothing was copied yet: approve and install to take ownership",
+        ],
+    )
+    return plan, EXIT_SUCCESS
 
 
 def cmd_forget(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
@@ -2641,6 +2772,12 @@ def build_parser() -> argparse.ArgumentParser:
     adopt_parser = subparsers.add_parser("adopt", help="record a reference to an existing object", parents=[common])
     adopt_parser.add_argument("path")
     adopt_parser.add_argument("--mode", choices=["reference", "import", "recreate"], default="reference")
+    adopt_parser.add_argument(
+        "--capability", default=None, help="import: the capability this file provides (not discoverable)"
+    )
+    adopt_parser.add_argument(
+        "--version", default=None, help="import: the version to record (a loose file states none)"
+    )
 
     forget_parser = subparsers.add_parser(
         "forget", help="drop AIROOT's record of a reference (never its files)", parents=[common]

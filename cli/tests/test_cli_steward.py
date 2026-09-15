@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+import fake_issuer
 from airoot.canon import digest_text
 from airoot.cli import main
 from airoot.registry import Registry
@@ -298,17 +299,155 @@ def test_adopt_outside_a_data_root_is_refused(capsys, cli_root: Path, tests_tmp:
     assert "registered data root" in document["message"]
 
 
-def test_adopt_import_is_not_implemented(capsys, cli_root: Path, data_root: Path) -> None:
+def test_adopt_import_plans_and_installs_a_script_free_file(
+    capsys, cli_root: Path, data_root: Path, tmp_path: Path
+) -> None:
+    """§15.5's `import` mode: a file the caller already has, copied into the store under approval.
+
+    Until draft §64 there was no entry point for this at all. `plan build` can only take a resolved
+    document from `source resolve` — an artifact fetched from a trusted upstream — and
+    `adopt --mode import` answered `UNSUPPORTED_BACKEND`, blaming "the P4 portable transaction" for a
+    missing feature even though that transaction (real backend, digest, stage, commit, bind) had
+    already been delivered. What was missing was the command, so the command is what §64 added.
+
+    Driven the whole way — plan, approve, install — because the claim worth testing is not "a plan was
+    printed". It is that a **real payload** ends up in `store/` while the source file is untouched,
+    which is exactly the difference between `import` and `reference`.
+    """
+
+    from airoot.clock import SYSTEM_CLOCK
+
+    source = place_pe(data_root / "python", "python.exe")
+    before = source.read_bytes()
+    add_root(capsys, cli_root, data_root)
+    fake_issuer.install_keyring(cli_root)
+
+    code, plan = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(source),
+        "--mode", "import", "--capability", "python", "--version", "3.11.11",
+    )
+    assert code == 0, plan
+    assert plan["metadata"]["backend_id"] == "portable_file"
+    assert plan["metadata"]["import"]["version_source"] == "declared-by-caller"
+    assert plan["target"]["capability_id"] == "python"
+    assert plan["target"]["version"] == "3.11.11"
+    assert plan["source"]["kind"] == "local_file"
+    # The digest pins these bytes. It is not provenance, and the plan says so in as many words — v1
+    # verifies digests and never signatures, so a publisher here would be an invention.
+    assert plan["source"]["provenance"]["publisher"] is None
+    # The caveat lives in `metadata`, because `source.provenance` is a closed object in the published
+    # schema (`source_id`/`publisher`/`retrieved_at` only).
+    assert "attests no origin" in plan["metadata"]["import"]["note"]
+    plan_file = Path(plan["plan_file"])
+    assert plan_file.is_file()
+    assert "nothing was copied yet" in plan["required_action"] or plan["required_action"]
+
+    # Planning copied nothing: the store exists (the root layout creates it) and is still empty.
+    assert source.read_bytes() == before
+    store = Path(cli_root) / "store"
+    assert not store.is_dir() or list(store.iterdir()) == [], "planning copied something into the store"
+
+    token = fake_issuer.issue(plan, clock=SYSTEM_CLOCK)
+    token_file = tmp_path / "token.json"
+    token_file.write_text(json.dumps(token), encoding="utf-8")
+    code, approved = run(
+        capsys, "--json", "--root", str(cli_root), "approve", str(plan_file), "--token-file", str(token_file)
+    )
+    assert code == 0, approved
+    code, transaction = run(
+        capsys, "--json", "--root", str(cli_root), "install", str(plan_file), "--token-file", str(token_file)
+    )
+    assert code == 0, transaction
+    assert transaction["state"] == "FINALIZED"
+
+    instance_id = plan["target"]["instance_id"]
+    payload = Path(cli_root) / "store" / instance_id
+    assert (payload / source.name).is_file(), "the imported payload is in the store"
+    assert source.read_bytes() == before, "import copies; the source file is never moved or changed"
+
+    code, listed = run(capsys, "--json", "--root", str(cli_root), "tool", "list")
+    assert code == 0
+    assert [item["instance_id"] for item in listed["instances"]] == [instance_id]
+    assert listed["instances"][0]["lifecycle_status"] == "active"
+
+
+def test_adopt_import_needs_an_explicit_capability_and_refuses_a_path_shaped_one(
+    capsys, cli_root: Path, data_root: Path
+) -> None:
+    """A loose file carries no data-root context, so its capability is input, not a discovery."""
+
+    add_root(capsys, cli_root, data_root)
+    payload = place_pe(data_root / "loose", "jq.exe")
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(payload), "--mode", "import"
+    )
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert "needs --capability" in document["message"]
+
+    # The published `id` pattern permits `/` and `.` (an instance id nests), but a *capability* id
+    # becomes a path component under `store/` and part of the binding key. Refused here with a stable
+    # code rather than surfacing later as a schema or self-validation failure.
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(payload),
+        "--mode", "import", "--capability", "../../evil",
+    )
+    assert code == 8
+    assert "a name, not a path" in document["message"]
+
+
+def test_adopt_import_refuses_a_directory_and_a_script_payload(
+    capsys, cli_root: Path, data_root: Path
+) -> None:
+    add_root(capsys, cli_root, data_root)
+    directory = data_root / "python"
+    place_pe(directory, "python.exe")
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(directory),
+        "--mode", "import", "--capability", "python",
+    )
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert any("--mode reference" in item for item in document["evidence"]), document["evidence"]
+
+    script = data_root / "install.ps1"
+    script.write_text("Write-Host hi", encoding="utf-8")
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(script),
+        "--mode", "import", "--capability", "python",
+    )
+    assert code == 7
+    assert document["reason_code"] == "UNSUPPORTED_BACKEND"
+
+
+def test_adopt_recreate_is_not_implemented(capsys, cli_root: Path, data_root: Path) -> None:
+    """The remaining half of the adopt-mode work, and the witness that says so.
+
+    `import` was implemented in draft §64; `recreate` was not, and it is not the same kind of thing:
+    规划 §15.5 defines it as rebuilding a runtime/environment from a version and a project
+    declaration, which is the P5 runtime extension's job. This test is what goes red when that
+    arrives — and the evidence no longer blames the portable transaction, which `import` now uses.
+
+    **The scenario id is deliberately not written anywhere in this file.** The ledger measures "which
+    tests name this id" by scanning whole files, so a docstring naming it would report the scenario as
+    *evidenced* while this test only asserts that its missing half is still missing. A measurement that
+    prose can flip is the self-confirming shape the ledger exists to prevent, so the disposition (with
+    this test as its witness) stays and the prose stays out of the scan.
+    """
+
     place_pe(data_root / "python", "python.exe")
     add_root(capsys, cli_root, data_root)
 
     code, document = run(
-        capsys, "--json", "--root", str(cli_root), "adopt", str(data_root / "python"), "--mode", "import"
+        capsys, "--json", "--root", str(cli_root), "adopt", str(data_root / "python"), "--mode", "recreate"
     )
 
     assert code == 7
     assert document["reason_code"] == "UNSUPPORTED_BACKEND"
-    assert "portable" in " ".join(document["evidence"])
+    assert any("P5" in item for item in document["evidence"]), document["evidence"]
+    assert "portable transaction" not in " ".join(document["evidence"])
 
 
 def test_forget_drops_the_record_and_keeps_the_file(capsys, cli_root: Path, data_root: Path) -> None:

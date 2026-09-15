@@ -627,11 +627,17 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     },
     "C-009": {
         "blocked_by": "undesigned",
-        "witness": "test_cli_steward.py#test_adopt_import_is_not_implemented",
+        "witness": "test_cli_steward.py#test_adopt_recreate_is_not_implemented",
         "note": (
-            "`adopt --mode import|recreate` 没有实现（规划 §15.5 定义了三档 mode，只有 `reference` 落地），"
-            "所以证人断言的是'它仍然没实现'。§61 复核时补上这条 note：按本轮的规则，"
-            "**声明某样东西缺失就必须写下为什么**——只给证人而不说理由，是这一轮在另外 17 条上刚修掉的形状"
+            "**§64 改了这条的一半，所以判断跟着改准。** 规划 §15.5 定义了三档 mode：`reference`（已交付）、"
+            "`import`（**§64 已交付**：`adopt <file> --mode import --capability <id>` 产出一个真实 artifact "
+            "计划，`approve` + `install` 把它复制进 `store/` 并绑定；由 "
+            "`test_cli_steward.py#test_adopt_import_plans_and_installs_a_script_free_file` 全链路断言，"
+            "含'源文件一字不动'）、`recreate`（**仍未实现**：它按版本与项目声明重建 runtime/环境，属 P5，"
+            "不是 portable artifact 事务）。证人因此换成 `recreate` 那条——它断言的是**仍然缺的那一半**，"
+            "而不是一条已经不成立的'import 没实现'。"
+            "§61 的规则（声明缺失必须写为什么）在这里第二次生效：原来的证据串把两档 mode 一起归给"
+            "'P4 portable transaction'，而那个事务早已交付，那句话随着 §64 变成**过时的事实**。"
         ),
     },
     "C-010": {
