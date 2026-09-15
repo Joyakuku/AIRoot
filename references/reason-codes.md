@@ -31,6 +31,7 @@
 | `REFERENCE_STALE` / `REFERENCE_DRIFTED` | 被引用对象消失／观测事实变了 |
 | `REFERENCE_IN_USE` | 仍被引用，拒绝 `gc`/`forget` |
 | `CHILD_PROCESS_FAILED` | `exec` 的子进程失败；子进程状态在 `exit_status` |
+| `INSTALL_IO_FAILED` | **文件系统拒绝了一次安装步骤**（磁盘满、文件被锁、权限不够，或下载中断）。计划没错、也没有东西损坏——出错前的那一代仍然可用，失败时绑定会切回上一代。**下一步是修环境（腾空间／解锁／改权限）再重新出一个计划**；同一个 plan+token 不能重放，别重试它 |
 | `REGISTRY_PROJECTION_STALE` / `AUDIT_PROJECTION_DRIFT` | 派生投影落后，权威是 registry/events |
 | `DRIFT_DETECTED` | **观测**与声明不一致（与"意图未满足"不同，见 `DESIRED_NOT_SATISFIED`） |
 | `DESIRED_NOT_SATISFIED` | `state/desired.json` 里有 pin，但当前 active binding 不满足它。**下一步是改 manifest 或重装，不是修环境** |

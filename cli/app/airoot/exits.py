@@ -71,6 +71,14 @@ REASON_EXIT: dict[str, int] = {
     "REFERENCE_STALE": EXIT_DEGRADED,
     "REFERENCE_DRIFTED": EXIT_DEGRADED,
     "DATA_ROOT_ACL_DRIFT": EXIT_DEGRADED,
+    # The filesystem refused a step of an install (draft §62). Exit 2 rather than 3 or 7 because
+    # neither is true: no declared object is broken (the previous generation is untouched, and the
+    # rollback restores it), and the plan is not invalid (a full disk or a locked file says nothing
+    # about the plan). Same shape as `CHILD_PROCESS_FAILED`: AIROOT did its part, the environment did
+    # not. `DISK_FULL`/`FILE_LOCKED` were deliberately **not** split out — the evidence carries the
+    # errno and the failing path, and the caller's next move (free space / release the lock / fix the
+    # permission, then re-plan) is the same for all of them (draft §62.4).
+    "INSTALL_IO_FAILED": EXIT_DEGRADED,
     # The search profile's degraded tier (search protocol §6.6). `SEARCH_RESULT_STALE` was
     # reserved in P1; the rest arrive with the protocol surface (§31).
     "SEARCH_INDEX_DEGRADED": EXIT_DEGRADED,

@@ -196,9 +196,54 @@ class ArtifactRunner:
         except AirootError as error:
             if error.reason_code in PROPAGATING_CODES:
                 raise
-            if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED"}:
-                return self._fail(tx, error.reason_code, error.message, evidence=error.evidence)
-            return self._rollback(tx, error.reason_code, error.message, evidence=error.evidence)
+            return self._classified_failure(tx, error.reason_code, error.message, evidence=error.evidence)
+        except OSError as error:
+            # A filesystem refusal is not an `AirootError`, and until draft §62 it was not caught at
+            # all: measured with the real backend, a full disk during `stage` and a locked/occupied
+            # `store` path during `commit` both escaped `commit()` as raw `OSError`s. The caller got a
+            # traceback instead of a diagnosis, the journal kept a **non-terminal** transaction that
+            # the next `doctor` would report as pending recovery, and the old generation was left
+            # un-reverted — for a failure that happened *after* `ACTIVE_BOUND`, that is a binding that
+            # never got switched back.
+            converted = AirootError(
+                "INSTALL_IO_FAILED",
+                f"the filesystem refused the {tx['state']} step",
+                evidence=[
+                    f"{type(error).__name__}: {error}",
+                    f"errno={getattr(error, 'errno', None)} winerror={getattr(error, 'winerror', None)}",
+                    f"transaction state when it failed: {tx['state']}",
+                    "the request is fine; free the space, release the lock or fix the permission and re-plan",
+                ],
+            )
+            return self._classified_failure(tx, converted.reason_code, converted.message, evidence=converted.evidence)
+
+    def _classified_failure(
+        self, tx: dict[str, Any], code: str, message: str, *, evidence: list[str] | None = None
+    ) -> dict[str, Any]:
+        """FAILED before the binding could move, ROLLED_BACK after — then honour `failure_cleanup`.
+
+        The split is the existing rule (nothing to revert before ``COMMITTED``, everything after it);
+        what is new in draft §62 is that a *filesystem* failure goes through it too, and that the
+        backend's declared ``failure_cleanup`` is finally acted on. It was declared by every backend
+        and read by nothing: `TransactionJournal.discard_stage` existed with no caller, so
+        ``stage_only`` — the value both shipped backends publish — was a promise the core never kept.
+
+        The cleanup runs **before** the failure is recorded so the fact goes into that record's
+        evidence, rather than needing a new event state after the transaction is already terminal
+        (the state machine allows no transition out of ROLLED_BACK, and inventing one to carry a
+        cleanup flag would be the tail wagging the dog).
+        """
+
+        declared = str(getattr(getattr(self.backend, "declaration", None), "failure_cleanup", "manual"))
+        cleaned = False
+        if declared == "stage_only":
+            cleaned = self.journal.discard_stage(str(tx["transaction_id"]))
+        facts = list(evidence or [])
+        facts.append(f"failure_cleanup={declared} stage_cleaned={cleaned}")
+
+        if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED"}:
+            return self._fail(tx, code, message, evidence=facts)
+        return self._rollback(tx, code, message, evidence=facts)
 
     def _ensure_stage(self, tx: dict[str, Any]) -> Path:
         """Idempotent staging: a resumed transaction never re-fetches or re-copies blindly."""

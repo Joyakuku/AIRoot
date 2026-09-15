@@ -17,6 +17,7 @@ a digest is a signature.
 
 from __future__ import annotations
 
+import http.client
 import shutil
 import urllib.error
 import urllib.request
@@ -137,13 +138,26 @@ class HttpsArtifactBackend:
             if destination.exists():
                 destination.unlink()
             raise
-        except (urllib.error.URLError, OSError, ValueError) as error:
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as error:
+            # `HTTPException` belongs in this list and was missing until draft §62 (T-001): a real
+            # interrupted download — the server declaring `Content-Length: N` and then sending fewer
+            # bytes — raises `http.client.IncompleteRead`, which subclasses neither `OSError` nor
+            # `URLError`. Measured with an injected opener: the raw exception escaped `fetch`, and
+            # because the handler below never ran, the **partial file stayed on disk**. That is
+            # exactly the scenario's two clauses, both failing.
             if destination.exists():
                 destination.unlink()
             raise AirootError(
-                "PROVENANCE_FAILED",
-                f"could not fetch {locator}",
-                evidence=[str(error)],
+                # Not `PROVENANCE_FAILED`: the source is fine, the *transfer* broke. Exit 2 ("the
+                # environment did not cooperate, retry") is actionable; exit 7 ("your plan is
+                # invalid") would be false and would send the caller to fix nothing (draft §62.4).
+                "INSTALL_IO_FAILED",
+                f"the download from {locator} was interrupted",
+                evidence=[
+                    f"{type(error).__name__}: {error}",
+                    f"bytes received before the failure: {size}",
+                    "the partial file was removed; nothing was staged and no binding changed",
+                ],
             ) from error
         if size == 0:
             destination.unlink(missing_ok=True)

@@ -32,6 +32,7 @@ from airoot.caps.backends import (
     sha256_file,
 )
 from airoot.caps.backends.https_artifact import HttpsArtifactBackend
+from airoot.caps.backends.portable_file import PortableFileBackend
 from airoot.clock import FakeClock
 from airoot.exits import AirootError
 from airoot.tx.artifact import ArtifactRunner, create_artifact_plan
@@ -242,6 +243,109 @@ def test_the_instance_digest_describes_the_owned_payload_not_the_source(
     assert "MANIFEST_DIGEST_MISMATCH" not in diagnostics_by_code(doctor(root.path, registry=registry, verify=True, data_roots=False))
 
 
+class _NoSpaceBackend(PortableFileBackend):
+    """The real backend, with the disk going full during the stage step (T-004)."""
+
+    def stage(self, artifact, *, stage_dir: Path) -> Path:
+        raise OSError(28, "No space left on device")
+
+
+def test_T004_a_full_disk_during_stage_keeps_the_old_binding_and_reports_the_failure(
+    registry, clock, root, artifact: Path, tmp_path: Path
+) -> None:
+    """T-004: the filesystem refuses a step; the old generation must survive and the stage go away.
+
+    Draft §62 measured the before-state with exactly this backend: the raw `OSError` escaped
+    `commit()`. No failed transaction was recorded, so the journal kept a **non-terminal** row that
+    the next `doctor` would report as pending recovery, and the stage directory stayed on disk —
+    even though every backend declares `failure_cleanup="stage_only"` and
+    `TransactionJournal.discard_stage` had existed all along with no caller.
+    """
+
+    first_tx, first_plan, _ = install(registry, clock, root, artifact)
+    assert first_tx["state"] == "FINALIZED"
+    first_active = registry.bindings(active_only=True)
+    assert len(first_active) == 1
+
+    backend = _NoSpaceBackend()
+    plan = create_artifact_plan(
+        registry,
+        backend,
+        capability_id="fake-tool",
+        version="3.0.0",
+        kind="managed_tool",
+        locator=str(artifact),
+        source_digest=sha256_file(artifact),
+        clock=clock,
+        plan_id="plan/real/no-space",
+    )
+    token = fake_issuer.issue(plan, clock=clock)
+    tx = ArtifactRunner(registry, backend, clock=clock).commit(plan, token)
+
+    assert tx["state"] == "ROLLED_BACK" or tx["state"] == "FAILED"
+    assert tx["outcome"] == "INSTALL_IO_FAILED"
+    assert tx["failure"]["code"] == "INSTALL_IO_FAILED"
+    evidence = " ".join(str(item.get("text", item)) for item in tx["failure"]["evidence"])
+    assert "No space left on device" in evidence or "errno=28" in evidence, evidence
+    assert "stage_cleaned=True" in evidence, evidence
+
+    # The old generation is untouched: still one active binding, and it is the first one.
+    active = registry.bindings(active_only=True)
+    assert len(active) == 1
+    assert active[0]["instance_id"] == first_plan["target"]["instance_id"]
+    assert active[0]["instance_id"] == first_active[0]["instance_id"]
+    assert registry.integrity_problems() == []
+
+    # ...and nothing is left asking for recovery: a failure is a finished transaction, not a pending one.
+    assert registry.transactions(unfinished_only=True) == []
+    assert not (Path(root.path) / "tx" / str(tx["transaction_id"]).replace("/", "_") / "stage").exists()
+
+
+def test_T005_a_refused_commit_rolls_back_and_does_not_leave_a_pending_transaction(
+    registry, clock, root, artifact: Path
+) -> None:
+    """T-005: a filesystem refusal *at the commit step* — after the payload moved — must roll back.
+
+    The runnable version of "the target file is locked": `store` exists as a plain file, so the
+    backend's `mkdir` raises `FileExistsError`. Measured before the fix: the exception escaped
+    `commit()`, the journal kept the transaction at `STAGED`, and the binding was never switched back.
+    Driving it through the runner (not the backend in isolation) is the point — the backend raising is
+    fine and expected; what was missing is the *runner* turning that into a diagnosis and a rollback.
+    """
+
+    first_tx, first_plan, _ = install(registry, clock, root, artifact)
+    assert first_tx["state"] == "FINALIZED"
+
+    store = Path(root.path) / "store"
+    for item in sorted(store.rglob("*"), reverse=True):
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            item.rmdir()
+    store.rmdir()
+    store.write_text("not a directory\n", encoding="utf-8")
+    try:
+        second_source = artifact.parent / "payload-v2.bin"
+        second_source.write_bytes(b"AIROOT-REAL-ARTIFACT-V2\n")
+        tx, _plan, _backend = install(registry, clock, root, second_source, version="4.0.0")
+    finally:
+        store.unlink(missing_ok=True)
+
+    assert tx["outcome"] == "INSTALL_IO_FAILED", tx
+    assert tx["state"] in {"FAILED", "ROLLED_BACK"}
+    evidence = " ".join(str(item.get("text", item)) for item in tx["failure"]["evidence"])
+    assert "stage_cleaned=" in evidence, evidence
+
+    active = registry.bindings(active_only=True)
+    assert len(active) == 1
+    assert active[0]["instance_id"] == first_plan["target"]["instance_id"], "the old generation must win"
+    assert registry.integrity_problems() == []
+    assert registry.transactions(unfinished_only=True) == [], (
+        "a raw OSError used to leave the transaction at STAGED, i.e. pending recovery for a failure "
+        "that had already been handled"
+    )
+
+
 def test_a_where_lookup_finds_the_real_artifact(registry, clock, root, artifact: Path) -> None:
     _tx, plan, _backend = install(registry, clock, root, artifact)
 
@@ -388,6 +492,68 @@ def test_https_backend_refuses_a_script_url(tmp_path: Path) -> None:
         backend.fetch(locator="https://example.invalid/install.ps1", destination=tmp_path / "x")
 
     assert caught.value.reason_code == "UNSUPPORTED_BACKEND"
+
+
+class _InterruptedResponse:
+    """A response whose body stops partway with a real transport error (T-001)."""
+
+    def __init__(self, first: bytes, error: BaseException) -> None:
+        self._first = first
+        self._error = error
+
+    def read(self, amount: int) -> bytes:
+        if self._first:
+            chunk, self._first = self._first, b""
+            return chunk
+        raise self._error
+
+    def __enter__(self) -> "_InterruptedResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _InterruptedOpener:
+    def __init__(self, response: _InterruptedResponse) -> None:
+        self._response = response
+
+    def open(self, request: object, timeout: int | None = None) -> _InterruptedResponse:  # noqa: ARG002
+        return self._response
+
+
+def test_T001_an_interrupted_download_is_diagnosed_and_leaves_nothing_behind(tmp_path: Path) -> None:
+    """T-001: a download that dies mid-stream must be *diagnosed*, and leave no partial file.
+
+    The injected opener is how this is reachable without a network, and the interesting error is the
+    one a real truncated transfer produces: when the server declares `Content-Length: N` and sends
+    fewer bytes, `urllib` raises `http.client.IncompleteRead`, which subclasses **neither** `OSError`
+    nor `URLError`. Draft §62 measured that before the fix: the raw exception escaped `fetch` and —
+    because the cleanup branch never ran — the half-written file stayed on disk. Both halves of the
+    scenario failed, and no test had ever driven the streaming loop: the loopback-server tests above
+    are refused by the scheme guard long before a byte is read.
+    """
+
+    import http.client
+
+    payload = b"x" * 4096
+    cases = {
+        "transport reset": ConnectionResetError(10054, "connection reset by peer"),
+        "truncated body": http.client.IncompleteRead(payload[:1024], 64),
+    }
+    for label, error in cases.items():
+        destination = tmp_path / f"{label.replace(' ', '-')}.bin"
+        backend = HttpsArtifactBackend(
+            opener=_InterruptedOpener(_InterruptedResponse(payload, error))
+        )
+
+        with pytest.raises(AirootError) as caught:
+            backend.fetch(locator="https://example.invalid/payload.bin", destination=destination)
+
+        assert caught.value.reason_code == "INSTALL_IO_FAILED", label
+        assert caught.value.exit_code == 2, "a broken transfer is not an invalid plan (exit 7)"
+        assert not destination.exists(), f"{label}: the partial file was left behind"
+        assert any("bytes received" in item for item in caught.value.evidence), label
 
 
 def test_the_cli_dispatches_install_to_the_plan_s_backend(

@@ -409,6 +409,26 @@ class SimulationRunner:
             if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED"}:
                 return self._fail(tx, error.reason_code, error.message, evidence=error.evidence)
             return self._rollback(tx, error.reason_code, error.message, evidence=error.evidence)
+        except OSError as error:
+            # The same hole the artifact runner had (draft §62): this path also copies and renames
+            # bytes (`_ensure_stage`, `os.replace`), so a full disk or a locked file lands here as a
+            # raw `OSError` — outside the `AirootError` branch above, and therefore outside both the
+            # diagnosis and the rollback. Fixed in the sibling rather than only where the scenario
+            # pointed: "the same bug one file over" is not a different bug.
+            return self._fail_or_rollback_io(tx, error)
+
+    def _fail_or_rollback_io(self, tx: dict[str, Any], error: OSError) -> dict[str, Any]:
+        """Turn a filesystem refusal into a diagnosed failure, before or after the binding moved."""
+
+        message = f"the filesystem refused the {tx['state']} step"
+        evidence = [
+            f"{type(error).__name__}: {error}",
+            f"errno={getattr(error, 'errno', None)} winerror={getattr(error, 'winerror', None)}",
+            "the request is fine; free the space, release the lock or fix the permission and re-plan",
+        ]
+        if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED"}:
+            return self._fail(tx, "INSTALL_IO_FAILED", message, evidence=evidence)
+        return self._rollback(tx, "INSTALL_IO_FAILED", message, evidence=evidence)
 
     # ------------------------------------------------------------------ pieces #
 

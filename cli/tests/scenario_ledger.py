@@ -526,43 +526,31 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     },
     # --- T: transaction cases that need a real artifact to interrupt.
     #
-    # §61 audited all seven. The value's own definition names what it covers — a real artifact:
-    # download, extraction, stage, commit, disk, locks — so four of them are correct *even though*
-    # part of the path is delivered, and the notes now say which part. Two were wrong: the real
-    # backend exists, and the failure handling they were filed under does not.
-    "T-001": {
-        "blocked_by": "p4-real-backend",
-        "note": (
-            "§61 复核，**维持原判**，把'哪一半已交付'写清：下载 + 摘要校验**真的跑过真实上游**"
-            "（§59：`rustup-init.exe` 12 721 664 字节），本地失败也没留下 stage"
-            "（`test_l2_backends.py#test_a_missing_artifact_fails_without_leaving_a_stage`）。缺的是"
-            "**中断**那种失败：artifact runner 只捕获 `AirootError`，`fetch` 半途抛出的 `OSError`"
-            "会直接穿出去，既不诊断也不回滚。"
-        ),
-    },
+    # §61 audited all seven; §62 then fixed the family that audit had only *recorded*.
+    #
+    # T-001, T-004 and T-005 all used to live here as `p4-real-backend`, and §61 kept them with notes
+    # saying what was true ("the real backend exists; the failure handling does not"). §62 measured
+    # that handling and found it absent in three places at once:
+    #
+    #   * `https_artifact.fetch` caught `OSError`/`URLError`/`ValueError` but **not**
+    #     `http.client.HTTPException` — and a real truncated transfer raises `IncompleteRead`. The raw
+    #     exception escaped *and* the partial file stayed on disk (the cleanup branch never ran);
+    #   * the artifact runner caught only `AirootError`, so a full disk during `stage` escaped as a
+    #     raw `OSError`, leaving a **non-terminal** transaction in the journal (pending recovery for a
+    #     failure that had already been handled) and the stage directory on disk;
+    #   * the declared `failure_cleanup` was never honoured — `discard_stage` had no caller at all.
+    #
+    # All three now go through `INSTALL_IO_FAILED` (exit 2: the plan is fine, the environment refused)
+    # and the cited tests name the scenarios, so the dispositions are **deleted rather than rewritten**
+    # (§52/§55 treatment). T-003 stays: there is still no extraction implementation in the tree.
     "T-003": {
         "blocked_by": "p4-real-backend",
         "note": (
             "§61 复核，**维持原判**：全树没有任何解压实现（`zipfile`/`tarfile` 都没被导入），所以"
             "'安全解压发现路径穿越'没有对象。相邻但**不同**的保证是 `paths.py` 的 root-relative 原语"
             "（`PATH_ESCAPES_ROOT`），它拦的是 AIROOT 自己拼出来的路径，不是 artifact 内容里的路径。"
-        ),
-    },
-    "T-004": {
-        "blocked_by": "p4-real-backend",
-        "note": (
-            "§61 复核，**维持原判**，理由与 T-001 同族：stage/commit 在真实 backend 上已存在，缺的是"
-            "**磁盘类失败**的诊断——没有空间证据的生产方，也没有把 `ENOSPC` 变成带证据的失败态的路径"
-            "（runner 只捕 `AirootError`）。"
-        ),
-    },
-    "T-005": {
-        "blocked_by": "p4-real-backend",
-        "note": (
-            "§61 复核，**维持原判**，并把边界量准：占用**已存在的 store 路径**是被诊断的"
-            "（`portable_file.commit` 抛 `INSTANCE_CONFLICT`，是个 `AirootError`，因此会回滚）；"
-            "而 `shutil.move` 遇到的**共享冲突/锁**是 `OSError`，runner 不转换它——所以'进入 "
-            "rollback/recovery，不覆盖旧 generation'在锁这一类上今天不成立。"
+            "§62 修了同族的 T-001/T-004/T-005（文件系统失败的诊断），但**没有**顺手写一个解压器——"
+            "那是一个新能力，不是一条失败路径。"
         ),
     },
     # T-013 used to sit here as `p4-real-backend` (and then as `none` + evidence for a test that did

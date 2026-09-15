@@ -4835,6 +4835,74 @@ PROPOSED count: 2        generation: 2
 4. 给"声明缺失必须说为什么"加守卫，并让它在**真实语料**上先红一次（61.6）；
 5. 跑全量 + 切片 + 两种验收模式，重生语料，回写计数，提交。
 
+## 62. 第 62 阶段：文件系统说"不"的时候，安装路径要给出诊断而不是抛异常（T-001 / T-004 / T-005）
+
+### 62.1 这一阶段要解决什么
+
+§61 那轮审计把三条场景**留在了原地**并写下理由：`T-001`（下载中断）、`T-004`（stage 后磁盘空间不足）、`T-005`（commit 时目标被锁）都需要真实 artifact，而"真实 artifact"已经交付——缺的是**失败路径**。当时的原话是："artifact runner 只捕 `AirootError`，`OSError` 会直接穿出去"。这一阶段就是去**量**那件事，然后修。
+
+### 62.2 先量：三处探针，三个缺陷
+
+| 探针 | 读数 | 判定 |
+|---|---|---|
+| 注入 opener，流到一半抛 `ConnectionResetError` | `INSTALL_IO_FAILED`（当时的 `PROVENANCE_FAILED`），**部分文件已删** | 这一路本来是对的 |
+| 注入 opener，流到一半抛 `http.client.IncompleteRead`（服务端声明 `Content-Length: N` 却少发字节——**真实截断**的形状） | 原始 `IncompleteRead` **逃出 `fetch`**，且**部分文件留在磁盘上** | **缺陷 1**：`HTTPException` 不在捕获列表里，清理分支因此从未执行 |
+| 真实 backend（`portable_file`）而 `store` 是一个**普通文件** | 原始 `FileExistsError` **逃出 `commit()`** | **缺陷 2**（T-005）：journal 把事务留在 `STAGED`——一次**已经被处理**的失败，在 `doctor` 眼里却是"待恢复" |
+| 真实 backend，`stage` 抛 `OSError(ENOSPC)` | 原始 `OSError` **逃出 `commit()`** | **缺陷 3**（T-004）：没有失败记录、没有回滚、stage 目录留在磁盘上 |
+
+读数里还有一件结构性的事实：**`failure_cleanup` 从来没有被执行过**。两个 backend 都声明 `failure_cleanup="stage_only"`（九个冻结字段之一），而 `TransactionJournal.discard_stage` **在整个树里没有任何调用方**——一条被声明、被校验、被写进 plan、却从不兑现的承诺。
+
+### 62.3 修法
+
+1. **一个新 reason code：`INSTALL_IO_FAILED` → 退出码 2**。为什么不复用别的：3（损坏）不成立——没有东西损坏，出错前那一代还在，回滚会把它切回去；7（计划/来源问题）更不成立——磁盘满和被锁**没有**说明计划有问题。形状与 `CHILD_PROCESS_FAILED` 相同：**AIROOT 做了它那部分，环境没做**。按 ADR-0023 的先例（"不可读"与"已改变"用同一个码、靠证据区分），**没有**拆出 `DISK_FULL`/`FILE_LOCKED`：errno 与失败路径进证据，而调用者的下一步（腾空间／解锁／改权限，然后**重新出计划**）对三者是同一个动作。
+2. **`fetch` 捕获 `http.client.HTTPException`**（与 `URLError`/`OSError`/`ValueError` 并列），保留"删掉部分文件"这一步，证据里加"收到多少字节"。同时把这一支的码从 `PROVENANCE_FAILED` 改成 `INSTALL_IO_FAILED`——**来源没问题，是传输断了**。
+3. **两个 runner 都把 `OSError` 变成诊断**：`ArtifactRunner` 与 `SimulationRunner`（后者也 `copytree`/`os.replace`，同一个洞；"同一个 bug 在隔壁文件里"不是一个不同的 bug）。分类沿用既有规则：绑定还没动 → `FAILED`；动过 → `ROLLED_BACK`。
+4. **兑现 `failure_cleanup`**：声明 `stage_only` 就 `discard_stage`，并把 `failure_cleanup=<声明> stage_cleaned=<结果>` 写进失败证据。清理**在记录失败之前**做，这样这个事实落在同一条记录里，而不需要在事务已经终态之后再发明一个事件类型去携带它（状态机不允许从 `ROLLED_BACK` 出去，为了一个清理标志去开一条边是本末倒置）。
+
+### 62.4 为什么这个码是 2 而不是 7，以及**没有**拆细的理由
+
+已在 62.3 第 1 条写明。补一句口径：`retryable` 字段在失败记录里仍然写 `false`，而这是**对的**——它问的是"这条 transaction 能不能重试"，而 `journal.create` 是 get-or-create（§61），失败后同一 plan+token 不会再开一条；要重试就得**重新出计划**。证据里明说了这一点，免得调用者把 `retryable=false` 读成"这件事没救"。
+
+### 62.5 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| `fetch` 的 except 元组去掉 `http.client.HTTPException` | 危险 | **红**（T-001） |
+| artifact runner 的 `except OSError` 改成 `raise` | 危险 | **红**（T-004 与 T-005 各一处） |
+| `declared == "stage_only"` 分支不再调用 `discard_stage` | 危险 | **红**（T-004 断言 `stage_cleaned=True`） |
+
+三个变异都用**字节级**读写施加与恢复（§61.8 第 7 条的教训），恢复后逐字节相同。
+
+### 62.6 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S62.1 三处探针量出三个缺陷 | ✅ | 62.2 的表；每个读数都是真实执行得到的 |
+| S62.2 `fetch` 捕获传输类异常 | ✅ | `http.client.HTTPException` 进捕获列表；`INSTALL_IO_FAILED` 替代 `PROVENANCE_FAILED`；部分文件照旧删除 |
+| S62.3 两个 runner 诊断 `OSError` | ✅ | `ArtifactRunner` 与 `SimulationRunner`；分类沿用"绑定动没动" |
+| S62.4 兑现 `failure_cleanup` | ✅ | `discard_stage` 第一次有调用方；证据里带 `stage_cleaned` |
+| S62.5 守卫与文档同步 | ✅ | reason code 表 + `references/reason-codes.md`（退出码 2 行）；agent 面参考的"只列真实码"守卫当场抓到我把状态名 `ROLLED_BACK` 写进了码表 |
+| S62.6 测试 + 回写 | ✅ | `pytest cli/tests` 762 → **765 项**；台账 evidenced **48 → 51**、uncited **60 → 57**（p4 从 4 条降到 1 条） |
+
+### 62.7 如实记录的边界
+
+1. **`T-003` 没有一起修**：安全解压要的是**解压器**，全树一个都没有（`zipfile`/`tarfile` 从未被导入）。写一个是新能力，不是修一条失败路径；它留在 `p4-real-backend`，note 里写明"§62 修了同族的三条，但没有顺手写一个解压器"。
+2. **`INSTALL_IO_FAILED` 的退出码是判断，不是推导**：契约 §15.6 只给退出码的**含义**（2 = 降级/漂移），没有给"文件系统拒绝一次安装"该落哪一档。选 2 的理由是与 `CHILD_PROCESS_FAILED` 同形，并且它是唯一一个能诚实说"AIROOT 没错、环境没配合、出错前那一代还能用"的档。**如果这条判断是错的，改它的入口是这里**。
+3. **回环服务器测试没有覆盖流式路径**：`test_https_backend_refuses_plaintext` 与 `test_https_backend_refuses_a_downgrading_redirect` 用的是**明文 http 回环**地址，而 `fetch` 在**scheme 检查**就拒绝了——所以那两个测试实际上断言的是同一件事，302 从未被发出。真正的流式路径在这之前**没有任何测试**（只有 §59 的真机在线跑过）。T-001 因此改用**注入 opener** 来驱动流式循环。那两个测试名不副实这件事没有改（改它们要起一个带证书的 TLS 回环，属另一件事），**记录在此**。
+4. **`OSError` 的粒度是"整个安装步骤"**：`drive()` 里任何一个字节搬运步骤抛 `OSError` 都会落到同一个诊断，证据里带当时的 `tx["state"]` 来指认是哪一步。没有为"复制失败"与"重命名失败"分别造码——它们的恢复动作相同。
+5. **`SimulationRunner` 的修复没有对应场景编号**：T-001/T-004/T-005 讲的是真实 artifact 路径。修它是**判断**（同一类 bug 不该只修被点名的那一处），不是被场景要求的；它由 `test_l1_transaction.py` 的既有中断面间接看着，没有为它新写测试。
+
+### 62.8 实施顺序
+
+1. 先探三个失败路径（62.2）——**先量，再决定修什么**；
+2. 定 reason code 与退出码档次，并写下**为什么不拆细**（62.4）；
+3. 改 `fetch`（捕获面 + 码 + 证据）；
+4. 改两个 runner（`OSError` → 诊断；分类沿用"绑定动没动"）；顺带**兑现** `failure_cleanup`；
+5. 三个场景各写一个点名测试，并逐个验红（62.5）；
+6. 同步 reason code 表、agent 面参考、台账与计数，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 
