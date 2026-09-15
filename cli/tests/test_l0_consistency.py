@@ -261,6 +261,189 @@ def test_every_policy_revision_is_named_in_the_repo_map() -> None:
     assert missing == [], f"policy revisions missing from the AGENTS.md repo map: {missing}"
 
 
+# --- Guard group 27: what the repo map itself claims (draft §85) ---------------------------------
+#
+# Two of the map's directories were held complete by guards (`caps/*.py`, `policy/*.json`) and the
+# rest were complete by luck. The map also *describes* the files it lists, and those descriptions were
+# prose. §85 measured three claims that had gone wrong:
+#
+#   * the master plan's size (`2236 行` against 2249, nothing compared it);
+#   * the decision log's row, which named three ADRs as if that were what the log contains — it has
+#     twenty-five, and the newest one is the largest decision in P1;
+#   * the draft's row, which called it "提案（未落地）" while §1 of the same file delegates the stage
+#     records `§31`–`§85` to it. **Two sentences in one document describing one file differently** is
+#     the shape this whole module exists for, and the map was the half nobody read twice.
+
+REPO_MAP_HEADING = "## 2. 仓库地图"
+REPO_MAP_ROW = re.compile(r"(?m)^\| `([^`]+)` \|(.+?)\|$")
+FILE_SIZE_CLAIM = re.compile(r"（(\d+) 行）")
+#: §1's delegation: the range, and the file the range lives in. This is the sentence the map's row for
+#: that file has to agree with.
+STAGE_DELEGATION = re.compile(
+    r"逐阶段的实现记录\*\*（`§(\d+)`–`§(\d+)`[^）]*）\*\*全部在 `([^`]+)`"
+)
+
+
+def _repo_map_rows(text: str) -> dict[str, str]:
+    """path -> description, from the repo-map table only and not from every table in the file."""
+
+    section = _repo_map_section(text)
+    if not section:
+        return {}
+    return {path: description.strip() for path, description in REPO_MAP_ROW.findall(section)}
+
+
+def _repo_map_section(text: str) -> str:
+    # `text.count(...)` rather than `HEADING not in text`: this module's own AST check (§76) treats
+    # "a variable compared against a document" as the substring idiom it exists to replace, and there
+    # is no reason to spend an exemption on a check that is not a vocabulary question at all.
+    if text.count(REPO_MAP_HEADING) == 0:
+        return ""
+    return text.split(REPO_MAP_HEADING, 1)[1].split("\n## ", 1)[0]
+
+
+def _repo_map_missing(groups: dict[str, list[Path]], map_text: str) -> list[str]:
+    """Files whose *name* the map section never mentions.
+
+    Name, not row: several files are named inside a directory row's description (`conftest.py` in the
+    `cli/tests/` row, the three `references/` files in theirs), and demanding a row each would be a
+    layout rule rather than a documentation one.
+    """
+
+    return [
+        f"{label}/{path.name}"
+        for label, paths in groups.items()
+        for path in paths
+        if path.name not in map_text
+    ]
+
+
+def _file_size_problems(rows: dict[str, str]) -> list[str]:
+    problems: list[str] = []
+    for path, description in sorted(rows.items()):
+        for stated in FILE_SIZE_CLAIM.findall(description):
+            target = REPO / path
+            if not target.is_file():
+                problems.append(f"{path}: the map states a size for a path that is not a file")
+                continue
+            actual = len(target.read_text(encoding="utf-8").splitlines())
+            if actual != int(stated):
+                problems.append(f"{path}: the map says {stated} lines; the file has {actual}")
+    return problems
+
+
+def test_every_document_and_manifest_is_listed_in_the_repo_map() -> None:
+    """The map's completeness was guarded for two directories and assumed for the others."""
+
+    mapped = _repo_map_rows(AGENTS.read_text(encoding="utf-8"))
+    map_text = _repo_map_section(AGENTS.read_text(encoding="utf-8"))
+    assert mapped and map_text, "the repo map is gone; this guard is about nothing"
+
+    groups = {
+        "docs": sorted((REPO / "docs").glob("*.md"))
+        + sorted((REPO / "docs" / "schema").glob("*.md"))
+        + sorted((REPO / "docs" / "broker").glob("*.md")),
+        "references": sorted((REPO / "references").glob("*.md")),
+        "cli/extensions": sorted((REPO / "cli" / "extensions").glob("*.json")),
+        "cli/tests": sorted(
+            path for path in (REPO / "cli" / "tests").glob("*.py") if not path.name.startswith("test_")
+        ),
+    }
+    for label, paths in groups.items():
+        assert paths, f"{label} holds no files, so this guard is not looking at anything"
+
+    missing = _repo_map_missing(groups, map_text)
+    assert missing == [], f"files the repo map does not name: {missing}"
+
+    # Non-vacuity: an unnamed file must be reported, and an already-mapped one must not be.
+    assert _repo_map_missing({"seeded": [Path("seeded.md")]}, map_text) == ["seeded/seeded.md"]
+    assert _repo_map_missing({"seeded": [Path("SKILL.md")]}, map_text) == []
+
+
+def test_every_file_size_the_repo_map_states_is_the_file_size() -> None:
+    """`（2236 行）` was thirteen lines out of date, and nothing was comparing it."""
+
+    rows = _repo_map_rows(AGENTS.read_text(encoding="utf-8"))
+    assert any(FILE_SIZE_CLAIM.search(description) for description in rows.values()), (
+        "the map no longer states a file size; this guard is about nothing"
+    )
+    assert _file_size_problems(rows) == [], "; ".join(_file_size_problems(rows))
+
+    # Non-vacuity: the exact claim §85 found, restored.
+    text = AGENTS.read_text(encoding="utf-8")
+    stale = text.replace("主规划（2249 行）", "主规划（2236 行）", 1)
+    assert stale != text and _file_size_problems(_repo_map_rows(stale)) != [], (
+        "a stale file size must be reported"
+    )
+    globbed = _repo_map_rows(text.replace("| `docs/AIROOT-总体方案规划-v0.3.md` |", "| `docs/*.md` |", 1))
+    assert _file_size_problems(globbed) != [], "a size claimed for something that is not a file must be reported"
+
+
+def _decision_log_range_problems(rows: dict[str, str], adrs: list[str]) -> list[str]:
+    row = rows.get("docs/AIROOT-v0.3-实现决策记录.md", "")
+    if not row:
+        return ["the decision log is not in the repo map"]
+    return [f"the row does not name {edge}" for edge in (adrs[0], adrs[-1]) if edge not in row]
+
+
+def test_the_repo_map_states_the_decision_log_range_not_a_hand_copy_of_it() -> None:
+    """The row named three ADRs of twenty-five, and read as though that were the contents."""
+
+    rows = _repo_map_rows(AGENTS.read_text(encoding="utf-8"))
+    log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
+    adrs = re.findall(r"(?m)^## (ADR-\d+)", log)
+    assert len(adrs) >= 2, "the decision log has no ADR range; this guard is about nothing"
+
+    assert _decision_log_range_problems(rows, adrs) == [], "; ".join(
+        _decision_log_range_problems(rows, adrs)
+    )
+
+    # Non-vacuity: the row §85 found, whose newest named ADR was twenty-one behind the log, and a map
+    # with no row for the log at all.
+    stale = dict(rows)
+    stale["docs/AIROOT-v0.3-实现决策记录.md"] = rows["docs/AIROOT-v0.3-实现决策记录.md"].replace(
+        adrs[-1], "ADR-0004"
+    )
+    assert _decision_log_range_problems(stale, adrs) == [f"the row does not name {adrs[-1]}"]
+    assert _decision_log_range_problems({k: v for k, v in rows.items() if "决策记录" not in k}, adrs) == [
+        "the decision log is not in the repo map"
+    ]
+
+
+def _delegation_problems(rows: dict[str, str], low: str, high: str, target: str) -> list[str]:
+    row = rows.get(target, "")
+    if not row:
+        return [f"{target} is not in the repo map"]
+    return [f"the row does not state §{edge}" for edge in (low, high) if f"§{edge}" not in row]
+
+
+def test_the_repo_map_agrees_with_the_sentence_that_delegates_the_stage_records() -> None:
+    """§1 hands the stage records to a file; that file's map row must not deny them."""
+
+    text = AGENTS.read_text(encoding="utf-8")
+    match = STAGE_DELEGATION.search(text)
+    assert match is not None, "the entry document no longer delegates its stage records"
+    low, high, target = match.group(1), match.group(2), match.group(3)
+
+    rows = _repo_map_rows(text)
+    assert _delegation_problems(rows, low, high, target) == [], "; ".join(
+        _delegation_problems(rows, low, high, target)
+    )
+
+    # Non-vacuity in both directions: the row that denied the range (the §85 defect), and a
+    # delegation that moved to a file whose row was never updated.
+    denying = dict(rows)
+    denying[target] = rows[target].replace(f"§{low}–§{high} 是每一阶段的实现记录", "**提案（未落地，第二版）**", 1)
+    assert _delegation_problems(denying, low, high, target) == [
+        f"the row does not state §{low}",
+        f"the row does not state §{high}",
+    ]
+    assert _delegation_problems(rows, "31", "99", target) == ["the row does not state §99"]
+    assert _delegation_problems({k: v for k, v in rows.items() if k != target}, low, high, target) == [
+        f"{target} is not in the repo map"
+    ]
+
+
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
     """§15.1 lists the CLI surface; every entry must be one of the two, never neither.
 
@@ -1225,11 +1408,14 @@ def test_the_stage_records_count_the_suite_without_an_unexplained_jump() -> None
     # version of this line at the wrong stage: `**826 → 827**` was the last row when §83 wrote it,
     # and appending a stage made the same string match §83's own row instead, so the mutation still
     # went red while no longer testing the chain's *end*. A mutation anchored on a value the next
-    # stage will reuse silently retargets itself; deriving it from the chain cannot.
-    last_stage, _, last_to, _ = _stage_count_chain(text)[-1]
-    tail = f"| 测试 | **{last_to - 1} → {last_to}**"
+    # stage will reuse silently retargets itself; deriving it from the chain cannot. (§85 then found
+    # the second half of the same problem: the derivation also assumed the row was `N-1 → N`, which
+    # is only true when a stage adds one test.)
+    last_stage, last_from, last_to, _ = _stage_count_chain(text)[-1]
+    assert last_from is not None, f"§{last_stage} states a solo total, so it has no row to shorten"
+    tail = f"| 测试 | **{last_from} → {last_to}**"
     assert text.count(tail) == 1, f"§{last_stage}'s own count row is not in the shape this mutation needs"
-    shortened = text.replace(tail, f"| 测试 | **{last_to - 1} → {last_to - 1}**", 1)
+    shortened = text.replace(tail, f"| 测试 | **{last_from} → {last_to - 1}**", 1)
     assert shortened != text and "the suite has" in problems(shortened), (
         "a chain that ends below the real total must be reported"
     )
