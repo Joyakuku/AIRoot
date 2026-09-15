@@ -2,7 +2,12 @@
 
 **先读 `reason_code`，再读退出码。** 退出码只有 0–9，是粗粒度的；`reason_code` 才告诉你
 "是未知还是没有""是降级还是损坏"。权威表在 `docs/AIROOT-v0.3-诊断码与ReasonCode表.md`，
-代码在 `cli/app/airoot/exits.py`（**每个注册的码都在这份速查里出现**，有测试守这条）。
+代码在 `cli/app/airoot/exits.py`（**每个注册的码都在这份速查里作为一个独立的词出现**，有测试守这条；
+"作为独立的词"这四个字是 §75 加的：之前那条守卫用的是子串匹配，于是 `DEGRADED` 一直躺在
+`CURRENT_SOURCE_DEGRADED` 里冒充"已文档化"，而它是 `tool status`/`tool verify` 真的会报的码）。
+
+**这一版发不出来的码**在文末单独列了一节——符合它们不代表你会遇到它们。带 † 的写法与
+`references/field-values.md` 是同一个约定。
 
 ## 0 — 成功（含"结论是负面的"与"信息级")
 
@@ -27,6 +32,7 @@
 | code | 含义 |
 |---|---|
 | `CURRENT_SOURCE_DEGRADED` | owned payload 不可用，已正常降级到健康 reference。**不是失败** |
+| `DEGRADED` | `tool status` / `tool verify` 撞到 **warning 级**问题（例如 `lifecycle` 说 `active` 却没有 active binding）：对象**可用**，只是状态不完美。有 `error` 级问题时它报的是那个问题的码，不是这个。**不要**把 `DEGRADED` 念成 `BROKEN` |
 | `STALE_GENERATION` | 状态在你读取后被别人改了：重读再试，不要重放旧计划 |
 | `REFERENCE_STALE` / `REFERENCE_DRIFTED` | 被引用对象消失／观测事实变了 |
 | `REFERENCE_IN_USE` | 仍被引用，拒绝 `gc`/`forget` |
@@ -127,3 +133,25 @@ P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用
 | `SEARCH_ROOT_UNAVAILABLE` | root 不存在／是 UNC／不是目录，或没有已注册的数据根 | 让用户注册数据根或显式给 `--search-root` |
 | `SEARCH_PERMISSION_FILTERED` | 部分结果因权限被过滤 | 只说被过滤了，**不要泄露**被过滤的路径 |
 | `SEARCH_JOURNAL_GAP` | USN journal 断档（**P2 的 native 索引才可能发射**） | 现在不会出现；出现即说明 native 索引已启用 |
+
+## 这一版发不出来的码（†）
+
+下面这些码**注册在 `exits.py` 的映射表里、也在上文的解释里**，但**这个 build 没有任何代码写出它们**：除了那张映射表，`cli/app/airoot` 里再也找不到这个字符串。所以你在真机上不会遇到它们；**不要为它们写分支**——遇到就说明版本变了（或者有人在手写 JSON），去核对，不要猜。
+
+判据是一句可以机械核对的话：**"除 `exits.py` 外，`cli/app/airoot/` 里没有再出现这个字符串"**（`cli/tests/test_l1_reason_codes.py` 每次跑测试都把这张表与这句话对一遍，两个方向都查）。它**不**包括"出现在声明里"的情况——例如 `DATA_ROOT_ACL_DRIFT` 出现在 `caps/doctor.py` 的不变量声明表与诊断里，所以它**不在**下面这张表里，它靠上文那一行自己的旁注说明"作为 `reason_code` 要等 P2"。这是判断，不是遗漏。
+
+| code | 退出码 | 为什么这一版没有写者 |
+|---|---|---|
+| `ACL_MISMATCH` | 5 | ACL 的**写**一侧是 P2（现在只有只读观测 `DATA_ROOT_ACL_DRIFT` 诊断） |
+| `DRIFT_DETECTED` | 2 | 泛化的漂移码；这一版用的是更具体的 `REFERENCE_DRIFTED` / `DATA_ROOT_ACL_DRIFT` 等 |
+| `EXTENSION_TIMEOUT` | 2 | 扩展的**进程**运行时还没落地：这一版 `ext/` 只有 manifest、envelope 与假扩展；超时的是搜索自己（`SEARCH_TIMEOUT`），不是扩展 |
+| `EXTENSION_CANCELLED` | 2 | 同上：没有可取消的扩展进程 |
+| `EXTENSION_HEALTH_DEGRADED` | 2 | 同上：扩展健康检查是 manifest 里的**声明**（`health_checks`），没有执行者 |
+| `EXTENSION_OUTPUT_INVALID` | 8 | 没有"扩展返回的文档"可校验（把外部程序的输出收进来要等扩展运行时） |
+| `EXTENSION_PERMISSION_DENIED` | 9 | 同上 |
+| `EXTENSION_DEPENDENCY_MISSING` | 9 | 同上 |
+| `EXTENSION_SIDE_EFFECT_BLOCKED` | 9 | 副作用上限**已经在准入时判**（`caps/boundary.py` 报 `CAPABILITY_NOT_DECLARED`），但"运行时越界"还没有执行者 |
+| `EXTERNAL_REFERENCE_DRIFTED` | 3 | 更具体的 `REFERENCE_DRIFTED`（退出码 2）取代了它：观测漂移不是"损坏" |
+| `SEARCH_JOURNAL_GAP` | 2 | USN journal 断档是 **P2 的 native 索引**才会有的状态（现在没有 journal 消费者） |
+| `SEARCH_PERMISSION_FILTERED` | 2 | 这一版的 crawl 读不动的目录报在 `warnings` 与人可读的证据里，不减少结果集 |
+

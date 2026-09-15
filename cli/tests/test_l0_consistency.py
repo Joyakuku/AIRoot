@@ -101,11 +101,23 @@ def test_every_reason_code_the_app_can_raise_is_registered() -> None:
 
 
 def test_the_reason_code_table_documents_every_registered_code() -> None:
-    """The authoritative mapping is the code; the table must not lag behind it."""
+    """The authoritative mapping is the code; the table must not lag behind it.
+
+    §75: this used to be `code not in text`, which cannot tell `DEGRADED` from
+    `CURRENT_SOURCE_DEGRADED` — a code that only survives as somebody else's substring reads as
+    documented. The same defect was in the agent-facing reference guard below; there it was
+    *hiding a real code* (`DEGRADED`), so both now match a whole word.
+    """
 
     text = REASON_TABLE.read_text(encoding="utf-8")
-    missing = sorted(code for code in REASON_EXIT if code not in text)
+    missing = sorted(code for code in REASON_EXIT if not names_code(text, code))
     assert missing == [], f"registered but undocumented reason codes: {missing}"
+
+
+def names_code(text: str, code: str) -> bool:
+    """True when `code` appears as itself, not as part of a longer code."""
+
+    return re.search(r"(?<![A-Z0-9_])" + re.escape(code) + r"(?![A-Z0-9_])", text) is not None
 
 
 def test_the_reason_code_table_invents_nothing() -> None:
@@ -574,7 +586,7 @@ def test_the_agent_facing_reason_code_reference_names_every_registered_code() ->
     """
 
     text = (REPO / "references" / "reason-codes.md").read_text(encoding="utf-8")
-    missing = sorted(code for code in REASON_EXIT if code not in text)
+    missing = sorted(code for code in REASON_EXIT if not names_code(text, code))
 
     assert missing == [], f"codes an agent can see but cannot look up: {missing}"
 

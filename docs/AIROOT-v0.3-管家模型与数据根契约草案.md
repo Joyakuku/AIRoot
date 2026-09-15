@@ -6037,4 +6037,114 @@ argument command: invalid choice: 'effective'
 5. 入口文档加《看到不认识的取值》一节 + 一条"必须指向它"的守卫；回写 `AGENTS.md` 与审查报告的计数；
 6. 跑全量 + 旧切片 + 两种验收模式，确认 golden 语料**未被改动**（这一轮只动文档与测试），提交。
 
+## 75. 第 75 阶段：守 reason code 的那条守卫用的是子串匹配，于是它把 `DEGRADED` 读成了 `CURRENT_SOURCE_DEGRADED`
+
+### 75.1 这一阶段要解决什么
+
+§74 的镜片换一个面。上一轮查的是**字段取值**（schema 枚举），这一轮查**码**：`reason_code` 与 `diagnostics[].code` 是 agent 真正**先读**的东西（`SKILL.md` 的原话是"先读 `reason_code`，再读退出码"）。三个问题：
+
+1. 95 个注册码里，有没有哪个在 agent 速查（`references/reason-codes.md`）里**查不到**？
+2. 哪些码**这个 build 根本发不出来**——一个 agent 如果为它写分支，写的是一段死代码；
+3. 上面两件事，**守卫能不能看见**。
+
+### 75.2 实测
+
+**发现一（核心）：那条守卫用的是子串匹配，所以它一直在说谎。**
+
+`cli/tests/test_l0_consistency.py` 里守这条的断言是 `code not in text`。而 `references/reason-codes.md` 从头到尾**没有**把 `DEGRADED` 作为独立的词写过——它一直藏在 `CURRENT_SOURCE_DEGRADED` 里，于是"每个注册的码都在这份速查里出现"这句话**看起来**成立。可 `DEGRADED` 是**真的会发出来**的码：
+
+```text
+caps/toolstate.py:147      return "DEGRADED"          # tool status/verify 撞到 warning 级问题时
+caps/toolstate.py:225      "DEGRADED",                # lifecycle 说 active 却没有 active binding
+```
+
+也就是说：一个跑 `airoot tool verify` 的 agent 拿到 `reason_code: "DEGRADED"`，翻速查**查不到**它。把守卫换成词边界匹配（`(?<![A-Z0-9_])DEGRADED(?![A-Z0-9_])`），它立刻红：
+
+```text
+AssertionError: codes an agent can see but cannot look up: ['DEGRADED']
+```
+
+这是本轮的第一份证据，而且它不是"文档少写一条"这种程度的事——**是守卫本身从没查过这件事**。
+
+**发现二：12 个注册码在映射表之外一处都没有。**
+
+判据是一句可机械核对的话：**除 `exits.py` 的映射表外，`cli/app/airoot/` 里再没有第二处出现这个字符串**。
+
+| code | 退出码 | 为什么这一版没有写者 |
+|---|---|---|
+| `ACL_MISMATCH` | 5 | ACL 的写一侧是 P2（现在只有只读观测 `DATA_ROOT_ACL_DRIFT` 诊断） |
+| `DRIFT_DETECTED` | 2 | 泛化漂移码；这一版用更具体的 `REFERENCE_DRIFTED` / `DATA_ROOT_ACL_DRIFT` |
+| `EXTENSION_TIMEOUT` | 2 | 扩展的**进程**运行时没落地：超时的是搜索自己（`SEARCH_TIMEOUT`） |
+| `EXTENSION_CANCELLED` | 2 | 同上：没有可取消的扩展进程 |
+| `EXTENSION_HEALTH_DEGRADED` | 2 | 扩展健康检查是 manifest 里的**声明**，没有执行者 |
+| `EXTENSION_OUTPUT_INVALID` | 8 | 没有"扩展返回的文档"可校验 |
+| `EXTENSION_PERMISSION_DENIED` | 9 | 同上 |
+| `EXTENSION_DEPENDENCY_MISSING` | 9 | 同上 |
+| `EXTENSION_SIDE_EFFECT_BLOCKED` | 9 | 副作用上限**已经在准入时判**（`CAPABILITY_NOT_DECLARED`），"运行时越界"还没有执行者 |
+| `EXTERNAL_REFERENCE_DRIFTED` | 3 | 更具体的 `REFERENCE_DRIFTED`（退出码 2）取代了它：观测漂移不是"损坏" |
+| `SEARCH_JOURNAL_GAP` | 2 | USN journal 断档是 **P2 的 native 索引**才会有的状态 |
+| `SEARCH_PERMISSION_FILTERED` | 2 | 这一版读不动的目录报在 `warnings` 与证据里，不减少结果集 |
+
+**发现三：这句话原本只写在 3 个码旁边。** 文档里已经有"这一版发不出来"的旁注——`DATA_ROOT_ACL_DRIFT`（"P2 才可能发射；现在只是注册"）、`SEARCH_JOURNAL_GAP`（"现在不会出现"）、`CONFLICT_MANAGED_BROKEN`（"仍注册但不再由 `where` 发射"）——**但没有一处是给另外 11 个码的**，它们读起来像是会出现的。同一个事实写了三遍、且只写了三分之一，这是 §74 的老毛病（同一条规则写两遍 / 门只装在一个入口）。
+
+**发现四：诊断码那一侧是干净的。** `doctor` 的 26 个 `_diagnostic` 码全部在权威表里，权威表里的码也全部有发射路径——这条早就被 `test_no_diagnostic_code_is_promised_without_a_path_that_can_emit_it` 守着。所以这一轮**只**动 `reason_code` 那一侧，不去重复已有的门。
+
+### 75.3 做了什么
+
+1. **修守卫**（`cli/tests/test_l0_consistency.py`）：新增 `names_code(text, code)` 助手（词边界匹配），`test_the_reason_code_table_documents_every_registered_code` 与 `test_the_agent_facing_reason_code_reference_names_every_registered_code` 都改用它。**先改守卫、先看它红**，再去补文档——顺序是这一轮的证据链。
+2. **`references/reason-codes.md`**：
+   - `DEGRADED` 进退出码 2 的表，写清它什么时候出现（warning 级问题，对象**可用**），并明确"**不要**把 `DEGRADED` 念成 `BROKEN`"；
+   - 新增《这一版发不出来的码（†）》一节：12 行表（含每个码为什么没有写者）、判据那一句话、与 `references/field-values.md` 同一套 † 约定、以及"**出现在声明里不算生产者**"的例外（`DATA_ROOT_ACL_DRIFT` 因此不在这张表里）；
+   - 表头那句"每个注册的码都在这份速查里出现"改成"**作为独立的词**出现"，并把 §75 的来由写在括号里——下一个人不会再把子串匹配当成覆盖。
+3. **新增 `cli/tests/test_l1_reason_codes.py`**（4 条守卫）：解析文档的那一节，与"哪些码有写者"的实测结果**双向**对账。
+
+### 75.4 守卫与验红
+
+| 守卫 | 盯什么 |
+|---|---|
+| `test_the_section_this_guard_reads_is_the_one_it_thinks_it_is` | 那一节还在、† 还在、表里的码都注册过（节被改名/删掉会红） |
+| `test_a_registered_code_is_either_producible_or_recorded_as_unproducible` | **双向**：没人写的码必须在表里；在表里的码必须真的没人写 |
+| `test_every_recorded_code_is_also_look_up_able_in_the_document` | 那张表是**指针**：每个被列为"发不出来"的码，上文仍要有自己的词边界条目 |
+| `test_the_unproducible_section_is_not_a_second_copy_of_the_whole_table` | 一节如果吞下所有码就不再是信息（上限：注册码的一半） |
+
+**逐个验红（6 个变异，方向都取危险的那一侧）**：
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 文档从表里删掉一个码（`ACL_MISMATCH`） | 红 | ✅ 红 |
+| 文档把一个**会发出来**的码写进表（`NOT_FOUND`） | 红 | ✅ 红 |
+| 表里把码名写错（`SEARCH_PERMISSION_FILTERED` → `...FILTER`） | 红 | ✅ 红 |
+| 整节标题被改掉 | 红 | ✅ 红 |
+| **删掉 `DEGRADED` 的那一行**（让它只剩 `CURRENT_SOURCE_DEGRADED` 这条子串） | 红 | ✅ 红 |
+| **让实现开始写一个被标 † 的码**（`caps/lifecycle.py` 加 `EXTENSION_TIMEOUT = "..."`） | 红 | ✅ 红 |
+
+倒数第二个变异就是这一轮要抓的失效模式本身：**只有把守卫先改成词边界，"删掉这一行"才会红**。
+
+### 75.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **803 → 807**（新文件 4 条） |
+| 审计检查（`test_l0_consistency.py` 的 `^def test_`） | 74 **不变**（这一轮在审计文件里**改了两条**守卫、没有新增审计函数） |
+| 场景台账 / schema | 108 / 19 **不变** |
+| golden 语料 | **未重生**（没动对外 JSON 形状） |
+| `AGENTS.md` 计数 | 3 处；审查报告 2 处（同一提交） |
+
+### 75.6 如实记录的边界
+
+1. **判据是"字面量在 `exits.py` 之外一处都没有"，不是"这条路跑不到"。** 它**保守**：一个码只要在注释、文档字符串或**声明表**里被引号括起来出现过，就会被算成"有生产者"，于是这张表可能**漏**掉一个码——不会**冤枉**一个码（把一个真会出现的码说成不会，是两种错误里更坏的那种，判据刻意避开它）。
+2. **因此 `DATA_ROOT_ACL_DRIFT` 不在这张表里**：它出现在 `caps/doctor.py` 的不变量声明表（D1 组）与诊断里，所以"字面量在别处出现过"成立；而它作为 `reason_code` 的发射要等 P2。它靠上文那一行自己的旁注说明，**不靠这张表**。要把它也纳入，需要"按字段位置判定生产者"，那是另一个量级的工作——这一轮不做，但写在这里。
+3. **`reason_code` 与 `diagnostics[].code` 共用一套词表**（守卫 `test_every_diagnostic_code_is_a_registered_reason_code`），所以"这个码会出现"必须说清**在哪个字段里出现**。表里那 12 个的准确说法是"不作为 `reason_code` 出现"。
+4. **`EXTENSION_*` 那一族还有第二层不确定性**：`ext/envelope.py` 把 `reason_code` 当**参数**收下（`reason_code: str | None = None`），将来的扩展运行时可以把码透传上来。这一版没有那条路（`ext/` 只有 manifest、envelope、假扩展三个模块），所以现在说"没有写者"是真话；但守卫只能在**透传时写了字面量**的情况下发现变化——如果透传用的是变量，它看不见。已知边界。
+5. **守卫比的是词边界，不是"读起来对不对"**：一个把 `DEGRADED` 讲成"坏了"的 agent 仍然能通过全部守卫（与 §74 同一条边界）。
+6. **这一轮没有改任何码的注册、退出码映射或发射行为**，也没有为了让某一行好写而新增/删除码。唯一的实现改动候选（让 `EXTENSION_*` 有人写）被**明确拒绝**：那需要扩展运行时，那是 P2/P4 的事。
+
+### 75.7 实施顺序
+
+1. 先量：**先看守卫自己**（子串还是词边界），再看 95 个码的生产者分布；
+2. 把守卫改成词边界，**先让它红**——红出来的那个 `DEGRADED` 就是这一轮的问题陈述；
+3. 补文档：一个码（`DEGRADED`）+ 一张表（12 个发不出来的码）+ 一句判据 + † 的约定；
+4. 写 4 条守卫；对 **6 个变异**逐个验红，其中一个是"让实现开始写一个被标 † 的码"；
+5. 回写 `AGENTS.md` 与审查报告的计数；跑全量 + 旧切片 + 两种验收模式；确认 golden 语料未动；提交。
+
 
