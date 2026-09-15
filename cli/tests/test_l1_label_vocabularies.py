@@ -20,10 +20,25 @@ DOC = REPO / "references" / "field-values.md"
 
 SECTION = "## schema 没有枚举的标签"
 CIRCLE = "\u2218"
-WRITER = {"evidence[].kind", "where.selection_reason"}
 
-ROW_RE = re.compile(r"`([A-Za-z_]+)`(" + CIRCLE + r")?")
-HEADING_RE = re.compile(r"^###\s+`([^`]+)`\s*$", re.MULTILINE)
+#: field -> how its values are written. `operation` is scoped to the four response builders: the
+#: plan's own `operation` is the published `plan.schema.json` field, documented in the schema
+#: section of the reference, and mixing the two is exactly the confusion this section exists to
+#: stop (draft §78).
+FIELD_FILES: dict[str, tuple[str, ...]] = {
+    "operation": ("cli.py", "caps/search.py", "caps/exposure.py", "caps/rebuild.py"),
+}
+EXPRESSION_PROBES: dict[str, tuple[str, ...]] = {
+    "operation": (r'"operation":\s*([^,\n]+)',),
+    "origin": (r"\borigin=([^,\n]+)", r'"origin":\s*([^,\n]+)'),
+    "size_source": (r"\bsize_source=([^,\n]+)", r'"size_source":\s*([^,\n]+)'),
+    "version_source": (r'"version_source":\s*([^,\n]+)',),
+    "outcome": (r'"outcome":\s*([^,\n]+)', r"\boutcome=([^,\n]+)"),
+}
+WRITER = {"evidence[].kind", "where.selection_reason"} | set(EXPRESSION_PROBES)
+
+ROW_RE = re.compile(r"`([A-Za-z_][A-Za-z_0-9-]*)`(" + CIRCLE + r")?")
+HEADING_RE = re.compile(r"^###\s+`([^`]+)`", re.MULTILINE)
 
 
 def _cells(line: str) -> list[str]:
@@ -31,22 +46,27 @@ def _cells(line: str) -> list[str]:
 
 
 def parse_section() -> dict[str, dict[str, set[str]]]:
-    """field -> {value: marks} plus the producer cell, parsed out of the doc's own table."""
+    """field -> {value: marks}, parsed out of the doc's own table.
+
+    §78: chunks are bounded by **every** `###` heading, including ones with trailing prose after the
+    backticked name. The first version only recognised bare headings, so the rows of the next
+    subsection were read as values of the previous field — the same "where does a section end"
+    defect §75 found in the guards, this time in the parser.
+    """
 
     text = DOC.read_text(encoding="utf-8")
     start = text.index(SECTION)
     end = text.index("\n## ", start + len(SECTION))
     body = text[start:end]
 
-    headings = list(HEADING_RE.finditer(body))
+    starts = [(match.group(1), match.start(), match.end()) for match in HEADING_RE.finditer(body)]
     found: dict[str, dict[str, set[str]]] = {}
-    for index, heading in enumerate(headings):
-        field = heading.group(1)
+    for index, (field, _, heading_end) in enumerate(starts):
         if field not in WRITER:
             continue
-        chunk = body[heading.end(): headings[index + 1].start() if index + 1 < len(headings) else len(body)]
+        chunk_end = starts[index + 1][1] if index + 1 < len(starts) else len(body)
         rows: dict[str, set[str]] = {}
-        for line in chunk.splitlines():
+        for line in body[heading_end:chunk_end].splitlines():
             if not line.startswith("|") or set(line) <= set("|-: "):
                 continue
             cells = _cells(line)
@@ -88,11 +108,51 @@ def _selection_reasons_written() -> set[str]:
     return found
 
 
+def _envelope_labels_written(field: str) -> set[str]:
+    """Every literal in the right-hand side that assigns `field`, so a ternary contributes both sides.
+
+    Reading the whole expression (rather than `field="literal"`) is what makes `size_source` come out
+    as three values and `version_source` as two: `"declared" if ... else "unknown"` is one assignment
+    with two literals, and a probe that stopped at the first one would have "documented" a vocabulary
+    that is missing half its words.
+    """
+
+    wanted = FIELD_FILES.get(field)
+    found: set[str] = set()
+    for path in sorted(APP.rglob("*.py")):
+        rel = path.relative_to(APP).as_posix()
+        if wanted is not None and rel not in wanted:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for probe in EXPRESSION_PROBES[field]:
+            for expression in re.findall(probe, text):
+                # A literal that is a *key* (`"outcome": str(row[...])`) is the field naming itself,
+                # not a value; so is the field's own name when it is read back out of a document.
+                cleaned = re.sub(r"[\"'][a-z_0-9]+[\"']\s*:", " ", expression)
+                found |= set(re.findall(r'"([a-z][a-z_0-9-]*)"', cleaned)) - {field}
+    return found
+
+
 def test_the_section_this_guard_reads_is_the_one_it_thinks_it_is() -> None:
     parsed = parse_section()
     assert set(parsed) == WRITER, f"the doc's label section changed shape: {sorted(parsed)}"
     for field, rows in parsed.items():
         assert rows, f"{field} has no rows"
+
+
+def test_every_envelope_label_the_app_writes_is_the_documented_one() -> None:
+    """Every field in the label section, both directions, against the code that assigns it."""
+
+    parsed = parse_section()
+    problems: list[str] = []
+    for field in sorted(WRITER - {"evidence[].kind", "where.selection_reason"}):
+        documented = set(parsed[field])
+        written = _envelope_labels_written(field)
+        for missing in sorted(written - documented):
+            problems.append("%s: %s is written but not explained" % (field, missing))
+        for invented in sorted(documented - written):
+            problems.append("%s: the doc explains %s, which no code writes" % (field, invented))
+    assert problems == [], "\n".join(problems)
 
 
 def test_the_evidence_kinds_the_app_writes_are_exactly_the_documented_ones() -> None:

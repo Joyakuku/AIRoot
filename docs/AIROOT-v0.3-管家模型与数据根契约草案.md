@@ -6307,4 +6307,85 @@ new check names_token(agents, 'decision') -> True
 5. 被既有守卫拦下的那一处（未绑定的退出码声明）按它的指示**改文档而不是改 census**；
 6. 回写计数、跑全量 + 旧切片 + 两种验收模式、确认 golden 语料未动、提交。
 
+## 78. 第 78 阶段：信封自己的字段——`operation` / `origin` / `size_source` / `version_source` / `outcome`
+
+### 78.1 这一阶段要解决什么
+
+§77 立起的判据是"**schema 没枚举、代码天天在写的标签**要单独有一节、权威是代码"。这一轮把这句话**系统化**地问一遍：把 app 里所有"`字段`: `字面量`"的赋值收集起来，按字段分组，看哪些字段有 ≥2 个取值、却没有任何 schema 枚举它。§77 只处理了 `evidence[].kind` 与 `where.selection_reason`——因为它们是"我要解释结论"的标签；这一轮问的是**信封自己**的字段：我在读哪份文档、为什么这样分流、这个数字是哪来的。
+
+### 78.2 实测
+
+**发现一：最刺眼的是 `operation`。** 每个 `--json` 响应的顶层都有 `operation`，它回答"**我手里这份文档是哪条命令产出的**"。schema 只在 `search-response`/`broker-request` 里枚举过它；其余文档连信封 schema 都没有，所以**13 个取值里 10 个在任何文档里都查不到**：`apply_reference_exposure` / `explain` / `forget_all_persist` / `forget_reference_persist` / `gc_plan` / `pin` / `plan_dry_run` / `rebuild_plan` / `refresh` / `status`。剩下 3 个（`search`/`uninstall`/`rebuild`）只是因为它们**同时是命令名**才"看起来有文档"——这正是 §74 起的"同名词假覆盖"。
+
+**发现二：`origin` 有两个意思。** 同一个词在两个位置各有一套值：
+
+| 位置 | 取值 | 数量 |
+|---|---|---|
+| 路由 origin（`scope decide` 顶层、`metadata.import.routing.origin`） | `generic_tool` / `high_risk` / `memory` / `project_manifest` / `no_capability` / `unclassified` / `unverifiable_source` | 7 |
+| 载荷 origin（`metadata.import.origin`） | `local_file` | 1 |
+
+其中 `no_capability`、`unclassified`、`unverifiable_source` 三个**一个文档都没提过**。一个 agent 看到 `origin: unclassified` 会以为"没分类"是某种错误——它其实是"所有规则都没命中、也没有显然的兜底"这个**正常结论**。
+
+**发现三：`size_source` / `version_source` 是"这个数字/版本是哪来的"。** 它们在 §70 的实现里存在（批准一个要复制 250 MB 的人有权知道体积是量的还是别人报的），但**从来没有文档**：`declared`（调用方声明）/ `unknown`（没有 —— **不猜**）/ `measured-from-the-file`（真的逐字节量过）；`declared-by-caller` / `no-version-in-the-file`。
+
+**发现四：两个**解析器都不知道"节在哪里结束"**。** 这一轮把 5 张新表加进 `references/field-values.md` 的那一刻，§74 的守卫**立刻三连红**：它的行解析器只在遇到"schema 标题"时更新 `current`，所以标签节的 4 列表格被当成 `common` 的行。§77 的标签解析器是同一类毛病：它只认**光秃秃的** `### \`字段\`` 标题，于是 `### \`operation\`（每个响应信封的顶层）` 这种带后缀的标题不被识别，它下面的行**漏进了上一个字段**（`where.selection_reason` 里冒出 13 个"命令名"）。
+
+> 这是 §75/§76 那条镜片的第三次现身，而这次落后在**解析器**上：**守卫的判据对不对，取决于它知不知道自己在读哪一段。**
+
+### 78.3 做了什么
+
+1. **`references/field-values.md` 的《schema 没有枚举的标签》再添 5 节**：`operation`(13) / `origin`(8) / `size_source`(3) / `version_source`(2) / `outcome`(2)，每行仍带"本版谁写出"证据指针；`origin` 那一节把**两个意思**分表说清。
+2. **修两个解析器的节边界**：
+   - `test_l1_field_values.py`：任何 `## ` 标题（不只是 schema 标题）都**结束上一节**；
+   - `test_l1_label_vocabularies.py`：标题正则改成 `^###\s+\`名\``（允许后缀），且**每一段**都由下一个 `###` 收尾。
+3. **`test_l1_label_vocabularies.py` 升级成"按字段驱动"**：新增 `EXPRESSION_PROBES`（每个字段怎么取值）+ `FIELD_FILES`（`operation` 只从四个**响应构造器**取，因为计划的 `operation` 是 `plan.schema.json` 自己的字段、已在 schema 节里documented）。取值时读**整个赋值表达式的右半边**并取其中每个字面量——所以 `size_source="declared" if ... else "unknown"` 贡献**两个**值，而不是一个。同时剥掉表达式里的"`键`:"（字段名自己不是它的取值）。
+4. **`AGENTS.md` 的 `references/` 行**补上这一节（§77 时遗漏，这一轮一起补）。
+
+### 78.4 守卫与验红
+
+| 守卫 | 盯什么 |
+|---|---|
+| `test_every_envelope_label_the_app_writes_is_the_documented_one` | 5 个新字段逐个**双向**对账（代码写的必须有行；文档里的必须真的会被写） |
+| （沿用）`evidence[].kind` / `where.selection_reason` / ∘ 标记 / 证据指针存在 | 见 §77 |
+
+**7 个变异逐个验红**：
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 文档删掉一个信封 `operation` | 红 | ✅ 红 |
+| 文档编一个不存在的 `operation` | 红 | ✅ 红 |
+| 文档把带连字符的取值写错（`measured-from-the-file`） | 红 | ✅ 红 |
+| 实现里新写一个路由 `origin` | 红 | ✅ 红 |
+| 实现里改掉一个 `size_source` 字面量 | 红 | ✅ 红 |
+| 标签解析器退回"只认光秃秃标题" | 红 | ✅ 红 |
+| **文档里塞一张 4 列表格**（节内） | 修好了就**绿**；把 §74 的解析器退回旧写法就**红** | ✅ 两个方向都对 |
+
+最后一对是这一轮的关键证据：它同时证明了修复**有效**（新代码下杂表被忽略）和修复**必要**（旧代码下杂表被读成 `common` 的行）。
+
+### 78.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **814 → 815**（新增 1 条；§77 的 5 条仍在） |
+| 审计检查（`test_l0_consistency.py`） | **76 不变** |
+| 场景台账 / schema | 108 / 19 **不变**（仍然没动 schema） |
+| golden 语料 | **未重生** |
+
+### 78.6 如实记录的边界
+
+1. **`action` 被排除，理由是量不出来。** 它的字面量集合被 argparse 自己的关键字污染（`add_argument(..., action="store_true")` 与真正的 `"action": "no_action"`/`resumed` 混在一起），而这一轮的判据是"按字段收集字面量"——**判据在这个字段上不成立**，所以不写它，也不假装它被覆盖了。要覆盖它得换判据（按结果文档的位置取），那是另一件事。
+2. **`backend_id`（`portable_file` / `fake_fixture`）也是标识而不是词表**：它们是**冻结清单里的身份**（`policy/capabilities.json` + `caps/backends/`），不是"取值域"。记在这里，不塞进标签表。
+3. **`operation` 的判据被限制到四个响应构造器**：这是一个**判断**。计划的 `operation` 是 `plan.schema.json` 的字段（§74 已经逐值解释过，含 † 的三个），若把 `tx/` 也算进来，两种 `operation` 会被混成一张表——那正是这一节存在的意义（说清"哪个字段"），所以宁可限制判据。
+4. **这一轮仍然没有动 schema。** 13 个信封 `operation` 值、8 个 `origin` 值都**不该**进 schema：它们描述的是"这份文档是谁"，属于信封协议而不是数据契约；收紧成枚举意味着每加一个命令都要发新版 schema，收益是零。
+5. **守卫仍然只保证"两边一致"**，不保证含义写对（§74/§75/§76/§77 同一条边界）。
+6. **§74 的守卫这次三连红**，值得记下来：不是因为文档错了，而是因为**它读不出节边界**。守卫红了要看**是哪一边错了**——这一轮是守卫。
+
+### 78.7 实施顺序
+
+1. 把 §77 的判据系统化：收集所有 `字段: 字面量` 赋值，按字段分组，筛出 ≥2 取值且无 schema 枚举的；
+2. 人工过一遍这份清单，分三类：**要写的**（这就是本轮 5 个字段）、**判据不成立的**（`action`）、**身份不是词表**（`backend_id`）——后两类写进边界而不是塞进表里；
+3. 写文档 5 节；**加进去的瞬间看守卫红**，由此发现两个解析器不知道节边界；
+4. 修解析器 + 升级守卫为按字段驱动；**7 个变异逐个验红**，其中一对是"杂表在有/无修复下的两个方向"；
+5. 回写计数与 `AGENTS.md` 的 `references/` 行；跑全量 + 旧切片 + 两种验收模式；确认 golden 语料未动；提交。
+
 

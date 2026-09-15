@@ -127,10 +127,14 @@ def parse_document() -> tuple[list[Row], dict[str, list[Row]], list[str]]:
     by_schema: dict[str, list[Row]] = {}
     current: str | None = None
     for line in body.splitlines():
-        heading = SECTION_RE.match(line)
-        if heading:
-            current = heading.group(1)
-            by_schema.setdefault(current, [])
+        if line.startswith("## "):
+            # §78: a heading that is not a schema heading *ends* the previous section. Without this
+            # the tables sitting under the label section were read as rows of `common` — a parser
+            # that does not know where a section stops is the same defect §75 found in the guards.
+            heading = SECTION_RE.match(line)
+            current = heading.group(1) if heading else None
+            if current:
+                by_schema.setdefault(current, [])
             continue
         if not line.startswith("|") or set(line) <= set("|-: "):
             continue

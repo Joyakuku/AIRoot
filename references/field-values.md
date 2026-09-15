@@ -212,6 +212,71 @@
 | `UNMANAGED_ONLY` | 只有没登记的东西可指 | `caps/where.py` |
 | `NOT_FOUND`∘ | 没有候选 | `caps/where.py` |
 
+### `operation`（每个响应信封的顶层）
+
+`--json` 的顶层 `operation` 回答"**我手里这份文档是哪条命令产出的**"。schema 只在 `search-response` 与 `broker-request` 里枚举过它，所以其余文档没有权威可查。**13 个值**（`plan` 自己的 `operation` 是另一个字段，见上文 `plan.schema.json` 那一节）：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `search` | `search <query>` 的响应信封 | `caps/search.py` |
+| `status` | `search status`：索引状态 + 新鲜度 | `cli.py` |
+| `explain` | `search explain`：会用索引还是实时遍历 | `cli.py` |
+| `refresh` | `search refresh`：重建索引 | `cli.py` |
+| `pin` | `tool pin`：记下一个愿望 | `cli.py` |
+| `gc_plan` | `tool gc --plan`：回收预演 | `cli.py` |
+| `rebuild_plan` | `rebuild --plan`：重建预演 | `cli.py` |
+| `rebuild` | `rebuild`：真的重写派生投影 | `caps/rebuild.py` |
+| `plan_dry_run` | `plan --dry-run`：只出计划不落盘 | `cli.py` |
+| `uninstall` | `uninstall`（含 `--dry-run`） | `cli.py` |
+| `apply_reference_exposure` | 应用一次引用暴露（`env persist` 的写入阶段） | `caps/exposure.py` |
+| `forget_reference_persist` | `env forget <ref>`：还原一个能力写过的环境 | `caps/exposure.py` |
+| `forget_all_persist` | `env forget --all`：还原 AIROOT 写过的**全部**环境 | `caps/exposure.py` |
+
+### `origin`（**两个意思，别混**）
+
+这个名字在两种文档里各有一个意思：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `generic_tool` | 分流 origin：单文件通用 CLI → 数据根，不询问 | `caps/planner.py` |
+| `high_risk` | 分流 origin：命中高风险三类 → 必须确认 | `caps/planner.py` |
+| `memory` | 分流 origin：`.ai/tooling.json` 里的既有选择优先 | `caps/planner.py` |
+| `project_manifest` | 分流 origin：项目清单声明了它 → 项目内隔离 | `caps/planner.py` |
+| `no_capability` | 分流 origin：能力没在任何地方声明过 → 根本不可路由 | `caps/planner.py` |
+| `unclassified` | 分流 origin：所有规则都没命中，也没有显然的兜底 | `caps/planner.py` |
+| `unverifiable_source` | 分流 origin：来源不可验证（不能装，只能 reference/import） | `caps/planner.py` |
+| `local_file` | **载荷** origin（只在 `metadata.import.origin`）：这次导入的源是本地文件 | `cli.py` |
+
+路由 origin 出现在 `scope decide --json` 的顶层 `origin`、以及计划的 `metadata.import.routing.origin`；载荷 origin 只在 `metadata.import.origin`。**看到 `origin` 先看它在哪一层**。
+
+### `size_source`
+
+`size_source` 回答"这个体积数字是**哪来的**"——批准一个人要复制 250 MB 的人有权知道它是量出来的还是别人报的。**3 个值**：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `declared` | 调用方**声明**的体积（没有量过） | `caps/planner.py` |
+| `unknown` | 没有体积信息 —— **不猜** | `caps/planner.py` |
+| `measured-from-the-file` | 这个命令**真的量过**（`adopt --mode import` 逐字节读过） | `cli.py` |
+
+### `version_source`
+
+同上的问题，问的是**版本**从哪来。**2 个值**：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `declared-by-caller` | 调用方给了 `--version` | `cli.py` |
+| `no-version-in-the-file` | 文件里没有可读的版本 —— 如实说没有 | `cli.py` |
+
+### `outcome`
+
+一次**结果**的粗结论（`env persist` / `env forget` 的结果文档，以及 `logs/audit/events.json` 的事件）。**2 个值**：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `ok` | 这一步做成了 | `caps/exposure.py` |
+| `failed` | 这一步失败了（细节在 `errors`/`reason_code` 里） | `tx/journal.py` |
+
 ---
 
 ## 不在这张表里的 schema
