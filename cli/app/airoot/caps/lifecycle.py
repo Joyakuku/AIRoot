@@ -440,6 +440,7 @@ def apply_gc_plan(
             approval_id=str(token["approval_id"]),
             plan_hash=str(plan["plan_hash"]),
             outcome="ok",
+            approval_mode=str(token["approval_mode"]),
         )
     # The delete happens between INTENT and APPLIED so an interruption leaves a durable
     # record of what was being removed; both outcomes are identifiable and idempotent.
@@ -467,6 +468,7 @@ def apply_gc_plan(
             artifact_digest=expected,
             reason_code=None,
             outcome="ok",
+            approval_mode=str(token["approval_mode"]),
         )
     registry.update_projection()
     return _gc_result(registry, plan, instance_id, already=False, removed=removed, store_dir=store_dir)

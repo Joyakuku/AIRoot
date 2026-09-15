@@ -5072,6 +5072,75 @@ C-009 在这一轮里**两次**被误报成 `evidenced`，两次都是**散文**
 5. 写四个点名测试（正面全链路 + 两种拒绝 + `recreate` 证人），逐个验红；
 6. 修正 `recreate` 的过时理由、改准台账、补 agent 面与场景、回写计数，跑全量 + 切片 + 两种验收模式，提交。
 
+## 65. 第 65 阶段：让审计能说清"这次批准是谁给的"（`events.approval_mode`，迁移 v6）
+
+### 65.1 这一阶段要解决什么
+
+§61 把 P-012 的 `no_witness_reason` 写成了一句可直接检验的话：**"证人要断言一条不存在的列"**——`events` 表当时只有 `approval_id`，没有 `approval_mode`。而三大核心契约（决策3）的原话是：
+
+> 低风险动作可以由受保护的 policy 自动批准，但**必须记录 `approval_mode=policy`**。
+
+也就是说：契约把它写成**要求**，而记录这件事的地方根本没有那个字段。于是"不伪装成人工批准"这句话在**审计里不可验证**——一条 agent 自动批准的事件和一条人批准的事件，行形状完全一样，任何读者都分不出来。
+
+这一阶段只做**记录的那一半**（`§61` 说的"缺的是列"），**不做**产生策略批准的那一方：核心永远不铸造批准（`AGENTS.md` §7），策略签发方是待裁决项。所以台账里 P-012 **仍然**记 `undesigned`——这一轮让那句话的后半句不再成立（列**存在**了），前半句（谁来产生）还在。
+
+### 65.2 迁移 v6：一处需要小心的是**列位置**
+
+`MIGRATIONS` 从 `{2,3,4,5}` 变成 `{2,3,4,5,6}`，新迁移用既有的 `_add_columns` 助手。但有一条容易忽略：
+
+**`ALTER TABLE ADD COLUMN` 总是追加到末尾**，而 `ddl.sql` 是**新建**数据库的形状。所以新列在两边都必须位于**最后**——`approval_mode` 在 DDL 里写在 `occurred_at` **之后**，而不是语义上更顺眼的 `approval_id` 旁边。读起来稍差，但换来"迁移过的库"与"新建的库"在**列顺序**上也一致。
+
+守卫跟着加严：既有的 `test_migrated_and_fresh_databases_have_identical_shape` 对每张表比的是 `{列名: 类型}` 字典——**对顺序不敏感**，所以列加错位置它看不见。现在 `events` 那一组改成比**列表**（有序），并断言最后一列就是 `approval_mode`。
+
+### 65.3 哪些事件记录它：记一次，其余靠引用
+
+| 事件 | 记录 `approval_mode`？ | 为什么 |
+|---|---|---|
+| `APPROVED`（`tx/approval.py` 的 `record_approval`） | **是** | 这是**建立**批准的那条事件；后面所有事件都通过 `approval_id` 指回这里 |
+| `PROPOSED`（`tx/journal.py` 的 `create`） | **是** | 唯一同时持有 token 的**事务**事件：`advance` 只拿到事务，而事务的已发布 schema 是 `additionalProperties: false`，模式挂不到它身上 |
+| `GC_INTENT` / `GC_APPLIED` | **是** | 调用点持有 token |
+| `EXPOSED`（`env persist`） | **是** | 通过给 `apply_reference_plan` 增加可选 `approval_mode` 参数，由 CLI（持有 token）传入 |
+| 其余状态事件 | 否 | 它们带 `approval_id`；审计的常规读法是**事实记一次、其余引用**，硬要每条都重复一遍只会让同一个事实有多个可能不一致的副本 |
+
+**三种取值，不是两种**：`policy`、`human`、以及**没有批准时记 `NULL`**。"没有检查"与"检查了，是人批的"必须是不同的答案——这是 §50 对 bounds 用过的那条规则，用在这里是"作者身份"。
+
+### 65.4 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 批准事件不再记录模式 | 危险 | **红**（`policy` 那条断言） |
+| 无批准的事件也写 `human`（把 `NULL` 抹成默认值） | 危险 | **红**（第三种取值的断言） |
+| `ddl.sql` 里把新列放到 `approval_id` 之后（不在末尾） | 危险 | **红**（顺序敏感的 `events` 形状断言）——这一格是**新增守卫的直接动机**，见 65.2 |
+
+### 65.5 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S65.1 迁移 v6 | ✅ | `MIGRATIONS` 加 `6`；`_add_columns(connection, "events", …)`；迁移记录写明理由 |
+| S65.2 DDL 与迁移**列顺序**一致 | ✅ | 两边都把 `approval_mode` 放末尾；`test_migrated_and_fresh_databases_have_identical_shape` 的 `events` 组改成有序比较 |
+| S65.3 `append_event` + 五类调用点 | ✅ | `registry/db.py`；`tx/approval.py`、`tx/journal.py`、`caps/lifecycle.py`×2、`caps/exposure.py` + CLI 传参 |
+| S65.4 三种取值可区分 | ✅ | `test_l1_transaction.py#test_the_audit_record_of_an_approval_says_which_kind_it_was` |
+| S65.5 迁移计数与不变量守卫 | ✅ | 两处 `[1,2,3,4,5]` → `[1,2,3,4,5,6]`；迁移幂等仍成立 |
+| S65.6 台账与文档回写 | ✅ | P-012 的 note 与 `no_witness_reason` 重写（缺的只剩**产生方**）；审查报告里"`events` 表没有 `approval_mode` 列"那个分句改成已交付；测试 **774 → 775** |
+
+### 65.6 如实记录的边界
+
+1. **没有动审计投影**（`logs/audit/events.json`）。它本来就不是完整事件日志，而是 `{event_count, last_seq, digest}` 的**摘要**（给 D10 的"可重建"判据用），连 `approval_id` 都不投。把模式投进去会改变它的摘要 digest，而"摘要里多一个字段"并不能让谁多知道一件事——权威记录是 `state/events`。
+2. **`--mode` 与事件状态没有交叉校验**：`approval_mode` 取自 token（schema 已限定 `human|policy`），但事件表对它没有 `CHECK` 约束。加上约束需要一次表重建（SQLite 不能给已有表加 CHECK），而 token 已经由发布 schema 把住了取值——**这是判断，记在这里**，与 §62 用 evidenc 区分 errno 而不是拆码同一个取向。
+3. **P-012 仍记 `undesigned`，计数不变**（evidenced 52 / uncited 56）。半条场景被做掉不会让它变成"已覆盖"：自动批准**仍然没有生产方**。这一轮的产出是"契约里那句要求现在可查"，不是"这个场景完成了"。
+4. **只对 `fake_issuer` 造的 token 实测过**：P1 没有生产签发方（与 §59 同一条边界）。`policy` 与 `human` 两种取值的区分能力是这条边界内**真的**验证过的，不是推测。
+
+### 65.7 实施顺序
+
+1. 先量：读契约原文（"必须记录 `approval_mode=policy`"）+ 实测 `events` 表确实没有该列 → **先把"缺的是什么"说准**；
+2. 量影响面：迁移集合、两处计数断言、形状守卫对**顺序**不敏感这件事、投影是否投该字段（结论：不投）；
+3. 改 DDL 与迁移（列放末尾）+ `append_event` 参数；
+4. 逐站点传参，**每处都问"这里拿得到 token 吗"**，拿不到就不传并在 65.3 里写明原因；
+5. 写三种取值的点名测试，并给形状守卫加顺序敏感断言；
+6. 改准台账与审查报告里那个已过时的分句，回写计数，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

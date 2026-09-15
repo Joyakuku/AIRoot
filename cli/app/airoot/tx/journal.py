@@ -155,6 +155,11 @@ class TransactionJournal:
                 approval_id=tx["approval_id"],
                 after_state="PROPOSED",
                 outcome="ok",
+                # This is the only transaction event that carries the mode: `create` holds the token,
+                # while the later `advance` calls hold the transaction (whose published schema has
+                # `additionalProperties: false`, so the mode cannot be parked on it). Recorded once,
+                # referenced by `approval_id` afterwards — the same shape as the approval event.
+                approval_mode=approval.get("approval_mode"),
             )
         return tx
 

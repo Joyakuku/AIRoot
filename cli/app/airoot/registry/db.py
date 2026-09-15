@@ -140,7 +140,22 @@ def _migrate_to_5(connection: sqlite3.Connection, clock: Clock) -> None:
     )
 
 
-MIGRATIONS = {2: _migrate_to_2, 3: _migrate_to_3, 4: _migrate_to_4, 5: _migrate_to_5}
+EVENTS_V6_COLUMNS: tuple[tuple[str, str], ...] = (("approval_mode", "TEXT"),)
+
+
+def _migrate_to_6(connection: sqlite3.Connection, clock: Clock) -> None:
+    _add_columns(connection, "events", EVENTS_V6_COLUMNS)
+    connection.execute(
+        "INSERT OR REPLACE INTO migrations (version, applied_at, note) VALUES (?, ?, ?)",
+        (
+            6,
+            clock.timestamp(),
+            "the audit trail can tell a policy approval from a human one (draft §65)",
+        ),
+    )
+
+
+MIGRATIONS = {2: _migrate_to_2, 3: _migrate_to_3, 4: _migrate_to_4, 5: _migrate_to_5, 6: _migrate_to_6}
 
 
 class Registry:
@@ -358,14 +373,23 @@ class Registry:
         artifact_digest: str | None = None,
         reason_code: str | None = None,
         outcome: str | None = None,
+        approval_mode: str | None = None,
     ) -> None:
-        """Append an authoritative historical fact (state/events)."""
+        """Append an authoritative historical fact (state/events).
+
+        ``approval_mode`` is passed by the events that **establish** an approval — the approval
+        itself and the transaction it authorises (draft §65). Later state events carry
+        ``approval_id`` instead: recording the fact once and referencing it is how an audit trail
+        stays readable, and it is what makes 三大核心契约's "必须记录 ``approval_mode=policy``"
+        checkable without a join into a table the reader may not have.
+        """
 
         connection.execute(
             """
             INSERT INTO events (transaction_id, state, detail, actor, approval_id, plan_hash, generation,
-                                before_state, after_state, artifact_digest, reason_code, outcome, occurred_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                before_state, after_state, artifact_digest, reason_code, outcome, occurred_at,
+                                approval_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 transaction_id,
@@ -381,6 +405,7 @@ class Registry:
                 reason_code,
                 outcome,
                 self.clock.timestamp(),
+                approval_mode,
             ),
         )
 

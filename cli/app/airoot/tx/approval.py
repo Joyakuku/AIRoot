@@ -204,9 +204,16 @@ def record_approval(registry: Any, token: dict[str, Any]) -> None:
         registry.append_event(
             connection,
             state="APPROVED",
-            detail=f"approval {token['approval_id']} accepted for consumption",
+            detail=(
+                f"approval {token['approval_id']} accepted for consumption "
+                f"(mode={token['approval_mode']})"
+            ),
             approval_id=token["approval_id"],
             plan_hash=token["plan_hash"],
             reason_code=None,
             outcome="ok",
+            # The event that establishes the approval records *which kind* it was, so a policy
+            # approval can never be read back as a human one (三大核心契约 决策3, draft §65). This is
+            # the site that matters: every later event on this plan points here through `approval_id`.
+            approval_mode=str(token["approval_mode"]),
         )

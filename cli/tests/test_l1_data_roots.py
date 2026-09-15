@@ -349,7 +349,7 @@ def test_v1_database_is_migrated_in_place(root, tmp_path: Path) -> None:
 
     migrated = Registry.open(legacy_root)
     try:
-        assert migrated.migration_versions() == [1, 2, 3, 4, 5]
+        assert migrated.migration_versions() == [1, 2, 3, 4, 5, 6]
         assert migrated.data_roots() == []
         # Steward columns are usable immediately after the migration.
         with migrated.write(expected_generation=migrated.generation) as connection:
@@ -385,6 +385,15 @@ def test_migrated_and_fresh_databases_have_identical_shape(root, tmp_path: Path)
         fresh_instances = {row["name"]: row["type"] for row in fresh._conn.execute("PRAGMA table_info(instances)")}
         assert migrated_instances == fresh_instances
         assert "collected_at" in migrated_instances
+
+        # The events table is compared by **order**, not just by name: `ALTER TABLE ADD COLUMN`
+        # appends, so a column added to `ddl.sql` anywhere but the end would give migrated and fresh
+        # databases the same names in different positions — invisible to a name-keyed dict, and fatal
+        # to anything reading a row positionally (draft §65).
+        migrated_events = [row["name"] for row in migrated._conn.execute("PRAGMA table_info(events)")]
+        fresh_events = [row["name"] for row in fresh._conn.execute("PRAGMA table_info(events)")]
+        assert migrated_events == fresh_events
+        assert migrated_events[-1] == "approval_mode", migrated_events
     finally:
         migrated.close()
         fresh.close()
@@ -396,7 +405,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     for _ in range(3):
         handle = Registry.open(legacy_root)
         try:
-            assert handle.migration_versions() == [1, 2, 3, 4, 5]
+            assert handle.migration_versions() == [1, 2, 3, 4, 5, 6]
         finally:
             handle.close()
 

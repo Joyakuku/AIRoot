@@ -1092,7 +1092,11 @@ def cmd_env_persist(args: argparse.Namespace, context: Context) -> tuple[dict[st
         verify_approval(registry, plan, token, keyring=load_keyring(context.path()), clock=context.clock)
         record_approval(registry, token)
         result = apply_reference_plan(
-            plan, registry=registry, approval_id=str(token["approval_id"]), clock=context.clock
+            plan,
+            registry=registry,
+            approval_id=str(token["approval_id"]),
+            approval_mode=str(token["approval_mode"]),
+            clock=context.clock,
         )
     finally:
         registry.close()

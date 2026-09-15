@@ -326,12 +326,18 @@ def apply_reference_plan(
     registry: Any,
     store: EnvironmentStore | None = None,
     approval_id: str | None = None,
+    approval_mode: str | None = None,
     clock: Clock = SYSTEM_CLOCK,
 ) -> ExposureResult:
     """Write the plan's values, recording every previous value first.
 
     Order matters: the old value is read and journaled *before* the write, so a crash
     between the two leaves a record of what to restore rather than a silent change.
+
+    ``approval_mode`` is optional and travels beside ``approval_id`` rather than replacing it: the
+    id says *which* approval, the mode says *what kind* (draft §65). Callers that only hold the id
+    leave it ``None``, and the event then records no mode — which is honest, because that caller
+    did not have one to record.
     """
 
     if plan.get("operation") != PLAN_OPERATION:
@@ -424,6 +430,7 @@ def apply_reference_plan(
             plan_hash=str(plan["plan_hash"]),
             reason_code=None,
             outcome="ok",
+            approval_mode=approval_mode,
         )
 
     return ExposureResult(

@@ -182,7 +182,13 @@ CREATE TABLE IF NOT EXISTS events (
     artifact_digest TEXT,
     reason_code     TEXT,
     outcome         TEXT,
-    occurred_at     TEXT NOT NULL
+    occurred_at     TEXT NOT NULL,
+    -- Which kind of approval authorised this (三大核心契约 决策3: "低风险动作可以由受保护的 policy
+    -- 自动批准，但必须记录 approval_mode=policy"). Recorded on the events that *establish* an
+    -- approval; later state events point at `approval_id`, so a policy approval cannot be read as a
+    -- human one. Appended last on purpose: `ALTER TABLE ADD COLUMN` appends, so a migrated database
+    -- and a fresh one must agree on column *order* as well as on names (draft §65).
+    approval_mode   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS approvals (

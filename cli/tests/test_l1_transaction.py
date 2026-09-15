@@ -381,6 +381,49 @@ def test_P016_the_same_token_consumed_twice_never_rewinds_the_transaction(
     assert err.value.exit_code == 4
 
 
+def test_the_audit_record_of_an_approval_says_which_kind_it_was(registry: Registry, clock, root) -> None:
+    """三大核心契约 决策3: a policy approval must be recorded as ``approval_mode=policy``.
+
+    This is the audit half of the scenario asking for a low-risk **policy** approval to be
+    distinguishable from a human one. The other half — a component that *produces* a policy approval —
+    still needs an issuer, so that half is still filed as missing. What is pinned here is the part the
+    contract states as a requirement on the record, and the part that was genuinely absent: measured
+    before draft §65, the `events` table had no such column, so an agent's approval and a person's
+    were the same row shape and no reader could tell them apart.
+
+    Three values matter, not two. An event with no approval records **no** mode, and that must stay
+    distinguishable from a human approval — "not checked" and "checked, and it was a person" are
+    different answers (the rule §50 applied to bounds, applied here to authorship).
+    """
+
+    from airoot.tx.approval import record_approval
+
+    fake_issuer.install_keyring(root.path)
+
+    policy_plan = create_plan(registry, version="60.0.0", clock=clock, ttl_minutes=600)
+    policy_token = fake_issuer.issue(policy_plan, clock=clock, ttl_minutes=600, mode="policy")
+    record_approval(registry, policy_token)
+
+    human_plan = create_plan(registry, version="61.0.0", clock=clock, ttl_minutes=600)
+    human_token = fake_issuer.issue(human_plan, clock=clock, ttl_minutes=600, mode="human")
+    record_approval(registry, human_token)
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.append_event(connection, state="NOTE", detail="nothing was approved here")
+
+    by_event = {(row["approval_id"], row["state"]): row for row in registry.events()}
+
+    recorded_policy = by_event[(policy_token["approval_id"], "APPROVED")]
+    assert recorded_policy["approval_mode"] == "policy"
+    assert "mode=policy" in recorded_policy["detail"], recorded_policy["detail"]
+
+    recorded_human = by_event[(human_token["approval_id"], "APPROVED")]
+    assert recorded_human["approval_mode"] == "human"
+
+    unapproved = by_event[(None, "NOTE")]
+    assert unapproved["approval_mode"] is None, "no approval recorded must not read as a human one"
+
+
 # --------------------------------------------------------------------------- #
 # fault injection at every state boundary (§6.1)
 # --------------------------------------------------------------------------- #

@@ -295,17 +295,19 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     "P-012": {
         "blocked_by": "undesigned",
         "no_witness_reason": (
-            "证人要断言一条**不存在的列**。审计实测：`events` 表根本没有 `approval_mode` 列"
-            "（`registry/db.py` 的 `append_event` 只有 `approval_id`），而 §13.3 说'审计里 "
-            "`approval_mode=policy` 可区分'——今天**区分不了**。等列存在，证人就是断言它的那个测试。"
+            "证人要断言一次**没有生产方**的动作。**§65 之后审计那一半已经有了**（`events.approval_mode`，"
+            "迁移 v6；由 `test_l1_transaction.py#test_the_audit_record_of_an_approval_says_which_kind_it_was` "
+            "断言 policy/human/无批准三种取值），缺的只剩**谁来产生一个策略批准**：P1 禁止核心凭空铸造"
+            "批准（`AGENTS.md` §7），唯一的签发方是 `cli/tests/fake_issuer.py`。证人得断言'低风险动作被"
+            "自动批准了且审计里写着 policy'——而今天没有任何组件会自动批准任何东西，所以说不出这句话。"
         ),
         "note": (
-            "§61 改判：原记 `p2-protected-state`，不准确。两半缺的是不同的东西：(1) **自动批准这个动作"
-            "没有生产方**——P1 禁止核心凭空铸造批准（`AGENTS.md` §7），只有 `cli/tests/fake_issuer.py`；"
-            "策略审批签发方是待裁决项。(2) **审计面没有 `approval_mode` 列**，所以"
-            "'不伪装成人工批准'在审计里不可验证。已交付的是**资格谓词**（`base.py` 的 `low_risk_eligible`，"
-            "`test_l2_backends.py#test_script_execution_disqualifies_the_low_risk_path`）与 `approve` 的"
-            "输出字段（`cli.py`）。"
+            "§61 改判（原记 `p2-protected-state`，不准确），§65 复核并**把其中一半做掉**。期望是复合句："
+            "(1) **审计里可区分**——`events` 表现在有 `approval_mode` 列，批准事件（`tx/approval.py`）、"
+            "事务的 `PROPOSED` 事件（`tx/journal.py`，它是唯一同时持有 token 的那一步）、`gc` 的两个事件"
+            "与 `env persist` 的 `EXPOSED` 事件都记录它；'没有批准' 记 `NULL`，与 `human` **可区分**。"
+            "三大核心契约 决策3 的原话是'必须记录 `approval_mode=policy`'，这句话现在可查。"
+            "(2) **自动批准这个动作没有生产方**——策略审批签发方是待裁决项，所以本条仍记 `undesigned`。"
         ),
     },
     "P-015": {
