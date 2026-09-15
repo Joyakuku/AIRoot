@@ -40,6 +40,7 @@ from airoot.caps.exposure import (
     request_from_entry,
 )
 from airoot.cli import main
+from airoot.schema_io import load_schema
 from airoot.tx import create_plan
 from airoot.tx.simulate import SimulationRunner
 
@@ -110,6 +111,61 @@ def unresolved(document: dict, paths: list[str]) -> list[str]:
 
 def invocations() -> list[dict]:
     return json.loads(AGENT_META.read_text(encoding="utf-8"))["invocation"]
+
+
+#: Every published schema file name, for the check below. Derived, never listed.
+def _schema_stems() -> list[str]:
+    from airoot import SCHEMA_DIR
+
+    return sorted(path.name[: -len(".schema.json")] for path in SCHEMA_DIR.glob("*.schema.json"))
+
+
+def _document_schemas() -> list[str]:
+    """Schemas that describe a *document*: a fragment (`common`) has no `required`, so **everything**
+    validates against it and it can decide nothing here (the same rule §93 uses)."""
+
+    return [stem for stem in _schema_stems() if load_schema(stem).get("required")]
+
+
+def document_schema_problems(command: str, entry: dict, document: dict) -> list[str]:
+    """§94: `document_schema` must be true of the document the CLI actually printed.
+
+    The lane tells an agent which fields to read; this says whether a published contract describes the
+    document those fields live in. Both directions matter:
+
+    * a declared schema must **validate** the document, and at least one read path must be a top-level
+      property of it — otherwise the declaration points at a nested contract and reads as a promise the
+      lane does not make (`tool pin` produces a `plan`, but the lane reads the pin *report*);
+    * a `null` must be measured, not assumed: if some published schema does describe the document, the
+      lane is pinned and saying "no contract" is the same defect in the other direction.
+    """
+
+    from airoot.schema_io import errors_for
+
+    declared = entry.get("document_schema", "<missing>")
+    if declared == "<missing>":
+        return [f"{command}: no document_schema key (draft §94)"]
+
+    validating = [stem for stem in _document_schemas() if not errors_for(stem, document)]
+
+    if declared is None:
+        if validating:
+            return [f"{command}: declares no schema, but {validating} describes this document exactly"]
+        return []
+
+    problems: list[str] = []
+    if declared not in _document_schemas():
+        return [f"{command}: document_schema {declared!r} is not a published document schema"]
+    if errors_for(declared, document):
+        problems.append(f"{command}: document_schema {declared} does not validate the printed document")
+    tops = {str(path).split(".")[0].split("[")[0] for path in entry.get("read") or []}
+    properties = set(load_schema(declared).get("properties", {}))
+    if not tops & properties:
+        problems.append(
+            f"{command}: document_schema {declared} is not the document the read paths live in "
+            f"(none of {sorted(tops)} is a top-level property of it)"
+        )
+    return problems
 
 
 @pytest.fixture
@@ -299,10 +355,64 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         missing = unresolved(document, entry["read"])
         if missing:
             problems.append(f"{command}: exit {code} does not carry {missing}")
+        problems += document_schema_problems(command, entry, document)
 
     assert problems == [], "agents/airoot.json names fields the output does not have:\n" + "\n".join(problems)
     # Exact, not a threshold: every invocation either produced a document or is declared above.
     assert len(covered) == len(invocations()) - len(UNCOVERED)
+
+
+def test_the_documented_document_schema_count_is_the_number_measured() -> None:
+    """The honesty note says how many lanes are pinned; a drifted sentence would be a small lie.
+
+    Same tie §54 gave the test count and §73 the read-path count: the number an agent quotes has to be
+    the number the metadata actually carries.
+    """
+
+    note = json.loads(AGENT_META.read_text(encoding="utf-8"))["honesty"]["document_schema_note"]
+    lanes = invocations()
+    pinned = sum(1 for entry in lanes if entry.get("document_schema"))
+
+    stated = re.findall(r"(\d+) of (\d+) lanes", note)
+    assert stated, "the honesty note no longer states how many lanes are pinned; this guard is about nothing"
+    assert {tuple(int(part) for part in pair) for pair in stated} == {(pinned, len(lanes))}, (
+        f"the note says {stated}; the metadata has {pinned} pinned of {len(lanes)} lanes"
+    )
+
+
+def test_the_document_schema_check_reports_both_directions() -> None:
+    """A check that only ever agrees would leave every lane green while telling an agent nothing."""
+
+    healthy = {
+        "schema_version": 1,
+        "status": "healthy",
+        "root_instance_id": "root-x",
+        "registry_generation": 0,
+        "diagnostics": [],
+        "checked_at": "2026-01-01T00:00:00Z",
+    }
+    reader = {"read": ["status"]}
+
+    # Declared and true.
+    assert document_schema_problems("doctor", dict(reader, document_schema="doctor-response"), healthy) == []
+    # Declared but the document does not satisfy it.
+    assert document_schema_problems(
+        "doctor", dict(reader, document_schema="where-response"), healthy
+    ), "a schema that does not validate the document must be reported"
+    # Declared but the read paths live in a different document (the `tool pin` shape: reachable, not read).
+    assert document_schema_problems(
+        "doctor",
+        {"read": ["in_sync"], "document_schema": "doctor-response"},
+        healthy,
+    ), "a schema whose top-level properties the read paths do not name must be reported"
+    # Declared as unpinned while a schema describes it exactly.
+    assert document_schema_problems(
+        "doctor", {"read": ["status"], "document_schema": None}, healthy
+    ), "a measured pin declared as no-contract must be reported"
+    # Nothing declared at all.
+    assert document_schema_problems("doctor", dict(reader), healthy)
+    # And a name that is not a published document schema (`common` is a fragment).
+    assert document_schema_problems("doctor", dict(reader, document_schema="common"), healthy)
 
 
 def test_every_invocation_is_either_exercised_or_declared_uncovered() -> None:

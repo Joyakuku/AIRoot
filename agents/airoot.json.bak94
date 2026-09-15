@@ -9,53 +9,45 @@
       "question": "root / protocol / recovery status",
       "command": ["root", "status"],
       "always_first": true,
-      "read": ["root_instance_id", "reason_code"],
-      "document_schema": null
+      "read": ["root_instance_id", "reason_code"]
     },
     {
       "question": "is anything wrong (D1-D10, data roots, references)",
       "command": ["doctor"],
       "always_first": true,
-      "read": ["status", "diagnostics[].code", "diagnostics[].severity", "diagnostics[].impact", "security_mode"],
-      "document_schema": "doctor-response"
+      "read": ["status", "diagnostics[].code", "diagnostics[].severity", "diagnostics[].impact", "security_mode"]
     },
     {
       "question": "where is this capability, and why that one",
       "command": ["where", "<capability>"],
       "read": ["found", "executable", "management", "selection_reason", "reason_code", "evidence", "zone", "candidates[].machine_discoverable"],
-      "notes": "a candidate row carries `machine_discoverable` (= zone != W): false means healthy and usable but excluded from machine-level discovery, not a fault; Zone W answers only explicit --session/--project activation",
-      "document_schema": "where-response"
+      "notes": "a candidate row carries `machine_discoverable` (= zone != W): false means healthy and usable but excluded from machine-level discovery, not a fault; Zone W answers only explicit --session/--project activation"
     },
     {
       "question": "does a version-constrained capability exist",
       "command": ["where", "<capability>", "--version", "<constraint>"],
-      "read": ["found", "version", "selection_reason", "evidence"],
-      "document_schema": "where-response"
+      "read": ["found", "version", "selection_reason", "evidence"]
     },
     {
       "question": "what is declared on this machine",
       "command": ["inventory", "--class", "<managed_tool|runtime|external_reference|unmanaged>"],
       "read": ["instances", "external_references", "bindings[].binding_key", "bindings[].zone"],
-      "notes": "`bindings[].zone` is R/W/P; a machine-scope binding in Zone W is declared but will never be machine-discoverable (see where's `machine_discoverable`)",
-      "document_schema": "registry-projection"
+      "notes": "`bindings[].zone` is R/W/P; a machine-scope binding in Zone W is declared but will never be machine-discoverable (see where's `machine_discoverable`)"
     },
     {
       "question": "what is actually inside the data roots (read-only scan)",
       "command": ["discover"],
-      "read": ["reports[].candidates", "reports[].counts", "whitelist_revision"],
-      "document_schema": null
+      "read": ["reports[].candidates", "reports[].counts", "whitelist_revision"]
     },
     {
       "question": "may AIROOT manage this object at all",
       "command": ["capability", "check", "<path>"],
-      "read": ["verdict", "conditions", "remediation"],
-      "document_schema": null
+      "read": ["verdict", "conditions", "remediation"]
     },
     {
       "question": "which capabilities are frozen",
       "command": ["capability", "list"],
-      "read": ["revision", "capabilities"],
-      "document_schema": null
+      "read": ["revision", "capabilities"]
     },
     {
       "question": "which directories does AIROOT watch, and with what role",
@@ -68,161 +60,137 @@
         "reason_code",
         "files_touched"
       ],
-      "notes": "the first step of the steward domain: nothing is discovered or adopted before a data root is registered, and registering writes no files (files_touched is 0)",
-      "document_schema": null
+      "notes": "the first step of the steward domain: nothing is discovered or adopted before a data root is registered, and registering writes no files (files_touched is 0)"
     },
     {
       "question": "record an existing object without taking ownership",
       "command": ["adopt", "<path>", "--mode", "reference"],
       "read": ["reference", "ownership", "files_touched"],
-      "notes": "path must be a direct child of a registered data root",
-      "document_schema": null
+      "notes": "path must be a direct child of a registered data root"
     },
     {
       "question": "drop AIROOT's record of a reference (files untouched)",
       "command": ["forget", "<external-id>"],
-      "read": ["files_touched", "source_unchanged"],
-      "document_schema": null
+      "read": ["files_touched", "source_unchanged"]
     },
     {
       "question": "where should an install go, and must a human confirm",
       "command": ["scope", "decide", "<capability>"],
-      "read": ["scope", "confirmation_required", "options", "origin", "size_estimate_bytes", "reason_code"],
-      "document_schema": null
+      "read": ["scope", "confirmation_required", "options", "origin", "size_estimate_bytes", "reason_code"]
     },
     {
       "question": "route and plan an install (dry run first)",
       "command": ["plan", "<capability>", "--scope", "<project|data-root>", "--target", "<dir|data-root:id>", "--dry-run"],
-      "read": ["routing", "confirmation_required", "required_approval", "size_estimate_bytes", "size_note"],
-      "document_schema": null
+      "read": ["routing", "confirmation_required", "required_approval", "size_estimate_bytes", "size_note"]
     },
     {
       "question": "make a capability usable in this session only",
       "command": ["env", "activate", "<external-id>", "--shell", "<powershell|cmd>"],
-      "read": ["variables", "path_prepend", "persisted"],
-      "document_schema": null
+      "read": ["variables", "path_prepend", "persisted"]
     },
     {
       "question": "where does an installable artifact come from, and which hosts are trusted",
       "command": ["source", "list"],
-      "read": ["revision", "allowed_hosts", "sources", "signature_verification"],
-      "document_schema": null
+      "read": ["revision", "allowed_hosts", "sources", "signature_verification"]
     },
     {
       "question": "what is the published digest for this capability and version",
       "command": ["source", "resolve", "<capability>", "--version", "<v>"],
       "read": ["expected_digest", "artifact_url", "checksum_url", "provenance", "integrity", "offline"],
-      "notes": "the digest comes from the publisher's checksum file; --source-out writes a document that `plan --source-json` accepts",
-      "document_schema": null
+      "notes": "the digest comes from the publisher's checksum file; --source-out writes a document that `plan --source-json` accepts"
     },
     {
       "question": "undo a session activation and restore the previous values",
       "command": ["env", "deactivate", "--session", "<id>"],
       "read": ["deactivated", "restored", "stack_depth", "script"],
-      "notes": "restores old values instead of deleting; refuses with SESSION_STATE_STALE when the generation moved",
-      "document_schema": null
+      "notes": "restores old values instead of deleting; refuses with SESSION_STATE_STALE when the generation moved"
     },
     {
       "question": "run one command with a capability's environment",
       "command": ["exec", "<external-id>", "--", "<command>"],
       "read": ["exit_status", "stdout", "persisted"],
-      "notes": "`exec --env <external-id> -- <command>` (planning §15.1) is the same command; everything after `--` goes to the child, options before it belong to AIROOT",
-      "document_schema": null
+      "notes": "`exec --env <external-id> -- <command>` (planning §15.1) is the same command; everything after `--` goes to the child, options before it belong to AIROOT"
     },
     {
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
-      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the write cannot be completed on a real machine. The document is the self-validated `reference-plan` **plus** `plan_file` / `required_action` / `reason_code`; those three are deliberately not part of the plan contract (the approvable artifact is the file, and it is the one whose hash this document carries), so no single schema describes what is printed -- measured, not assumed (draft §94)",
-      "document_schema": null
+      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the write cannot be completed on a real machine"
     },
     {
       "question": "undo what AIROOT persisted",
       "command": ["env", "forget", "<external-id>"],
       "read": ["restored", "removed", "drifted"],
-      "notes": "--dry-run reports without changing anything and without consuming the record",
-      "document_schema": null
+      "notes": "--dry-run reports without changing anything and without consuming the record"
     },
     {
       "question": "put my whole environment back (the steward leaving)",
       "command": ["env", "forget", "--all"],
       "read": ["restored", "removed", "drifted", "shared_variables", "records", "capability_ids"],
-      "notes": "restores every variable AIROOT ever wrote and touches nothing else; --all cannot be combined with an id or --variable",
-      "document_schema": null
+      "notes": "restores every variable AIROOT ever wrote and touches nothing else; --all cannot be combined with an id or --variable"
     },
     {
       "question": "which persisted variables exist",
       "command": ["env", "list"],
-      "read": ["environment_persist"],
-      "document_schema": null
+      "read": ["environment_persist"]
     },
     {
       "question": "take ownership of a portable file I already have",
       "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
       "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "metadata.import.size_bytes", "target.instance_id"],
-      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied. As with `env persist`, the printed document is the self-validated `plan` plus `plan_file` / `required_action` / `reason_code`, so no single schema describes it (draft §94)",
-      "document_schema": null
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied"
     },
     {
       "question": "what does AIROOT own on this machine",
       "command": ["tool", "list"],
-      "read": ["instances[].capability_id", "instances[].version", "instances[].lifecycle_status", "instances[].active_binding", "instances[].source"],
-      "document_schema": null
+      "read": ["instances[].capability_id", "instances[].version", "instances[].lifecycle_status", "instances[].active_binding", "instances[].source"]
     },
     {
       "question": "what is the state of this one instance",
       "command": ["tool", "status", "<instance-id>"],
       "read": ["instance", "payload_present", "entrypoints_missing", "findings", "reason_code"],
-      "notes": "read-only; never switches the active binding",
-      "document_schema": null
+      "notes": "read-only; never switches the active binding"
     },
     {
       "question": "is this payload still intact",
       "command": ["tool", "verify", "<instance-id>"],
       "read": ["verified", "expected_digest", "actual_digest", "problems"],
-      "notes": "digest and entrypoint existence only; never adopts or repairs",
-      "document_schema": null
+      "notes": "digest and entrypoint existence only; never adopts or repairs"
     },
     {
       "question": "is PATH still following the one-entry rule",
       "command": ["path", "verify"],
       "read": ["entries", "findings[].severity", "violations", "launcher_present"],
-      "notes": "read-only; writing machine PATH belongs to the P2 broker",
-      "document_schema": null
+      "notes": "read-only; writing machine PATH belongs to the P2 broker"
     },
     {
       "question": "pin a capability to a version constraint",
       "command": ["tool", "pin", "<capability>"],
       "read": ["sync", "in_sync", "plan", "manifest_revision", "active_binding_changed"],
-      "notes": "writes desired state only; it offers a plan and never changes the active binding",
-      "document_schema": null
+      "notes": "writes desired state only; it offers a plan and never changes the active binding"
     },
     {
       "question": "retire an owned payload (binding only)",
       "command": ["tool", "retire", "<instance-id>"],
-      "read": ["payload_removed", "lifecycle_status"],
-      "document_schema": null
+      "read": ["payload_removed", "lifecycle_status"]
     },
     {
       "question": "what may be collected, and collect it",
       "command": ["tool", "gc", "--plan"],
       "read": ["candidates[].blockers", "plans[].plan_hash"],
-      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so only --plan is reachable today",
-      "document_schema": null
+      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so only --plan is reachable today"
     },
     {
       "question": "remove an AIROOT-owned payload",
       "command": ["uninstall", "<instance-id>"],
       "read": ["retire", "plan", "required_action", "reason_code"],
-      "notes": "retire then gc; never one step; never for a reference",
-      "document_schema": null
+      "notes": "retire then gc; never one step; never for a reference"
     },
     {
       "question": "regenerate derived state (projection, audit) from the registry",
       "command": ["rebuild"],
       "read": ["rebuilt", "archived_to", "findings", "database_touched", "files_deleted"],
-      "notes": "--plan reports only; the registry database is never rebuilt from its own projection",
-      "document_schema": null
+      "notes": "--plan reports only; the registry database is never rebuilt from its own projection"
     },
     {
       "question": "where is a file, and what is it called (search, not capability resolution)",
@@ -237,14 +205,12 @@
         "data.fallback",
         "data.next_cursor"
       ],
-      "notes": "bounded crawl, not an index: status=degraded + SEARCH_FALLBACK_USED(2) + data.fallback.kind=crawl + freshness=unknown/none mean 'this is a live walk, not a healthy index'. `search --query status` searches for a file literally named status; `search status|explain|implementations` are the reserved subcommands. Never present search as capability resolution — that is `where`.",
-      "document_schema": "search-response"
+      "notes": "bounded crawl, not an index: status=degraded + SEARCH_FALLBACK_USED(2) + data.fallback.kind=crawl + freshness=unknown/none mean 'this is a live walk, not a healthy index'. `search --query status` searches for a file literally named status; `search status|explain|implementations` are the reserved subcommands. Never present search as capability resolution — that is `where`."
     },
     {
       "question": "recover an interrupted change",
       "command": ["repair"],
-      "read": ["repaired[].action", "repaired[].state"],
-      "document_schema": null
+      "read": ["repaired[].action", "repaired[].state"]
     }
   ],
   "confirmation_options": ["project-isolated", "data-root", "cancel"],
@@ -386,7 +352,6 @@
     "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
     "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",
     "signature_note": "v1 verifies published digests only. A digest is not a signature; never imply the artifact was signed.",
-    "document_schema_note": "`document_schema` names the published schema that describes the document a lane's `read` paths live in, or null when no schema describes it. A null is **measured**, not assumed: the CLI is run, and every published document schema is tried against what it printed (cli/tests/test_l1_agent_read_fields.py). 5 of 34 lanes are pinned (doctor, where x2, inventory, search); the other 29 read a report whose shape only the field-existence check holds. Two of the 29 print a self-validated plan **plus** `plan_file` / `required_action` / `reason_code`, which are deliberately not part of the plan contract. Treat a null lane's fields as informational and never quote them as contract.",
     "allowed_claims": "See AGENTS.md §8. Never claim AIROOT is implemented, available, or Everything-class."
   }
 }
