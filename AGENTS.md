@@ -26,9 +26,9 @@ AIROOT
 
 ### 当前阶段：P1「最小 Core」已实现，P2 未开始
 
-**已实现（协议级，Python 3.11）**：**P1 最小 Core**（root 解析与卷身份守卫、SQLite registry 与迁移、只读 JSON 投影、`where` 确定性选择、`doctor` D1–D10、模拟事务与 journal 驱动恢复、CLI 与 golden 语料）；**管家域的全部步骤 1–9、11–12**（数据根注册与只读 PE 静态探测、能力白名单发现、`adopt --mode reference` 非拥有式登记、依赖分流与 `scope` 决策、会话激活与 **user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、**steward-first `where`** 与数据根/reference 重观测诊断、**删除分级**（只删 AIROOT 自己装的，reference 永不 `uninstall`）、**能力边界**）；**Skill 适配层**（`SKILL.md` + `agents/airoot.json` + `references/`，带漂移守卫）；**可信来源清单与 Install Backend**；**`rebuild`**（派生状态可重建、权威不可自重建）；以及 **`search` 的协议面与 crawl 建的持久索引**（**它不是 USN 索引**：`freshness.current` 只表示"这份清单是最近一次遍历建立的"，与 journal 的"游标没断档"不是一回事）。**823 项测试通过**（含 76 项常驻跨工件一致性检查 `cli/tests/test_l0_consistency.py`）。
+**已实现（协议级，Python 3.11）**：**P1 最小 Core**（root 解析与卷身份守卫、SQLite registry 与迁移、只读 JSON 投影、`where` 确定性选择、`doctor` D1–D10、模拟事务与 journal 驱动恢复、CLI 与 golden 语料）；**管家域的全部步骤 1–9、11–12**（数据根注册与只读 PE 静态探测、能力白名单发现、`adopt --mode reference` 非拥有式登记、依赖分流与 `scope` 决策、会话激活与 **user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、**steward-first `where`** 与数据根/reference 重观测诊断、**删除分级**（只删 AIROOT 自己装的，reference 永不 `uninstall`）、**能力边界**）；**Skill 适配层**（`SKILL.md` + `agents/airoot.json` + `references/`，带漂移守卫）；**可信来源清单与 Install Backend**；**`rebuild`**（派生状态可重建、权威不可自重建）；以及 **`search` 的协议面与 crawl 建的持久索引**（**它不是 USN 索引**：`freshness.current` 只表示"这份清单是最近一次遍历建立的"，与 journal 的"游标没断档"不是一回事）。**826 项测试通过**（含 79 项常驻跨工件一致性检查 `cli/tests/test_l0_consistency.py`）。
 
-**逐阶段的实现记录**（`§31`–`§81`：每一阶段做了什么、发现什么缺陷、加了哪组守卫、怎么验红、哪些边界没有做）**全部在 `docs/AIROOT-v0.3-管家模型与数据根契约草案.md` 的对应小节里**；本文只保留当前状态、仓库地图与操作面。这是**有意**的：本文是**入口文档**，必须能被读者**完整**载入，而逐阶段细节曾让它长到超过读取预算并被**静默截断**（见 §54）——把细节留在这里，等于让读者拿到半份规则；转写到草案里则**不丢任何信息**（§1 里原来的 23 段在草案里各有一节，实测零独有，见 §54.2）。
+**逐阶段的实现记录**（`§31`–`§82`：每一阶段做了什么、发现什么缺陷、加了哪组守卫、怎么验红、哪些边界没有做）**全部在 `docs/AIROOT-v0.3-管家模型与数据根契约草案.md` 的对应小节里**；本文只保留当前状态、仓库地图与操作面。这是**有意**的：本文是**入口文档**，必须能被读者**完整**载入，而逐阶段细节曾让它长到超过读取预算并被**静默截断**（见 §54）——把细节留在这里，等于让读者拿到半份规则；转写到草案里则**不丢任何信息**（§1 里原来的 23 段在草案里各有一节，实测零独有，见 §54.2）。
 
 **尚未实现**：ACL、UAC、elevated broker、named-pipe、machine PATH 写入、**machine 级环境变量持久化**（`--scope machine` 现在报 `PRIVILEGE_REQUIRED`）、`exposure\bin` launcher、**签名/来源证明**（TUF / Sigstore 级；来源清单与摘要校验已就绪，v1 只做 digest）、**真实工具的安装**（**下载与摘要验证已经对真实上游跑过**——§59：从 `static.rust-lang.org` 取到 **12 721 664 字节**的 `rustup-init.exe`，SHA256 与上游发布的校验和一致；**`stage`/`commit` 没跑过**，因为 P1 没有生产批准签发方，唯一的签发方是 `cli/tests/fake_issuer.py`。所以这里不再写"机制已通"这种关于代码的话，而是写**哪几步跑过、哪几步没跑**）、**`file_search` 的 Native Index**（USN journal / NTFS 元数据 / 常驻索引器；协议面 §31 与 crawl 建的持久索引 §32 已可用）、Everything adapter、内容搜索、跨用户 ACL 过滤、`reconcile`、`path backup\|restore`、`root adopt\|relocate`（已按命令路径登记在 `agents/airoot.json`）、真实 Ed25519 签名、`.ai/tooling.json` 的写入。管家域 §3–§15 的**全部步骤 1–9、11–12 均已落地**；只剩依赖 P2 的 machine 级环境变量（步骤 10），以及 **ACL 的写一侧**——`doctor` 侧的**观测与漂移发射已落地**（§58 / ADR-0023：`caps/acl.py` 只读 DACL，无需提权），仍缺的是把基线**强加**回目录（`WRITE_DAC` + broker）。
 
@@ -63,8 +63,8 @@ AIROOT
 | `references/` | 按需参考：`reason-codes.md`（按退出码分组的速查 + **《这一版发不出来的码》**：注册了但没有任何写者的码，§75）、`confirmation.md`（确认与批准）、`field-values.md`（**字段取值表**：每个 schema 的每个枚举取值 + 这一版会不会真的写出它，带 † 标记与"谁写出"证据指针，§74；外加《schema 没有枚举的标签》——`evidence[].kind`、`where` 的 `selection_reason`、信封的 `operation`/`origin`/`size_source`/`version_source`/`outcome`，那一节的权威是**代码**而不是 schema，§77/§78） |
 | `cli/bin/airoot.cmd` | 开发期 launcher（CRLF！只设进程内 `PYTHONPATH`，绝不写 PATH） |
 | `cli/extensions/airoot-fake-extension.json` | 假扩展 manifest（通信协议演示，无副作用） |
-| `cli/tests/` | pytest L0/L1 套件（823 项，含 76 项常驻跨工件一致性审计 `test_l0_consistency.py` 与 `test_l1_agent_read_fields.py`——后者用真实 root 逐个跑出 agent 面文档，验证 `agents/airoot.json` 的 **139 条 `read` 路径**全部存在）+ `fixtures/golden/`（Rust 版验收语料，**27 个 fixture**，含三份 `search_*_response.json`、`doctor_stale_search_index.json`，以及五个**契约目录**：`transaction_transitions.json`（合法移动表）、`invariant_catalogue.json`（D1–D10 分组）、`frozen_capabilities.json`（冻结能力清单）、`scenario_ledger.json`（**108 个场景编号**的完整台账）、`execution_bounds.json`（**决定拒绝的每个数值**：搜索上限三件套 / `MAX_ROOTS` / 爬取与索引边界 / 白名单扫描边界 / 三选一 / 优先级 / artifact 与 PE 检查字节上限 / 五个 policy revision）；见 §45–§50）+ `scenario_ledger.py`、`execution_bounds.py`（这两个目录的解析器与处置表）+ `real_machine_acceptance.py`（真机验收脚本，非 pytest） |
-| `cli/app/airoot/policy/discovery-whitelist.json` | **能力白名单**：按 `capability_id` 的证据谓词（不是目录名）；缓存/GUI/服务排除名单（revision `wl-3`） |
+| `cli/tests/` | pytest L0/L1 套件（826 项，含 79 项常驻跨工件一致性审计 `test_l0_consistency.py` 与 `test_l1_agent_read_fields.py`——后者用真实 root 逐个跑出 agent 面文档，验证 `agents/airoot.json` 的 **139 条 `read` 路径**全部存在）+ `fixtures/golden/`（Rust 版验收语料，**27 个 fixture**，含三份 `search_*_response.json`、`doctor_stale_search_index.json`，以及五个**契约目录**：`transaction_transitions.json`（合法移动表）、`invariant_catalogue.json`（D1–D10 分组）、`frozen_capabilities.json`（冻结能力清单）、`scenario_ledger.json`（**108 个场景编号**的完整台账）、`execution_bounds.json`（**决定拒绝的每个数值**：搜索上限三件套 / `MAX_ROOTS` / 爬取与索引边界 / 白名单扫描边界 / 三选一 / 优先级 / artifact 与 PE 检查字节上限 / 五个 policy revision）；见 §45–§50）+ `scenario_ledger.py`、`execution_bounds.py`（这两个目录的解析器与处置表）+ `real_machine_acceptance.py`（真机验收脚本，非 pytest） |
+| `cli/app/airoot/policy/discovery-whitelist.json` | **能力白名单**：按 `capability_id` 的证据谓词（不是目录名）；缓存/GUI/服务排除名单（revision `wl-4`） |
 | `cli/app/airoot/policy/sources.json` | **可信来源清单**（`src-1`）：允许的 host、每个能力的 artifact 与校验和 URL 模板。**不含 digest**——摘要只来自上游校验和文件 |
 | `cli/app/airoot/policy/selection-policy.json` | **选择策略**（`sp-1`）：`where` 里 steward reference 与 owned payload 的机器级先后（`precedence`，默认 `steward`） |
 | `cli/app/airoot/policy/search-policy.json` | **搜索策略**（`srch-4`）：`limit`/`max_duration_ms`/`max_staleness_ms` 的**实现上限**、默认值、crawl 边界（深度/记录数/不跟随 reparse）、索引块（`index.path=cache/search/index.db`、记录上限、`max_age_ms`=**doctor 判"索引过旧"的判据**、`native_candidate`=协议里那个 USN 实现的身份与前置条件）。上限是数据不是代码，超出即 `EXTENSION_INPUT_INVALID`(8)（ADR-0017/0019/0020） |
@@ -75,7 +75,7 @@ AIROOT
 | `cli/app/airoot/caps/pathexposure.py` | **PATH 不变量检查**：重复 AIROOT 条目 / store 版本目录 / 非授权目录 / launcher 缺失；永不写 PATH |
 | `cli/app/airoot/caps/session.py` | **会话快照栈**（`state/sessions/<id>.json`）：嵌套激活、`deactivate` 恢复旧值、`SESSION_STATE_STALE`。不是凭据，不进 registry |
 | `cli/app/airoot/caps/rebuild.py` | **派生状态重建**：只重写 `state/registry.json` 与 `logs/audit/events.json`，旧投影归档；数据库永不重建，陌生对象只报告 |
-| `cli/app/airoot/policy/capabilities.json` | **冻结能力清单**（`cap-1`）：能力身份/kind/入口/副作用上限/scope。白名单加载期校验"条目必须在此清单内" |
+| `cli/app/airoot/policy/capabilities.json` | **冻结能力清单**（`cap-2`）：能力身份/kind/入口/副作用上限/scope。白名单加载期校验"条目必须在此清单内" |
 | `cli/fake_vertical_slice/fake_vertical_slice.py` | 旧协议切片，**保留为协议 oracle，不要删** |
 | `docs/schema/README.md` | schema 边界表、兼容规则、P1 期间的修正记录。**它自己的规则也被守着**（§80）：边界表 ⟷ schema 文件双向相等、每行都说了边界、每个 schema 都把版本钉死在 1、每个记录型对象都拒绝未知属性 |
 
@@ -180,8 +180,9 @@ python -m airoot --root <root> env persist external/dr-env/java --dry-run --json
 python -m airoot --root <root> env persist external/dr-env/java --token-file <token.json>
 #   **注意**：这一条与 `tool gc --apply` / `install` / `uninstall` 的 `--token-file` 形式在这个
 #   build 里**走不到底**——没有生产批准签发方，一律 `PROVENANCE_FAILED`(7)。消息里带这一句：
-#   `no production approval issuer exists in this build (ADR-0024 is the pending decision)`。
-#   前两步（`plan --dry-run` / `plan`）是**可用**的；裁决见 §8 与 `docs/AIROOT-v0.3-实现决策记录.md` 的 ADR-0024。
+#   `no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)`。
+#   前两步（`plan --dry-run` / `plan`）是**可用**的；裁决见 §8 与 `docs/AIROOT-v0.3-实现决策记录.md`
+#   的 ADR-0024（状态：**已裁决：A 维持现状**）与其裁决 **ADR-0025** 的 D1。
 python -m airoot --root <root> env list --json
 python -m airoot --root <root> env forget external/dr-env/java --dry-run --json   # 先看要还原什么
 python -m airoot --root <root> env forget external/dr-env/java
@@ -276,32 +277,40 @@ python cli\tests\real_machine_acceptance.py --online   # 外加 §59：对真实
 ## 8. 已知缺口与下一步
 
 **已延后的命令路径带理由**（`agents/airoot.json` 的 `deferred`，守卫第二十三组）：`not_implemented`
-里的 6 条各自写着**为什么**与**什么才能解锁它**。理由分三类，因为这三种要等的东西不一样：
+里的 6 条各自写着**为什么**与**什么才能解锁它**。理由分两类，因为这两类要等的东西不一样：
 
-- `needs-admin`——要提权或受保护 broker（`bootstrap`、`path backup`、`path restore`、`root relocate`）；
-- `needs-decision`——先要一次裁决，可能是契约文本（`root adopt`：它的**校验**在规划 §15.5 里写着，
-  但 copy/verify/switch 规则只被点名一次、从未被规定，而 §8.1.1 把 adopt 与"恢复备份"并列为两种处置）；
+- `needs-admin`——要提权或受保护 broker（`bootstrap`、`path backup`、`path restore`、`root relocate`、
+  `root adopt`：它的 copy/verify/switch 规则**已由 ADR-0025 定下**，剩下的是切换本身——那会动 active
+  root 指针与 machine PATH 条目，是受保护状态）；
 - `needs-capability`——等后面阶段的能力（`reconcile`：规划把它定成 `reconcile <manifest>` 并排在 P6
   的 `project manifest` 之后，CLI 自己也这么说——`forget` 的输出里有
   `project_manifest_check: "not_implemented_before_p6"`）。
 
-**这三类是被守卫要求"恰好等于"实际用法**的：一个没人用的类别就是一个读者会遇到却查不到用处的词。
-第四类 `covered-elsewhere`（"这个动词今天会是同义词"）**在同一轮里被加进又被删掉**：它唯一的成员
-`reconcile` 被 §60 的审计改判成 `needs-capability`（详见括号里的证据），所以那个值不再有成员。
-`reconcile` 的内容与 `doctor`（重观测漂移）/ `desired`（desired vs declared）/ `plan`（收敛计划）确实重叠，
-但那是这个命令**较小**的一半——它记在登记表的 `why` 里，而不是拿来当类别。
+**这两类是被守卫要求"恰好等于"实际用法**的：一个没人用的类别就是一个读者会遇到却查不到用处的词。
+两个**曾经存在、现在没有成员**的值都被删掉了，理由都是"没有人落在里面"：
 
-解锁词只有三个：`p2-protected-state`、`p6-project-manifest`、`decision`。带阶段前缀的写法与场景台账
-**必须完全一致**（守卫不比较"像不像"，只比较同一阶段在两边是否同一个字符串）。
+- `covered-elsewhere`（"这个动词今天会是同义词"）**在同一轮里被加进又被删掉**：它唯一的成员
+  `reconcile` 被 §60 的审计改判成 `needs-capability`（详见括号里的证据）。它的内容与 `doctor`
+  （重观测漂移）/ `desired`（desired vs declared）/ `plan`（收敛计划）确实重叠，但那是这个命令**较小**
+  的一半——它记在登记表的 `why` 里，而不是拿来当类别；
+- `needs-decision` 在 **§82** 被删掉：它唯一的成员 `root adopt` 等的东西已经由 **ADR-0025** 裁决
+  （源目录不动、先验后切、只有一个原子切换点、adopt 自己不写机器 PATH），剩下的阻塞是受保护状态 ⇒
+  它改判成 `needs-admin`。**裁决把一个"等人"的类别变成了"等 P2"的类别**，类别本身随之消失。
 
-P1 刻意**没有**发明的东西（需要单独决策，别顺手补一个算法）：
+解锁词只有两个：`p2-protected-state`、`p6-project-manifest`。带阶段前缀的写法与场景台账
+**必须完全一致**（守卫不比较"像不像"，只比较同一阶段在两边是否同一个字符串）；第三个词 `decision`
+随 `needs-decision` 一起消失——`approve`/`install` 的 lane 现在也等 `p2-protected-state`。
 
-- `machine_id` / `session_id` / `project_id` 的生成算法——P1 只接受注入或显式入参；
-- 根定位的卷标扫描（P1 只有 `--root` / `AIROOT_HOME`，失败即关闭）；
-- registry migration 工具、event 保留期、`logs\audit` 导出协议（只有骨架）；
+P1 刻意**没有**发明的东西（**ADR-0025 已逐条裁决：全部维持现状**，理由见该条）：
+
+- `machine_id` / `session_id` / `project_id` 的生成算法——P1 只接受注入或显式入参（**不从硬件指纹推导**）；
+- 根定位的卷标扫描（P1 只有 `--root` / `AIROOT_HOME`，失败即关闭；**不猜"最像的那个卷"**）；
+- registry migration 工具、event 保留期、`logs\audit` 导出协议（只有骨架；**不自动迁移、不自动裁剪**）；
 - `exposure\bin` launcher——P1 的 `EXPOSED` 是“用一次全新的 registry 读取观察到新 binding”，**没有写任何 launcher 文件**；
-- 真实 `ed25519` 校验与受保护 issuer（P1 遇到 `ed25519` token 会显式报 `PROVENANCE_FAILED`）——**这条已经升级成一条独立的待裁决项**：它挡住的不只是签名算法，而是 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 五条路径在真机上的完成。三条路（维持现状 / 本地人类通道 / 现在就做真实签名）与推荐写在 **ADR-0024**（状态：**提案**），拒绝消息里也带着同一个指针；
-- `file_search` 的 **Native Index 进程模型**（USN journal 消费、常驻索引器、`cache\search` 事务）——协议面与受控 crawl 已交付（§31），但"索引器怎么跑"仍需要单独决策。
+- 真实 `ed25519` 校验与受保护 issuer（P1 遇到 `ed25519` token 会显式报 `PROVENANCE_FAILED`）——**ADR-0025 已裁决取 A：维持现状，等 P2 的受保护 broker**（否决了"本地人类通道"与"现在就做真实签名"两条路，理由见该条）。它挡住的不只是签名算法，而是 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 五条路径在真机上的完成；拒绝消息里带着指向该条的指针；
+- `file_search` 的 **Native Index 进程模型**（USN journal 消费、常驻索引器、`cache\search` 事务）——协议面与受控 crawl 已交付（§31），**形状已由 ADR-0025 定下**（broker 做初始枚举、索引永远是派生缓存、断档即拒答、非 NTFS 回落 crawl），常驻进程仍等 P2。
+- `.ai/tooling.json` 的**写入**通道——**维持只读**直到 P2 的人类通道：它喂的 `memory` 规则会**跳过确认**，写它等于让 Agent 自己积累授权。
+
 
 路线图（规划 §19）：**P0 冻结契约 → P1 最小 Core（已完成）→ P2 Windows Protected State** → P3 `file_search` → P4 Portable Transaction → P5 Runtime → P6 Session/Project → P7 加固 → P8 其他平台。
 
@@ -315,7 +324,7 @@ machine 级环境变量）、P4 的真实安装后端（真实 artifact 下载 +
 
 ### 完成判定的口径
 
-允许说：“方案契约与验证计划已具备，P1 协议级 Core 已通过验收；管家域的**非拥有式登记**（数据根 → 只读发现 → reference，含多版本与活跃版本观测）、**依赖分流决策**与 **user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、**steward-first `where`** 与**数据根/reference 诊断**、**删除分级**（只删 AIROOT 自己装的，reference 永不 `uninstall`）、**能力边界**、**Skill 适配层**（`SKILL.md` 是 Skill 根的唯一入口，带漂移守卫）与**可信来源清单**（digest 只来自上游校验和文件）、**`rebuild`**（派生状态可重建、权威不可自重建）、**session 激活的完整语义**（快照栈 + 恢复式 `deactivate` + `SESSION_STATE_STALE`），以及 **`search` 的协议面与 crawl 建的持久索引**（请求/响应按已发布 Schema；实现上限、cursor 绑定索引 generation、root 规则齐备；索引健康时退出码 0 并给出 `freshness=current`，覆盖不足或损坏时如实回落 crawl）已可对真实 `D:\env` 运行（823 项测试、旧切片无回归、`cli/tests/real_machine_acceptance.py` 全项通过，真机上 `search refresh` 建了 51 073 条记录，`search status --probe-native-index` 报出真实卷读数）。生产实现（受保护 broker/ACL、USN 常驻索引器）与依赖它们的 machine 级持久化待后续。”
+允许说：“方案契约与验证计划已具备，P1 协议级 Core 已通过验收；管家域的**非拥有式登记**（数据根 → 只读发现 → reference，含多版本与活跃版本观测）、**依赖分流决策**与 **user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、**steward-first `where`** 与**数据根/reference 诊断**、**删除分级**（只删 AIROOT 自己装的，reference 永不 `uninstall`）、**能力边界**、**Skill 适配层**（`SKILL.md` 是 Skill 根的唯一入口，带漂移守卫）与**可信来源清单**（digest 只来自上游校验和文件）、**`rebuild`**（派生状态可重建、权威不可自重建）、**session 激活的完整语义**（快照栈 + 恢复式 `deactivate` + `SESSION_STATE_STALE`），以及 **`search` 的协议面与 crawl 建的持久索引**（请求/响应按已发布 Schema；实现上限、cursor 绑定索引 generation、root 规则齐备；索引健康时退出码 0 并给出 `freshness=current`，覆盖不足或损坏时如实回落 crawl）已可对真实 `D:\env` 运行（826 项测试、旧切片无回归、`cli/tests/real_machine_acceptance.py` 全项通过，真机上 `search refresh` 建了 51 073 条记录，`search status --probe-native-index` 报出真实卷读数）。生产实现（受保护 broker/ACL、USN 常驻索引器）与依赖它们的 machine 级持久化待后续。”
 
 不允许说：“AIROOT 已实现 / 已可用 / 已具备 Everything 级性能。”`search` 尤其**不能**被说成 Everything 级性能：它的索引由一次目录遍历建立，`freshness.current` 只表示"这份清单是最近一次遍历建立的"，与 USN journal 的"游标没断档"不是一回事。
 

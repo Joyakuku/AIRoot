@@ -460,7 +460,7 @@ def main_run() -> int:
             print(
                 "    boundary: stage/commit need an approval token, and P1 has no production "
                 "issuer (only cli/tests/fake_issuer.py) - reported, not faked "
-                "(ADR-0024 is the pending decision)"
+                "(ADR-0025 keeps it waiting for the P2 broker)"
             )
         except Exception as exc:  # noqa: BLE001 - an acceptance run reports, it does not explode
             check(f"online acquisition failed: {type(exc).__name__}: {exc}", False)

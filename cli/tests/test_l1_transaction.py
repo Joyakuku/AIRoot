@@ -639,15 +639,16 @@ def test_both_issuer_refusals_name_the_same_pending_decision(registry: Registry,
     assert err.value.reason_code == "PROVENANCE_FAILED"
     messages.append(err.value.message)
 
-    assert "ADR-0024" in ISSUER_PENDING, "the shared sentence lost its pointer"
+    assert "ADR-0025" in ISSUER_PENDING, "the shared sentence lost its pointer"
     assert all(ISSUER_PENDING in message for message in messages), messages
     assert messages[0] != messages[1], "distinct causes still need distinct first halves"
 
     decision_log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
-    assert "## ADR-0024" in decision_log, (
-        "the refusal points at ADR-0024 but the decision log has no such entry; either write it "
+    assert "## ADR-0025" in decision_log, (
+        "the refusal points at ADR-0025 but the decision log has no such entry; either write it "
         "or update ISSUER_PENDING — a pointer to nothing is worse than no pointer"
     )
+    assert "## ADR-0024" in decision_log, "and the brief it settled must stay readable"
 
 
 # --------------------------------------------------------------------------- #

@@ -301,7 +301,7 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
                 path=str(data_root_path),
                 role="runtime",
                 volume_serial="deadbeef",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
                 added_at="2024-01-01T00:00:00Z",
             ),
         )

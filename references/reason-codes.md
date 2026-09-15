@@ -70,9 +70,9 @@
 **但这个 build 里没有东西能签发批准**：核心只校验，唯一的签发方是测试用的
 `cli/tests/fake_issuer.py`。所以上面那一步在真机上**走不到底**——`approve` / `install` /
 `env persist` / `tool gc --apply` / `uninstall` 带 `--token-file` 时返回 `PROVENANCE_FAILED`（退出码 7），
-消息里带 `no production approval issuer exists in this build (ADR-0024 is the pending decision)`。
+消息里带 `no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)`。
 **能跑到的是前两步**（`plan --dry-run` / `plan`）。待裁决项与三条路见
-`docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：提案）；
+`docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**已裁决：A 维持现状**，见 ADR-0025）；
 **不要**试图自己造 token——伪造正是消费侧要拒绝的东西。
 
 ## 5 — 需要权限

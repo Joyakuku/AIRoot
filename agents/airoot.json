@@ -115,7 +115,7 @@
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
-      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (ADR-0024 is the pending decision), so the write cannot be completed on a real machine"
+      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the write cannot be completed on a real machine"
     },
     {
       "question": "undo what AIROOT persisted",
@@ -138,7 +138,7 @@
       "question": "take ownership of a portable file I already have",
       "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
       "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "metadata.import.size_bytes", "target.instance_id"],
-      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (ADR-0024 is the pending decision), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied"
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied"
     },
     {
       "question": "what does AIROOT own on this machine",
@@ -178,7 +178,7 @@
       "question": "what may be collected, and collect it",
       "command": ["tool", "gc", "--plan"],
       "read": ["candidates[].blockers", "plans[].plan_hash"],
-      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (ADR-0024 is the pending decision), so only --plan is reachable today"
+      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so only --plan is reachable today"
     },
     {
       "question": "remove an AIROOT-owned payload",
@@ -310,9 +310,9 @@
       "unblocked_by": "p2-protected-state"
     },
     "root adopt": {
-      "category": "needs-decision",
-      "why": "Its checks are partly written down (8.1.1 and 15.5: root marker, volume identity, protocol/schema, registry integrity) but what its name promises is not. The copy/verify/switch rules are named once -- 8.1.1 says root relocate uses the same copy/verify/switch rules, and that a copied directory is not automatically a new root -- and specified nowhere. 8.1.1 then offers adopt as one of two answers to an identity mismatch, the other being restore-from-backup, so what an adopted root *means* is an operator decision before it is code.",
-      "unblocked_by": "decision"
+      "category": "needs-admin",
+      "why": "The rules are no longer missing: ADR-0025 decided them (source untouched, verify before switch, one atomic switch point, and adopt itself writes no machine PATH). What is left is the switch, and that is protected state -- it moves the active-root pointer and, for the relocate spelling, the single allowed machine PATH entry, which is why 8.1.1 pairs adopt with restore-from-backup as two answers to an identity mismatch. 8.1.1 and 15.5 already name the checks (root marker, volume identity, protocol/schema, registry integrity); ADR-0025 decides the copy/verify/switch half and files the remaining blocker here.",
+      "unblocked_by": "p2-protected-state"
     },
     "root relocate": {
       "category": "needs-admin",
@@ -322,12 +322,12 @@
   },
   "uncovered_verbs": {
     "approve": {
-      "why_no_lane": "A lane is a question an agent can act on. The only issuer in this build is the test one (ADR-0024), so every lane ending at `approve` would point at a step nobody can take; the honesty block already says so in prose.",
-      "unblocked_by": "decision"
+      "why_no_lane": "A lane is a question an agent can act on. ADR-0025 decided to keep it that way (option A: no production issuer until the P2 broker), so every lane ending at `approve` would point at a step nobody can take; the honesty block already says so in prose.",
+      "unblocked_by": "p2-protected-state"
     },
     "install": {
-      "why_no_lane": "Same reason as `approve`: it needs a token only the test issuer can mint (ADR-0024). The plan-shaped part of the question does have lanes (`plan`, `scope decide`), which is what an agent can actually complete today.",
-      "unblocked_by": "decision"
+      "why_no_lane": "Same reason as `approve`: it needs a token only the test issuer can mint, and ADR-0025 decided to wait for the P2 broker rather than ship a weaker channel. The plan-shaped part of the question does have lanes (`plan`, `scope decide`), which is what an agent can actually complete today.",
+      "unblocked_by": "p2-protected-state"
     },
     "extension": {
       "why_no_lane": "Extension diagnostics (`extension list`, `extension status <id> --operation <status|probe|invoke>`). It is not on an agent's question surface: SKILL.md's command map does not carry it, and an agent that meets an extension meets it through `search implementations`, which has a lane.",
@@ -344,7 +344,7 @@
       "unblocked_by": null
     },
     "uninstall": {
-      "why_not_mapped": "It is `tool retire` + `tool gc` in one verb (`retire then collect an owned payload, needs approval`). The map teaches those two graded steps on purpose: retiring clears the binding, collecting is what deletes, and the gate sits at `tool gc --apply` -- one verb would hide the grading. The composed path also needs a token this build cannot mint (ADR-0024).",
+      "why_not_mapped": "It is `tool retire` + `tool gc` in one verb (`retire then collect an owned payload, needs approval`). The map teaches those two graded steps on purpose: retiring clears the binding, collecting is what deletes, and the gate sits at `tool gc --apply` -- one verb would hide the grading. The composed path also needs a token this build cannot mint (ADR-0025 decided to keep it that way: no production issuer until the P2 broker).",
       "unblocked_by": null
     }
   },

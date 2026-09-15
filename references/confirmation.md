@@ -53,7 +53,7 @@ cancel             取消
 `PROVENANCE_FAILED`（退出码 7），消息里带这一句：
 
 ```text
-no production approval issuer exists in this build (ADR-0024 is the pending decision)
+no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)
 ```
 
 所以：
@@ -61,7 +61,7 @@ no production approval issuer exists in this build (ADR-0024 is the pending deci
 - **不要**对用户描述"批准之后就能装"的流程而不说明这个 build 签不出批准——那会让用户以为
   自己少做了一步；
 - **不要**试图自己造 token。伪造 token 正是消费侧要拒绝的东西，而测试 keyring 不属于生产路径；
-- 这条待裁决项写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**提案**），
+- 这条待裁决项写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**已裁决：A 维持现状**，见 ADR-0025），
   里面列了 A/B/C 三条路、各自解锁什么、以及推荐（A 为默认）。
 
 ## 记忆（`.ai/tooling.json`）

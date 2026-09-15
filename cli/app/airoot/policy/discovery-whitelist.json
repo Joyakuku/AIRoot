@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "wl-3",
-  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason.",
+  "revision": "wl-4",
+  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason. wl-4 (draft §82, decision D9): the `media_probe` entry went with the capability when `cap-2` unfroze it — the load-time check refuses a whitelist entry whose capability is not frozen, which is the check doing its job.",
   "scan": {
     "max_depth": 4,
     "max_relative_depth": 2,
@@ -68,18 +68,6 @@
         { "type": "pe_static", "field": "product_name", "contains": "7-Zip" }
       ],
       "entrypoints": ["7z.exe"],
-      "version_source": "pe_static:file_version"
-    },
-    {
-      "capability_id": "media_probe",
-      "kind": "tool",
-      "weak_evidence": true,
-      "weak_reason": "verified on real binaries: the ffmpeg/ffprobe master-gpl-shared builds carry no RT_VERSION resource at all, so the executable name plus its sibling ffprobe/ffmpeg is the strongest static evidence available; the version is reported as unknown rather than guessed.",
-      "evidence_all": [
-        { "type": "executable_name", "any_of": ["ffmpeg.exe", "ffprobe.exe"] },
-        { "type": "sibling_file", "any_of": ["ffprobe.exe", "ffmpeg.exe"] }
-      ],
-      "entrypoints": ["ffmpeg.exe", "ffprobe.exe"],
       "version_source": "pe_static:file_version"
     },
     {

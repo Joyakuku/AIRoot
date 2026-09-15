@@ -50,7 +50,7 @@ def steward_root(tmp_path: Path):
                 role="runtime",
                 volume_serial=volume_serial(data_root),
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
         registry.upsert_external_reference(
@@ -297,7 +297,7 @@ def rebaseline(registry, data_root, baseline: dict | None) -> None:
                 volume_serial=volume_serial(data_root),
                 acl_baseline=baseline,
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
 

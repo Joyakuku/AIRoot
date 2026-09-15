@@ -238,8 +238,13 @@ def test_the_skill_does_not_offer_an_approval_it_cannot_obtain() -> None:
         "SKILL.md tells the agent to hand the plan to the user for approval without saying that this "
         "build cannot mint a token; the agent will describe a step that cannot be performed"
     )
-    assert "ADR-0024" in text, "the honest block must point at the pending decision"
-    assert "提案" in text, "ADR-0024 is a proposal, not a decision; the Skill must not overstate it"
+    assert "ADR-0025" in text, "the honest block must point at the decision that was taken"
+    assert "维持现状" in text or "已裁决" in text, (
+        "the decision ADR-0025 took must be visible, or the Skill reads as if the gap were still open"
+    )
+    assert "走不到底" in text or "签不出" in text, (
+        "the decision does not make the step available: the Skill must still say it cannot be completed"
+    )
 
     # Widened in §68: one caveat in the 批准 section is ~50 lines away from the command map the agent
     # *acts on*, and §67's own lesson was that a caveat must sit where the presumption is. So every
@@ -303,7 +308,7 @@ def test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain() -> Non
     )
     for note in presuming:
         assert ISSUER_PENDING in note, f"lane note presumes approval without the boundary: {note!r}"
-        assert "ADR-0024" in note, "the boundary must point at the pending decision"
+        assert "ADR-0025" in note, "the boundary must point at the decision that was taken"
 
 
 def test_the_reason_code_reference_does_not_prescribe_an_approval_nobody_can_give() -> None:
@@ -324,7 +329,9 @@ def test_the_reason_code_reference_does_not_prescribe_an_approval_nobody_can_giv
         "the exit-4 reference prescribes waiting for an approval without saying that this build "
         "cannot issue one"
     )
-    assert "ADR-0024" in section and "提案" in section, "it must point at the pending decision, as a proposal"
+    assert "ADR-0025" in section and ("已裁决" in section or "维持现状" in section), (
+        "it must point at the decision that was taken, not leave the gap looking open"
+    )
 
 
 def test_the_entry_document_marks_the_commands_it_cannot_complete() -> None:
@@ -342,7 +349,7 @@ def test_the_entry_document_marks_the_commands_it_cannot_complete() -> None:
     assert ISSUER_PENDING in text, (
         "AGENTS.md shows `--token-file` commands without saying that this build cannot issue a token"
     )
-    assert "ADR-0024" in text, "and without pointing at the pending decision"
+    assert "ADR-0025" in text, "and without pointing at the decision that was taken"
 
 
 def test_the_reference_set_is_present() -> None:

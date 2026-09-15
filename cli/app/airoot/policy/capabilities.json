@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "cap-1",
+  "revision": "cap-2",
   "notes": [
     "The frozen capability list (draft §15.2 condition 1). A capability exists here only after it",
     "has been *frozen*: a name, the CLI entry it answers, the shape of its request/response, its",
@@ -12,7 +12,11 @@
     "`side_effects` is a ceiling from the published sideEffect enum: a candidate object may not",
     "require anything outside it.",
     "Growth path (draft §15.4): propose -> freeze here -> add a whitelist evidence predicate -> only",
-    "then can discover/adopt see it. Never hard-code a directory name instead."
+    "then can discover/adopt see it. Never hard-code a directory name instead.",
+    "cap-2 (draft §82, decision D9): `media_probe` was unfrozen. Freezing a name is what lets",
+    "`discover`/`adopt`/`capability check` speak about it, and that name appeared in **no**",
+    "agent-facing document and had no trusted source — an unexplained name is a name an account",
+    "cannot interpret. It can come back through the growth path above once something needs it."
   ],
   "capabilities": [
     {
@@ -54,14 +58,6 @@
       "side_effects": ["none"],
       "scope": ["machine", "session"],
       "notes": "7-Zip command line (7z/7za/7zr)"
-    },
-    {
-      "capability_id": "media_probe",
-      "kind": "tool",
-      "entry": "ffprobe.exe",
-      "side_effects": ["none"],
-      "scope": ["machine", "session"],
-      "notes": "weak evidence by necessity: these builds carry no version resource, so the version is reported unknown"
     },
     {
       "capability_id": "build",

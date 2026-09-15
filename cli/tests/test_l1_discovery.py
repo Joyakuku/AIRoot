@@ -95,7 +95,7 @@ def test_a_data_root_below_max_path_is_scanned(tmp_path: Path) -> None:
 
 def test_bundled_whitelist_loads_and_is_evidence_based() -> None:
     rules = load_whitelist()
-    assert rules.revision == "wl-3"
+    assert rules.revision == "wl-4"
     assert {entry.capability_id for entry in rules.entries} >= {"python", "node", "java", "git", "archive"}
     for entry in rules.entries:
         has_static = any(item.get("type") == "pe_static" for item in entry.evidence_all + entry.evidence_any)
@@ -206,7 +206,7 @@ def test_matching_object_becomes_a_reference_candidate(data_root: Path) -> None:
     place_python_pe(data_root / "python")
 
     report = discover_data_root(path=data_root, data_root_id="dr-env")
-    assert report.whitelist_revision == "wl-3"
+    assert report.whitelist_revision == "wl-4"
     candidate = next(item for item in report.candidates if item.directory_name == "python")
     assert candidate.management == "external_reference"
     assert candidate.capability_id == "python"
@@ -723,7 +723,7 @@ def test_the_shipped_whitelist_uses_only_evaluable_vocabulary() -> None:
     """The load above is the assertion: `load_whitelist` now refuses anything it cannot evaluate."""
 
     rules = load_whitelist()
-    assert rules.revision == "wl-3"
+    assert rules.revision == "wl-4"
     for entry in rules.entries:
         for predicate in entry.evidence_all + entry.evidence_any:
             assert predicate["type"] in PREDICATE_TYPES

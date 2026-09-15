@@ -40,9 +40,10 @@ PRODUCTION_ALGORITHM = "ed25519"
 #: The one sentence every refusal caused by the absent production issuer must contain.
 #: Five different commands reach it, and they used to explain themselves two different ways
 #: ("no keyring" vs "ed25519 not implemented"), which reads like two unrelated gaps rather
-#: than one decision that has not been taken. ADR-0024 is that decision brief; a test pins
-#: this pointer so it cannot rot silently.
-ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 is the pending decision)"
+#: than one decision. That decision has now been **taken**: ADR-0025 chose option A, so this
+#: is not a question waiting for an answer but a boundary waiting for the P2 broker. A test
+#: pins the pointer so it cannot rot silently.
+ISSUER_PENDING = "no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)"
 
 
 def keyring_path(root: Path) -> Path:

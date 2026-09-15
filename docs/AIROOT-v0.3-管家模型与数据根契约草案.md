@@ -1132,6 +1132,8 @@ golden 语料重生成，其中两个 fixture **改名**：`where_conflict_manag
 | S12.2 | §15.2 三条件判定 `check_admission()`，逐条给结论与证据；不可回滚副作用的能力**不允许被冻结** | ✅ |
 | S12.3 | `airoot capability list` / `capability check <path>`：只读；后者会先做一次只读发现再判定 | ✅ |
 
+**§82 已改判**：上表 S12.1 的 `cap-1` / 8 个能力是 §12 当时的事实。**今天冻结清单是 `cap-2` / 7 个能力**——`media_probe` 在 §82 被移除（ADR-0025 的 D9），理由写在清单文件自己的注解里。原数字不改，因为它记的是那一轮。
+
 **实现里三处必须记录的判断**：
 
 1. **删除后不删 registry 行，只记 `collected_at`**。`bindings.instance_id` 有外键指向 `instances`，
@@ -2946,6 +2948,8 @@ F1 是重点：它此刻是**静默**的，而包里的白名单是**随代码�
 **随包数据没有漂移**：白名单 `wl-3` 的 7 个条目、来源清单 `src-1` 的 3 个条目全部通过新的加载期
 校验——今天没有需要修的条目。与 §40/§42 一样如实记下"本轮没抓到真问题"。
 
+**§82 已改判**：这里的 `wl-3` / 7 个条目是 §43 当时的事实。**今天白名单是 `wl-4` / 6 个条目**（`media_probe` 随冻结清单一起移除，ADR-0025 的 D9）。原数字保留。
+
 **守卫确实会红**：把随包白名单里 python 条目的 `executable_name` 打成 `exectuable_name`，
 `load_whitelist()` 立刻抛
 `whitelist entry python declares an unknown evidence predicate: 'exectuable_name'`，
@@ -3296,6 +3300,8 @@ routing——同一个拼写在两套词汇里意思不同。
 | S47.1 加载期校验 | ✅ | `boundary.py` 校验"名字列表"+ 词汇成员；`test_l1_boundary.py` 新增 **5 项**（含 3 个参数化） |
 | S47.2 守卫第十五组 | ✅ | `test_l0_consistency.py` 44 → **48 项** |
 | S47.3 `frozen_capabilities.json` | ✅ | `cap_revision=cap-1`，8 个能力；`test_golden.py` 新增 1 项 |
+
+**§82 已改判**：S47.3 的 `cap-1` / 8 个能力是 §47 当时的事实；今天该 fixture 记的是 **`cap-2` / 7 个能力**（ADR-0025 的 D9），`execution_bounds.json` 里冻的 `capabilities` 也随之变成 `cap-2`。原数字保留。
 | S47.4 测试 + 回写 | ✅ | `pytest cli/tests` 713 → **723 项** |
 
 **验收证据**：`pytest cli/tests` **723 项全绿**；旧切片与真机验收不受影响。
@@ -3579,6 +3585,8 @@ F4 是"验收文档要求一个已被明确否决的行为"。**没有任何测�
 | 这类数值的存放处 | **三处**：`policy/*.json`（5 个文件）、`caps/*.py` 的常量、`caps/*.py` 里**当策略缺项时的回退上限** |
 | 搜索上限其实是**三个数** | 以 `limit` 为例：**策略值** `2000`（`search-policy.json`）、**代码回退上限** `10000`（`build_request` 里 `rules.limit("limit", 10000)` 的那个 fallback）、**schema 最小值** `1`。三者行为上无法区分，而**只有第一个**在数据文件里 |
 | 冻结目录的 revision | `wl-3`（白名单）、`src-1`（来源）、`sp-1`（选择）、`cap-1`（能力）、`srch-4`（搜索）——全部只在各自文件里 |
+
+**§82 已改判**：这一行里的 `wl-3` 与 `cap-1` 是 §49 当时的事实；今天两者是 **`wl-4`** 与 **`cap-2`**（ADR-0025 的 D9 移除了 `media_probe`）。`src-1` / `sp-1` / `srch-4` 不变。**这次改判恰好是"一个数值同时写在三处"的又一次实测**：文件、语料、以及这句话本身。
 | §46.4 已经点名 | `CONFIRMATION_OPTIONS` 与 `search-policy.json` 的上限 |
 
 `MAX_CURSOR_LENGTH`、`MAX_ROOTS`、`MAX_ARTIFACT_BYTES`、`DEFAULT_MAX_BYTES`、`MAX_HEADER_BYTES`、
@@ -3642,6 +3650,8 @@ F4 是"验收文档要求一个已被明确否决的行为"。**没有任何测�
 扫描上限）、`confirmations`（三选一）、`selection`（`PRECEDENCES` + shipped precedence）、
 `artifact_bounds`（2 GiB / 8 GiB）、`inspection_bounds`（64 KiB / 8 MiB）、`policy_revisions`（`wl-3` /
 `src-1` / `sp-1` / `cap-1` / `srch-4`）。
+
+**§82 已改判**：`policy_revisions` 这一块里的 `wl-3` / `cap-1` 今天读作 **`wl-4` / `cap-2`**（ADR-0025 的 D9）。上面那句是 §49 当时语料的内容，保留原样。
 
 **"承重项是执行而不是相等"这句话本轮被验红证明了**：把 `build_request` 里的
 `published = rules.limit(name, ceiling)` 改成 `published = ceiling`（让**代码不再理会策略**）之后，
@@ -4629,6 +4639,8 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 - `deferred` 与 `not_implemented` **同键**：守卫双向比较（清单里没有理由的、理由里没有清单的都报出来）；
 - `category` 是**三个**值（为什么不是四个见 60.4）：`needs-admin`、`needs-decision`、`needs-capability`；
 - `unblocked_by` 也是**三个**值：`p2-protected-state`、`p6-project-manifest`、`decision`；
+
+**§82 已改判（这一节整段都是 §60 当时的形状）**：今天 `category` 是**两个**值（`needs-decision` 被删）、`unblocked_by` 也是**两个**值（`decision` 随它一起被删）。唯一落在 `needs-decision` 里的 `root adopt` 等的东西已被 **ADR-0025** 裁决，于是它改判成 `needs-admin` / `p2-protected-state`；`approve`/`install` 的 lane 也从 `decision` 挪到 `p2-protected-state`。**裁决把一个"等人"的类别变成了"等 P2"的类别**，类别本身就没有成员了。详见 §82。
 - 守卫第二十三组**三项**：结构（键集 + 词表 + 非空 `why`）、两个词表**恰好等于**实际用法、
   跨登记表拼写一致、以及三个类别词在入口文档里有解释。
 
@@ -6636,7 +6648,7 @@ if verb not in verbs:
 ### 81.6 如实记录的边界
 
 1. **`taught_verbs()` 是一个定义，不是真理。** 它取"命令地图的行 + 第一步那一段"。`SKILL.md` 若在别处（比如《批准》一节）写"你该跑 X"，那条**不会**被算作指令——这是**有意的**（散文里的提及多半是"它不做什么"），代价是：**一句真的指令写在散文里就会被漏掉，而守卫不会红**。
-2. **`unblocked_by` 被借用了一次**：在 `uncovered_verbs` 里它表示"没有外部解锁条件"；这一轮用它判断"元数据说这个动词做不完"。`approve`/`install` 带 `decision`，所以它们**不许被当作指令教**——但它们**仍然可以**在散文里被点名（《批准》一节正是这么写的），这条守卫允许。
+2. **`unblocked_by` 被借用了一次**：在 `uncovered_verbs` 里它表示"没有外部解锁条件"；这一轮用它判断"元数据说这个动词做不完"。`approve`/`install` 带 `decision`，所以它们**不许被当作指令教**——但它们**仍然可以**在散文里被点名（《批准》一节正是这么写的），这条守卫允许。**§82 已改判**：那两个字现在是 `p2-protected-state`（`decision` 随 `needs-decision` 一起被删，ADR-0025 的 D1/D2）；**守卫的结论一个字没变**——`unblocked_by` 非 `null` 就不许被当作指令教——变的只是它等的东西的名字。
 3. **"教"与"有 lane"仍是两个集合，不是同一个**：地图可以教一个没有 lane 的动词（今天没有），lane 也可以存在而地图不教（今天两个，都写了理由）。守卫保证的是**差集恰好等于那张表**，不是"两者应当相同"。
 4. **`extension` 那条判断这次**被**守卫覆盖了一半**：它在 `uncovered_verbs` 里带 `unblocked_by: null`，所以"不许被当作指令教"已经由新守卫保证；但"它不在 agent 的问题面上"这句话本身仍是散文。
 5. **这一轮没有动 CLI**：改的是入口文档与元数据；`data-root add`/`forget` 的字段是被**读**，不是被改。
@@ -6650,3 +6662,131 @@ if verb not in verbs:
 5. 回写计数与 `AGENTS.md` 行；跑全量 + 旧切片 + 两种验收模式；确认 schema 与 golden 语料都没动；提交。
 
 
+## 82. 第 82 阶段：把"没做"写成"决定不做"——七条教义与 D1–D9
+
+### 82.1 这一阶段要解决什么
+
+用户的原话是"我想以安全稳定为主，请你推荐一套决策"。这不是一个窄问题，而是**一次收口**：P1 已经交付完所有不需要提权的部分，剩下的是**一长串"没做"**——`AGENTS.md` §8 与决策日志的《尚未决策》里各有一份清单，写的是"P1 没有自行发明 X"。§67 已经证明这种写法有一个具体缺陷：**"还没想过"与"想过并决定不做"在文档里长得一模一样**。读者读不出区别，于是两种结局：
+
+- 把**遗忘**读成**选择**（"作者显然权衡过了"）——然后照着那条不存在的决策往下做；
+- 把**选择**读成**遗忘**（"迟早会有人补上"）——于是它永远不会被补上，而每个人都在等别人。
+
+§67 已经在**一个**问题上做了这件事（`approve` 的签发方）：把"缺一个算法"升级成"三条路、各自代价、一条推荐"。这一阶段把同一件事做**一遍全套**：把 P1 剩下的每一个开口放进**同一套判据**下逐条裁决。
+
+**为什么必须成组裁决，而不是一条一条来**：逐条问会得到互相矛盾的答案。单独看，`approve --interactive`（本地人类通道）比"什么都做不了"好；单独看，给 `machine_id` 加个硬件指纹比"必须显式注入"方便；单独看，写一个 Everything adapter 比"只能 crawl"快。只有把它们放在**同一套判据**下，才能看出它们做的是同一件事——**扩大信任基，或者制造一个看起来安全的假保证**。这个观察本身就是这一阶段的产出：**七条教义**。
+
+### 82.2 实测：九条决定，每条都先问"它改变什么"
+
+先量清"没做"到底有多少条。把三份文档里的开口并起来，得到九组：
+
+| # | 开口 | 它今天挡住的 |
+|---|---|---|
+| D1 | 生产批准签发方 | `approve` / `install` / `env persist` / `tool gc --apply` / `uninstall` 五条路径在真机上的完成 |
+| D2 | `root adopt` 的 copy/verify/switch 规则 | `root adopt`（`deferred`，`needs-decision`） |
+| D3 | `.ai/tooling.json` 的写入通道 | `memory` 规则（"记住这次选择"）的落点 |
+| D4 | `exposure\bin` launcher | `EXPOSED` 的写一侧 |
+| D5 | machine 级环境变量持久化 | `env persist --scope machine`（今天 `PRIVILEGE_REQUIRED`(5)） |
+| D6 | Native Index 的进程模型 | USN journal 消费与常驻索引器 |
+| D7 | Everything adapter | 一条性能捷径 |
+| D8 | 身份生成 / 根定位 / 迁移与裁剪 / 第一个真实 artifact | 四件互不相干但同类的事 |
+| D9 | 冻结能力清单本身 | 白名单能引用哪些名字 |
+
+**量出来的第一个事实**：这九组里**只有 D9 是"数据"**，其余八组都是"形状"或"结论"。这不是巧合——它说明这一阶段能做的事有两层：**改数据的只有一条**，**给结论的有八条**。把这一点写下来很重要，否则读者会以为"一次裁决"意味着"一次大改"。
+
+**量出来的第二个事实（也是这一轮唯一一处真改判）**：`media_probe` 在冻结清单里**没有任何消费者**——白名单没有它、来源清单没有它、没有任何 CLI 路径读它。它是 §16 冻结流程早期留下的一个**预留位**。留着它的代价不是"多一行数据"，而是**读者会以为这台机器支持媒体探测**。
+
+### 82.3 做了什么
+
+**一次成组裁决，写进 `docs/AIROOT-v0.3-实现决策记录.md` 的新条目 `## ADR-0025`**（放在 `## 尚未决策` 之前），并把它落实成代码与文档里的具体动作：
+
+1. **七条教义**（不新增"看起来安全"的能力 / 派生状态可重建而权威不自我修改 / 只有一个提交点且先验后切 / 不扩大信任基 / 永不删除、永不自动迁移、永不静默裁剪 / 网络只在已验证边界内且永不是测试依赖 / 契约变更最小化）。它们不是新发明，是把 P1 已经反复用到的判断**写下来**，并把 ADR-0021 的四类豁免**展开成可执行判据**。
+2. **D1 选 A（维持现状）**：否决 B（本地人类通道：它把规则读成"不得在没有人在场时签发"，而密钥仍在 root 内，同用户照样能伪造）与 C（现在就做真实 `ed25519`：在没有受保护存储的机器上做，等于把"私钥就放在 root 里"变成事实上的设计，还给它披上"已签名"的外衣）。**执行路径一行没改。**
+3. **D2 定下 `root adopt` 的四条规则**：源目录不动 / 先验后切 / 只有一个原子切换点 / adopt 自己不写机器 PATH。于是 `deferred["root adopt"]` 从 `needs-decision` 改判成 `needs-admin`，`unblocked_by` 从 `decision` 变成 `p2-protected-state`。
+4. **类别与解锁词各少一个**：`needs-decision` 的唯一成员走了，类别随之删除；`decision` 这个解锁词同样消失（`approve`/`install` 的 `uncovered_verbs` 也改等 `p2-protected-state`）。判据与 §60 删掉 `covered-elsewhere` 时**同一条**：一个没人落在里面的词，是读者会遇到却查不到用处的词。
+5. **ADR-0024 的状态从"提案"翻成"已裁决：A 维持现状"**，并保留它下面的背景、挡住表与三条路——它们是那次裁决的**依据**，不是作废的提案。两条拒绝消息里那句指针（`ISSUER_PENDING`）从 "ADR-0024 is the pending decision" 换成 "decided: ADR-0025 keeps it waiting for the P2 broker"。**措辞统一那条守卫一个字没改**，换的只是它指向的东西。
+6. **D9 落地**：`policy/capabilities.json` 的 revision `cap-1` → **`cap-2`**（8 → **7** 个能力，移除 `media_probe`），`policy/discovery-whitelist.json` 的 `wl-3` → **`wl-4`**（7 → **6** 条）。两个文件各写了自己的移除理由。
+7. **《尚未决策》八项在原编号下逐条标注裁决位置**（D8-1/D8-2/D8-3/D5/D4/D6/D3/D1），性质从"还没想过"变成"决定不做，等某个具体的东西"。**语义一字未改。**
+8. **语料重生**：`frozen_capabilities.json`（`cap-2` / 7 个能力）、`execution_bounds.json`（`capabilities: cap-2`、`discovery_whitelist: wl-4`）、`discover_report.json` 与 `registry_with_data_root.json`（`wl-4`）。**其余 23 个 fixture 逐字节不变。**
+9. **三份随包数据里的"当时事实"加了 §82 标注**（§12 的 `cap-1`/8、§43 的 `wl-3`/7、§47 的 `cap-1`/8、§49 的两处 revision 列表、§60 的三个类别词与三个解锁词、§81 的 `decision`）：**原数字一个都不改**，只在旁边写清今天读作什么。理由是 §48 已经定下的口径——那些小节自称描述**那一轮**的状态，改数字等于伪造历史。
+
+### 82.4 守卫与验红
+
+新增**三个**常驻检查（`cli/tests/test_l0_consistency.py`，守卫第二十四组），因为这一轮有两种不同的失败方向：
+
+**(a) 被裁决的事情不许继续被广告成"待裁决"。** `test_the_settled_decision_says_so_and_names_every_decision_it_took` 检查：ADR-0024 的**标题行**必须写着"已裁决"且不含"待裁决"；`## ADR-0025` 必须存在且自己说"已裁决"；**D1–D9 每一个都要有自己的 `### D<n>` 小节**——不是数够九个，而是"指向 D6"必须**有地方可落**。
+
+**(b) 指向**已被取代的提案**的指针是死胡同。** `test_the_agent_facing_surfaces_point_at_the_decision_that_was_taken` 逐**行**扫 `agents/airoot.json`、`SKILL.md` 与 `references/*.md`：一行里出现 `ADR-0024` 却不出现 `ADR-0025`，就是红的。按**行**而不是按文件，是因为失败的粒度就是一行——`references/field-values.md` 有三行写着"ADR-0024 是待裁决项"而同一文件其余部分是对的；**按文件检查会放过它**。
+
+**(c) 登记表里的"为什么等"必须指向**做出这个改动**的那条 ADR。** `test_the_deferral_register_points_at_the_decision_that_moved_it` 钉住 §82 的两个具体动作：`deferred["root adopt"].why` 必须点名 ADR-0025 且 `unblocked_by` 必须是 `p2-protected-state`；`approve`/`install` 的 `why_no_lane` 必须点名 ADR-0025。
+
+**验红（这一轮的教训比数字值钱）**：
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| ADR-0024 的标题换回"提案，待裁决" | 红 | ✅ 红（**第一版是绿的**，见下） |
+| 删掉指针的目标（`## ADR-0025` 整节） | 红 | ✅ 红 |
+| D1–D9 逐个改掉小节号（9 个变异） | 红 | ✅ 红（**第一版对 `D1x` 是绿的**，见下） |
+| 某一行只写 `ADR-0024` 不写 `ADR-0025` | 红 | ✅ 红（**并且第一次运行就抓到 5 处真问题**） |
+| `root adopt` 的 `why` 换回"ADR-0024 是待裁决项" | 红 | ✅ 红 |
+| 文档里的审计检查计数不同步（76 ≠ 79） | 红 | ✅ 红（**设计如此**） |
+
+**三处"守卫自己写错了"，都记下来**：
+
+1. **第一个版本的 `_settled_decision_problems` 用 `str.split("## ADR-0025")` 定位目标小节——而 ADR-0024 的指针句里正好写了 `## ADR-0025`。** 于是它落在**被指的那一条 ADR 内部**，十条断言全部报在错误的小节上（"ADR-0025 没有 D1 小节"之类）。**修法**：改成**行锚定**的 `re.search(r"(?m)^## ADR-0025")`，并且**把指针句里的反引号标题去掉**（现在写"裁决见 **ADR-0025** 的 D1"）。这一条值得单记：**一个指向标题的指针本身会破坏按标题切分的解析**。
+2. **D 小节的边界第一次写成 `(?![0-9])`，而 `### D1x` 照样通过**（"下一个字符不是数字"对 `x` 成立）。改 `(?!\w)` 之后才真的红。同一个模式还顺带说明 §76 那条 AST 规则的必要性：`\b` 被禁是因为它是**单边**的，而把边界**显式写出来**之后，"D10 会不会被 D1 匹配"这个问题才有个能被读到的答案。
+3. **登记表那条守卫的第一版带一张硬编码的豁免名单**（"这四条等 P2 的理由与 ADR-0025 无关，跳过"）——那是一张**会随数据漂移的名单**。换成"只写 `ADR-0024` 不写 `ADR-0025` 的行就是红的"之后，豁免名单消失，判据变成一句可读的规则。**这正是 §60 删 `covered-elsewhere` 时学到的那件事的另一面**：加一个"例外"很容易，而例外正是守卫开始说谎的地方。
+
+**这条守卫第一次运行就抓到一处真问题**：`agents/airoot.json` 的 `unmapped_verbs.uninstall.why_not_mapped` 末尾写着"(ADR-0024)"，而它解释的是"这个合成动词需要一枚这个 build 签不出的 token"——**指向的却是那条已经不再是答案的 ADR**。
+
+**把范围从登记表扩到全部 agent 面之后，另有四处会红，但它们是事后核对出来的，不是守卫当场抓到的**：
+
+| 位置 | 那一行说的是什么 |
+|---|---|
+| `references/field-values.md` 的 `approval_mode` 行 | "**这一版没有生产签发方**（ADR-0024 是待裁决项）" |
+| `references/field-values.md` 的 `source.kind` 行 | "`remote_signed` 要等 **ADR-0024 的裁决**" |
+| `references/field-values.md` 的 `$defs.source.signature.algorithm` 行 | "`ed25519` 这一版会显式报 `PROVENANCE_FAILED`(7)（ADR-0024）" |
+| `AGENTS.md` §6 命令块 | "裁决见 §8 与 `docs/AIROOT-v0.3-实现决策记录.md` 的 ADR-0024" |
+
+**这个区别值得写下来**：那四处是**我在写这条守卫之前就已经手工修掉的**——本轮前几步做过一次全仓 `ADR-0024` → `ADR-0025` 的指针替换，`field-values.md` 与 `AGENTS.md` §6 这几处当时漏掉了，是我读文件时补上的。说成"守卫抓到五处"会是一件好听但不真的话。
+核对方法是把 `git show HEAD:` 的文本喂给这条守卫的判据逐行走一遍：在守卫覆盖的四个面（`agents/airoot.json`、`SKILL.md`、`references/*.md`）上，**HEAD 一共 15 行只写 `ADR-0024` 不写 `ADR-0025`**，其中 11 行（登记表的 5 行 + `SKILL.md` 2 行 + `reason-codes.md` 2 行 + `confirmation.md` 2 行）已被那次替换修掉，剩下 4 行就是 `field-values.md` 的三行加 `uninstall` 那一行；`AGENTS.md` §6 那一行**不在这条守卫的覆盖范围里**（它扫的是 agent 面，入口文档的命令块由另一组守卫管），是读文件时发现的。
+
+**五处都是 §67–§68 那一轮写下的**，而当时它们全部是对的——ADR-0024 确实是待裁决项。**它们不是被写错，是被"时间"写错**：这正是这一类守卫存在的理由。
+
+**外加一次完整的外部校验**：
+
+- `python -m pytest cli/tests -q` → **826 项全绿**；
+- 旧协议切片 `validate-schemas`（`schema_count=19`）与 `test` 均 `passed`，`path_unchanged=true`；
+- `cli/tests/real_machine_acceptance.py`（不加 `--online`）→ **PASS，0 failed**，真机上 `search refresh` 仍建 **51 073** 条记录、`search status --probe-native-index` 仍报出 `elevated=True` 与真实 journal 读数。
+
+### 82.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **823 → 826**（新增 3 条） |
+| 审计检查（`test_l0_consistency.py`） | **76 → 79** |
+| `read` 路径 | 139 不变（这一轮没给 lane 加读字段） |
+| 冻结能力 / 白名单 | **8 → 7**（`cap-2`）/ **7 → 6**（`wl-4`） |
+| `deferred` 类别 / 解锁词 | 3 → **2** / 3 → **2** |
+| schema / fixture / 台账 | 19 / 27 / 108 **均不变**（其中 4 个 fixture 重生） |
+| CLI 执行路径 | **一行未改**（D1–D8 都是裁决，不是实现） |
+
+### 82.6 如实记录的边界
+
+1. **D1 与 D2 今天解锁不了任何可执行的步骤。** 五条消费批准的路径全部停在 `PROVENANCE_FAILED`(7)；`root adopt` 只是把等的东西从"一个决定"换成"P2"。**"被裁决过"不等于"被实现过"**，这一阶段的产物是**可读性**，不是能力。
+2. **`P-012` / `P-015` / `P-017` / `C-022` 保持 `undesigned`。** 选了 A 意味着这四条等的东西一条都没到。**"讨论过"不能改台账**——改判它们才是把一次讨论冒充成一次实现。
+3. **七条教义是**判据**，不是**证明**。** 它们把"下次遇到同类问题怎么想"写下来了，但没有任何守卫能检查"这条新决定是否真的遵守了教义"——那仍然要人读。
+4. **D6/D7/D4 只写了形状，没有写实现。** 形状定下来降低了 P2 的裁决成本，但它**不构成对"P2 会这么做"的保证**：真到了 P2，形状本身也要被重新检查一次（比如 broker 的 IPC 形态可能让"broker 做初始枚举"这句话需要更精确的措辞）。
+5. **`D8-4` 的"第一个真实 artifact 是 `build`"是一个**排序决定**，不是"`build` 更重要"。** 判据只是"它是冻结清单里唯一有已注册可信来源的能力"。如果明天 `archive` 拿到了可取的上游校验和文件，这个顺序就应当被重新问一次。
+6. **这一轮没有给 `machine_id` / `session_id` / `project_id` 的生成算法补任何东西**，`agent` 面仍然只接受注入或显式入参。D8-1 只是**把"不做"写成决定**。
+7. **`media_probe` 的移除是级联的，而级联的每一环都是手写的**：清单文件、白名单文件、语料、`AGENTS.md` 的两处计数。守卫能抓住**计数**不一致，抓不住"有人只改了清单忘了白名单"——那一环靠的是加载期的交叉校验（白名单条目的 `capability_id` 必须在冻结清单里），**这是有意的分工**。
+
+### 82.7 实施顺序
+
+1. 把九组开口从三份文档里量出来（§8 的清单、决策日志的《尚未决策》、《deferred》/`uncovered_verbs`），先确认它们**没有互相重叠**；
+2. 写七条教义，**然后**用它逐条裁决——顺序不能反：先有判据，答案才不是"每条的方便读法"；
+3. 先落 **D9**（唯一改数据的），因为它会牵动语料与三处计数；再落 D1/D2/D3–D8 这些"只是结论"的；
+4. ADR-0024 翻状态、写 ADR-0025、`ISSUER_PENDING` 换指针、`needs-decision`/`decision` 退场；
+5. 写 3 条守卫；**登记表那条第一次运行就抓到 1 处真问题**（`uninstall` 的 `why_not_mapped`），把范围扩到全部 agent 面后另用 `git show HEAD:` 核对出 4 处（3 行 `field-values.md` + `AGENTS.md` 一行），如实记为"事后核对"而不是"守卫抓到"；
+6. 逐个验红；其中**两个"绿得没意义"的变异**（指针句破坏了解析、`(?![0-9])` 放过了 `D1x`）各自修掉一处**守卫自己的**缺陷；
+7. 重生语料、回写全部计数、给三份随包数据加 §82 标注；
+8. 跑全量 + 旧切片 + 真机验收；确认 CLI 执行路径一行未改；提交。

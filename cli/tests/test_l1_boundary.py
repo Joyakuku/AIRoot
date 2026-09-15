@@ -43,7 +43,7 @@ def run(capsys, *argv: str) -> tuple[int, dict]:
 def test_the_shipped_capability_list_is_valid_and_revisioned() -> None:
     frozen = load_capabilities()
 
-    assert frozen.revision == "cap-1"
+    assert frozen.revision == "cap-2"
     assert "python" in frozen.ids()
     assert all(item.kind in {"tool", "runtime"} for item in frozen.capabilities)
     assert all(item.entry for item in frozen.capabilities), "a capability without an entry is unusable"

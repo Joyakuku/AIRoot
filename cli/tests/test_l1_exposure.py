@@ -82,7 +82,7 @@ def registered(registry, data_root_dir: Path) -> Path:
                 role="runtime",
                 volume_serial=volume_serial(data_root_dir),
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
         registry.upsert_external_reference(

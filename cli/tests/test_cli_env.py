@@ -53,7 +53,7 @@ def registered_reference(registry, data_root: Path) -> Path:
                 role="runtime",
                 volume_serial=volume_serial(data_root),
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
         registry.upsert_external_reference(
@@ -196,7 +196,7 @@ def test_env_persist_outside_every_data_root_is_refused(
                 role="runtime",
                 volume_serial=volume_serial(data_root),
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
         registry.upsert_external_reference(

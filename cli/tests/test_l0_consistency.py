@@ -38,6 +38,7 @@ AGENT_META = REPO / "agents" / "airoot.json"
 DRAFT = REPO / "docs" / "AIROOT-v0.3-管家模型与数据根契约草案.md"
 PROTOCOL = REPO / "docs" / "AIROOT-搜索能力与工具集成协议方案.md"
 REVIEW = REPO / "docs" / "AIROOT-v0.3-规范审查报告.md"
+DECISION_LOG = REPO / "docs" / "AIROOT-v0.3-实现决策记录.md"
 GOLDEN = REPO / "cli" / "tests" / "fixtures" / "golden"
 
 
@@ -76,7 +77,7 @@ def test_every_schema_file_is_referenced_somewhere_outside_itself() -> None:
         AGENTS,
         SCHEMA_README,
         DRAFT,
-        REPO / "docs" / "AIROOT-v0.3-实现决策记录.md",
+        DECISION_LOG,
     ]
     corpus = "\n".join(path.read_text(encoding="utf-8") for path in documents)
     unreferenced = sorted(
@@ -288,7 +289,7 @@ def test_every_implemented_command_is_named_in_the_documentation() -> None:
     documents = [
         REPO / "docs" / "AIROOT-总体方案规划-v0.3.md",
         DRAFT,
-        REPO / "docs" / "AIROOT-v0.3-实现决策记录.md",
+        DECISION_LOG,
         REPO / "docs" / "AIROOT-v0.3-三大核心契约方案.md",
         SKILL,
         AGENTS,
@@ -410,8 +411,14 @@ def test_every_declared_unimplemented_command_is_still_unimplemented() -> None:
 # to exact equality by the guard. Adding a fourth because it *sounds* like a reason is what §60's own
 # audit did and then undid, so the vocabulary is not allowed to carry a member nobody is in.
 
-#: Why a command path is deferred. `needs-admin` and `needs-decision` are the two that cannot be
-#: worked around; `needs-capability` waits on a later phase.
+#: Why a command path is deferred. `needs-admin` cannot be worked around; `needs-capability` waits on
+#: a later phase.
+#:
+#: A third value, `needs-decision`, was **removed in draft §82**: its only member was `root adopt`, and
+#: ADR-0025 decided the copy/verify/switch rules that the name had been waiting on. What is left for
+#: `root adopt` is the switch itself, which is protected state — so it moved to `needs-admin` and the
+#: category went with it, for the same reason `covered-elsewhere` went below: a value nobody is in is a
+#: word a reader meets and cannot use.
 #:
 #: A fourth value, `covered-elsewhere` ("this verb would today be a synonym of an existing one"), was
 #: added and removed in the same round: its only member was `reconcile`, and the audit re-derived that
@@ -421,7 +428,6 @@ def test_every_declared_unimplemented_command_is_still_unimplemented() -> None:
 #: smaller half. It is recorded in the register's `why` — the value is gone because nothing is in it.
 DEFERRAL_CATEGORIES: tuple[str, ...] = (
     "needs-admin",
-    "needs-decision",
     "needs-capability",
 )
 
@@ -429,10 +435,13 @@ DEFERRAL_CATEGORIES: tuple[str, ...] = (
 #: uses must match it exactly (`p2-protected-state` is in both registers); the rest follow the ledger's
 #: `p<phase>-<capability>` shape so the two registers read alike. The guard below enforces the overlap
 #: rather than trusting the comments.
+#:
+#: `decision` was removed with `needs-decision` in §82: once ADR-0025 decided the three paths that were
+#: waiting on a裁决 (`root adopt`, `approve`, `install`), all three wait on the same thing as the rest —
+#: the protected state P2 brings.
 DEFERRAL_UNBLOCKERS: tuple[str, ...] = (
     "p2-protected-state",
     "p6-project-manifest",
-    "decision",
 )
 
 
@@ -568,6 +577,177 @@ def test_every_deferral_category_is_explained_in_the_entry_document() -> None:
         assert names_token(agents, unblocker, word="A-Za-z0-9_-") or names_token(
             DRAFT.read_text(encoding="utf-8"), unblocker, word="A-Za-z0-9_-"
         ), f"{unblocker} is used as an unblocker but named nowhere a reader can find it"
+
+
+# --- Guard group 24: a decision that was taken may not stay advertised as open (draft §82) -------
+#
+# §82 took a decision (ADR-0025) that ADR-0024 had left open, and the class of defect this group
+# exists for is the **stale pointer**. The refusal messages, the Skill, the reference documents and
+# the register all name the decision, and every one of them is written by hand. When the decision is
+# taken, a document that still says "提案 / 待裁决" sends the reader to look for something that will
+# never arrive — which is worse than saying nothing, because the reader concludes the documents are
+# simply out of date and stops trusting the rest of them. Same class as §67's two refusal messages,
+# measured one layer up: there the *pointer* was missing, here it points at a state that has ended.
+#
+# Two halves, because the two failure directions are different:
+#   * the log must say it is decided, and the ADR that closed it must name every decision it took —
+#     a pointer to "D6" is only actionable if D6 has a section to land on;
+#   * the register that waits on it must point back, because §82's whole content is that `root adopt`
+#     stopped waiting for a decision and started waiting for P2. That only reads that way if the
+#     `why` an agent sees names the ADR that made the change.
+
+#: The ADR that closed ADR-0024. Named once here so the guards below and the pointer test in
+#: `test_l1_transaction.py` cannot drift onto different ids.
+SETTLING_ADR = "ADR-0025"
+
+#: The ids that ADR must have taken a decision under. Per-id, not a count: `D1`–`D9` in prose would
+#: satisfy a count while leaving "见 D7" with nowhere to land, and the draft has its *own* `D1`–`D10`
+#: (the diagnostic invariants), so a bare substring test for the letters would pass on the wrong list.
+DECISION_IDS: tuple[str, ...] = ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9")
+
+
+def _settled_decision_problems(log: str) -> list[str]:
+    """Structure of "the decision is settled": the closed ADR, its pointer target, and its ids.
+
+    The settling ADR is located by a **line-anchored** heading, not by `str.split("## ADR-0025")`:
+    ADR-0024's own pointer sentence names it, so a plain split lands inside the ADR it is supposed to
+    leave. That is not hypothetical — it is what the first version of this helper did, and it made
+    every assertion below report against the wrong section.
+    """
+
+    problems: list[str] = []
+    marker = re.search(r"(?m)^## ADR-0024：", log)
+    if marker is None:
+        return ["ADR-0024 is gone; this guard is about the ADR whose status ADR-0025 settled"]
+
+    heading = log[marker.end() :].splitlines()[0]
+    if "已裁决" not in heading:
+        problems.append("ADR-0024's heading still reads as an open question")
+    if "待裁决" in heading:
+        problems.append("ADR-0024's heading still advertises a pending decision")
+
+    settling = re.search(rf"(?m)^## {re.escape(SETTLING_ADR)}", log)
+    if settling is None:
+        return problems + [f"the status points at {SETTLING_ADR}, which does not exist"]
+    tail = log[settling.end() :]
+    section = re.split(r"(?m)^## ", tail, maxsplit=1)[0]
+    if "已裁决" not in section:
+        problems.append(f"{SETTLING_ADR} does not state that it settled anything")
+    for decision in DECISION_IDS:
+        # `(?!\w)` rather than `\b`: the id is followed by a space in `### D1 …` and by `0` in
+        # `### D10 …`, so the boundary that matters is exactly "no word character follows" — which
+        # also rejects a renamed `### D1x …` that a bare `(?![0-9])` would happily accept. Spelled as
+        # a lookahead it also stays clear of the §76 rule that a `re.search` pattern may not carry a
+        # one-sided `\b` (the AST check above); making the boundary *visible* is the point either way.
+        if not re.search(rf"(?m)^### {re.escape(decision)}(?!\w)", section):
+            problems.append(f"{SETTLING_ADR} has no section for {decision}")
+    return problems
+
+
+def test_the_settled_decision_says_so_and_names_every_decision_it_took() -> None:
+    log = DECISION_LOG.read_text(encoding="utf-8")
+    assert _settled_decision_problems(log) == [], "; ".join(_settled_decision_problems(log))
+
+    # Non-vacuity in every direction the helper claims to detect. The first mutation is the exact
+    # pre-§82 text, so this guard is measured against the state it was written to catch.
+    pending = log.replace(
+        log[re.search(r"(?m)^## ADR-0024：", log).end() :].splitlines()[0],
+        "生产批准签发方——**提案，待裁决**（P1 只能验、不能签）",
+        1,
+    )
+    assert any("pending decision" in problem for problem in _settled_decision_problems(pending)), (
+        "the heading this guard was written for must be reported"
+    )
+    assert any(
+        "does not exist" in problem
+        for problem in _settled_decision_problems(log[: re.search(rf"(?m)^## {SETTLING_ADR}", log).start()])
+    ), "a status pointing at an ADR that is not there must be reported"
+    for decision in DECISION_IDS:
+        dropped = log.replace(f"### {decision} ", f"### {decision}x ", 1)
+        assert any(
+            decision in problem for problem in _settled_decision_problems(dropped)
+        ), f"an ADR that stopped naming {decision} must be reported"
+
+
+def test_the_agent_facing_surfaces_point_at_the_decision_that_was_taken() -> None:
+    """§82: a pointer to the ADR that left a question open is now a dead end.
+
+    §82 changed *why* `root adopt` is deferred (a decision → P2) and *why* `approve`/`install` have no
+    lane (the issuer is not coming in P1). The register, the Skill and the three on-demand references
+    are all hand-written and all name the ADR — and every one of them was written while ADR-0024 was
+    still a proposal. A surface that keeps pointing at the proposal sends the agent to a document that
+    says the question is open, which is the §67 defect class one layer up: there the *pointer* was
+    missing, here it points at a state that has ended.
+
+    The check is per **line**, not per file, because that is the granularity the failure has: one row
+    of `references/field-values.md` said "ADR-0024 是待裁决项" while the rest of the file was fine.
+    A file-level check would have passed on it. (It did: that row is what this guard was measured
+    against — the first run reported it.)
+    """
+
+    surfaces = {
+        str(AGENT_META.relative_to(REPO)): AGENT_META.read_text(encoding="utf-8"),
+        str(SKILL.relative_to(REPO)): SKILL.read_text(encoding="utf-8"),
+    }
+    surfaces.update(
+        {
+            str(path.relative_to(REPO)): path.read_text(encoding="utf-8")
+            for path in sorted((REPO / "references").glob("*.md"))
+        }
+    )
+
+    def _stale_pointers(payload: dict[str, str]) -> list[str]:
+        found = []
+        for name, text in sorted(payload.items()):
+            for number, line in enumerate(text.splitlines(), 1):
+                if "ADR-0024" in line and SETTLING_ADR not in line:
+                    found.append(f"{name}:{number}")
+        return found
+
+    assert _stale_pointers(surfaces) == [], (
+        f"these lines point at the superseded proposal and stop there: {_stale_pointers(surfaces)}"
+    )
+
+    # Non-vacuity: the rule has to fire on the pointer shape it exists for, and only where it exists.
+    seeded = dict(surfaces)
+    seeded["seeded.md"] = "The rules are missing: ADR-0024 is the pending decision."
+    assert _stale_pointers(seeded) == ["seeded.md:1"], (
+        "a line that points only at the superseded proposal must be reported"
+    )
+    assert _stale_pointers(
+        {"ok.md": f"ADR-0024 left it open; {SETTLING_ADR} settled it."}
+    ) == [], "naming both ADRs on one line is the fix, not the defect"
+
+
+def test_the_deferral_register_points_at_the_decision_that_moved_it() -> None:
+    """§82 changed *why* `root adopt` is deferred, and the register is what an agent reads.
+
+    Before §82 it waited on a decision; after §82 it waits on P2. A register that still presented the
+    copy/verify/switch rules as an open question would send the agent to ask the user for something
+    ADR-0025 has already answered — the §67 defect class, one register over.
+
+    This one is deliberately narrower than the line sweep above: it pins the two *specific* moves §82
+    made, so a future edit that reverts the reasoning (rather than the wording) still goes red.
+    """
+
+    document = json.loads(AGENT_META.read_text(encoding="utf-8"))
+    adopt = document["deferred"]["root adopt"]
+
+    assert SETTLING_ADR in adopt["why"], (
+        "the register says what `root adopt` waits for without naming the ADR that settled the rules, "
+        "so a reader cannot tell a decided rule from an open question"
+    )
+    assert adopt["unblocked_by"] == "p2-protected-state", (
+        f"ADR-0025 settled the rules; what is left is the protected switch, not {adopt['unblocked_by']!r}"
+    )
+
+    # D1 is the decision that kept these two verbs from getting lanes, so the register's own
+    # explanation of *why there is no lane* is where an agent meets it.
+    for verb in ("approve", "install"):
+        entry = document["uncovered_verbs"][verb]
+        assert SETTLING_ADR in entry["why_no_lane"], (
+            f"`{verb}` waits on the protected state D1 left it waiting on, without naming the decision"
+        )
 
 
 def test_every_reason_code_the_search_protocol_lists_is_registered() -> None:
@@ -2165,8 +2345,10 @@ def test_the_confirmation_reference_does_not_offer_a_step_this_build_cannot_perf
         "references/confirmation.md presents `install --token-file` without saying that this build "
         "cannot produce a token; an agent reading it will describe a flow that cannot run"
     )
-    assert "ADR-0024" in text, "the honest block must point at the pending decision, not just apologise"
-    assert "提案" in text, "ADR-0024 is a proposal, not a decision; the reference must not overstate it"
+    assert "ADR-0025" in text, "the honest block must point at the decision that was taken, not just apologise"
+    assert "已裁决" in text or "维持现状" in text, (
+        "the reference must say the decision was taken — otherwise the gap reads as still open"
+    )
 
 
 # --- Guard group 20: an "undesigned" claim needs a witness (draft §52) ---------------------------

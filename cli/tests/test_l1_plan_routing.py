@@ -43,7 +43,7 @@ def data_root(tests_tmp: Path, registry) -> str:
                 role="runtime",
                 volume_serial=volume_serial(path),
                 added_at="2024-01-01T00:00:00Z",
-                whitelist_revision="wl-3",
+                whitelist_revision="wl-4",
             ),
         )
     return "dr-env"
@@ -219,7 +219,7 @@ def test_the_routing_target_changes_the_plan_hash(capsys, cli_root: Path, data_r
                     role="tool",
                     volume_serial=volume_serial(other),
                     added_at="2024-01-01T00:00:00Z",
-                    whitelist_revision="wl-3",
+                    whitelist_revision="wl-4",
                 ),
             )
     finally:

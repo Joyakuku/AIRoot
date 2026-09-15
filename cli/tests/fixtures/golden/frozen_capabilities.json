@@ -64,18 +64,6 @@
       ]
     },
     {
-      "capability_id": "media_probe",
-      "entry": "ffprobe.exe",
-      "kind": "tool",
-      "scope": [
-        "machine",
-        "session"
-      ],
-      "side_effects": [
-        "none"
-      ]
-    },
-    {
       "capability_id": "build",
       "entry": "cmake.exe",
       "kind": "tool",
@@ -103,6 +91,6 @@
       ]
     }
   ],
-  "revision": "cap-1",
+  "revision": "cap-2",
   "schema_version": 1
 }
