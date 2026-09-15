@@ -320,9 +320,14 @@ def test_the_search_subcommands_the_protocol_reserves_are_the_ones_we_reserve() 
 #: Diagnostic codes that are declared but cannot be emitted yet, and why. `doctor` must not promise
 #: a diagnosis it cannot produce, so this is an explicit, documented exception list rather than a
 #: silent gap — every entry also has to be named as pending in `AGENTS.md`.
-RESERVED_DIAGNOSTICS = {
-    "DATA_ROOT_ACL_DRIFT": "needs the P2 ACL baseline (AGENTS §1 lists it under 尚未实现)",
-}
+#:
+#: **Empty, and that is the point.** It held exactly one entry — `DATA_ROOT_ACL_DRIFT`, which could
+#: not be produced because the ACL baseline was P2 work — and draft §35 wrote down that the exception
+#: "P2 落地后必须删除". Draft §58 landed the read side (`caps/acl.py` + the `doctor` check), so the
+#: entry is gone and the guard below now requires the code to be genuinely producible like any other.
+#: The list stays because the *shape* recurs: the next declared-but-unemittable code must be written
+#: down here rather than left as a silent gap.
+RESERVED_DIAGNOSTICS: dict[str, str] = {}
 
 
 def _commands_in(text: str) -> set[tuple[str, str | None]]:

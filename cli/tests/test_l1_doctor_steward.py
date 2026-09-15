@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from airoot.caps.acl import capture_acl
 from airoot.caps.doctor import diagnostics_by_code, doctor
 from airoot.canon import digest_file
 from airoot.paths import volume_serial
@@ -97,6 +98,7 @@ def test_a_missing_data_root_is_an_error(steward_root) -> None:
     import shutil
 
     shutil.rmtree(data_root)
+
 
     document = doctor(root.path, registry=registry)
 
@@ -275,3 +277,100 @@ def test_doctor_never_touches_the_data_root(steward_root) -> None:
 
     after = sorted((path.relative_to(data_root).as_posix(), path.stat().st_size) for path in data_root.rglob("*") if path.is_file())
     assert before == after
+
+
+# --------------------------------------------------------------------------- #
+# ACL baseline drift (ADR-0023, draft §58)
+# --------------------------------------------------------------------------- #
+
+
+def rebaseline(registry, data_root, baseline: dict | None) -> None:
+    """Re-register the data root with a chosen baseline (the upsert updates the column)."""
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_data_root(
+            connection,
+            DataRoot(
+                data_root_id="dr-env",
+                path=str(data_root),
+                role="runtime",
+                volume_serial=volume_serial(data_root),
+                acl_baseline=baseline,
+                added_at="2024-01-01T00:00:00Z",
+                whitelist_revision="wl-3",
+            ),
+        )
+
+
+def test_a_data_root_without_a_baseline_reports_no_acl_drift(steward_root) -> None:
+    """No baseline means no comparison, so nothing is claimed — it must not be guessed at.
+
+    This is also the ordinary case for every data root registered before draft §58, and it is why
+    the existing doctor corpus does not move: those roots carry no baseline.
+    """
+
+    root, registry, _data_root, _object_root = steward_root
+
+    document = doctor(root.path, registry=registry)
+
+    assert "DATA_ROOT_ACL_DRIFT" not in codes(document)
+
+
+def test_C034_a_data_root_whose_acl_changed_reports_drift(steward_root) -> None:
+    """C-034: the baseline is an *observation*, so drift means "different from what we recorded".
+
+    Draft §35 recorded that this code was in ``INVARIANTS["D1"]`` and could not be produced, and that
+    the exception had to be deleted once the read side landed. Draft §58 lands it, and adds this
+    scenario to the acceptance surface in the same change — until then the behaviour would have
+    shipped with no scenario naming it at all.
+
+    ``repair`` is the code's documented remediation, and in this vocabulary it means **re-record the
+    baseline** (the same reading ``WHITELIST_REVISION_STALE`` gets) — never "put the old ACL back",
+    which would undo a change the user may have made deliberately (ADR-0004, ADR-0023).
+
+    The fabricated baseline uses **synthetic SIDs**: the repository is public and real machine
+    fingerprints must not be committed (AGENTS §9, draft §58.2).
+    """
+
+    root, registry, data_root, _object_root = steward_root
+
+    # A syntactically real but definitely-not-this-machine descriptor.
+    rebaseline(
+        registry,
+        data_root,
+        {
+            "schema_version": 1,
+            "observed": True,
+            "reason": None,
+            "owner": "S-1-5-18",
+            "dacl_present": True,
+            "entries": [[0, 0, 0x001F01FF, "S-1-5-32-544"], [1, 0, 0x00100000, "S-1-5-32-545"]],
+            "digest": "sha256:" + "0" * 64,
+        },
+    )
+
+    document = doctor(root.path, registry=registry)
+
+    assert "DATA_ROOT_ACL_DRIFT" in codes(document), document["diagnostics"]
+    entry = diagnostics_by_code(document)["DATA_ROOT_ACL_DRIFT"]
+    assert entry["severity"] == "warning", entry
+    assert entry["remediation"] == "repair", entry
+    # The answer has to say *what* changed, not merely that something did.
+    assert any("entry" in item or "owner" in item or "entries:" in item for item in entry["evidence"]), entry["evidence"]
+    assert diagnostics_by_code(document)["DATA_ROOT_ACL_DRIFT"]["code"] == "DATA_ROOT_ACL_DRIFT"
+
+
+def test_a_data_root_whose_acl_matches_its_baseline_reports_nothing(steward_root) -> None:
+    """The negative control: recording what is actually there must not look like drift.
+
+    Without this, "report whenever a baseline exists" would satisfy the drift test above — and every
+    freshly registered data root would be reported as drifted the moment it was added.
+    """
+
+    root, registry, data_root, _object_root = steward_root
+
+    rebaseline(registry, data_root, capture_acl(data_root).to_document())
+
+    document = doctor(root.path, registry=registry)
+
+    assert "DATA_ROOT_ACL_DRIFT" not in codes(document)

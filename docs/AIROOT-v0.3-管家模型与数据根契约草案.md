@@ -629,6 +629,7 @@ capability 的对象、被 §15.2 条件 3 命中的对象。落点见 §4.4 的
 | C-031（新） | 对象匹配白名单但 capability 未冻结 | 只 `unmanaged`；`adopt` 拒绝并提示先冻 capability |
 | C-032（新） | 名字极像（`python.exe` 但 PE ProductName 不符） | **不登记**（§9.3:716 禁止按名字认定） |
 | C-033（新） | 服务 / 驱动 / 计划任务类对象 | `excluded`，不进 inventory 主列表 |
+| C-034（新） | 已注册数据根的 ACL 与登记时记录的**观测基线**不同（或读不出来） | `DATA_ROOT_ACL_DRIFT`（warning）；`repair` = **重新记录基线**（不是覆盖用户的 ACL）；没记基线就不报（§58、ADR-0023） |
 
 ---
 
@@ -4433,6 +4434,95 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 3. 确认序列号格式（schema 的 pattern）与真实格式（`paths.py` 的 `{:08x}`），据此造一个**合法但不同**的值。
 4. 写测试：两半 + 不接管 + evidence + 负向对照。
 5. 验红两个方向、删处置、重生语料、核对**外科式**、跑全量 + 旧切片 + 真机验收、回写计数、提交。
+
+## 58. 第 58 阶段：ACL 基线的读取与漂移发射（`DATA_ROOT_ACL_DRIFT` 第一次可产生）
+
+### 58.1 这一阶段要解决什么
+
+§35 把 `DATA_ROOT_ACL_DRIFT` 记成**写明理由的例外**：它在 `INVARIANTS["D1"]` 里，但**产生不出来**；
+那条记录同时写着"**P2 落地后这条例外必须删除**"。规划 §601 则直接要求："`doctor` 必须检查 ACL 是否偏离"。
+
+本阶段做**读**的那一半（**不需要管理员**）；把基线**强加**回目录（写 ACL）仍属 P2 的 broker——
+那是这一阶段**明确不做**的部分，见 58.6。
+
+### 58.2 实测：`ctypes` 能读 DACL，而且不需要提权
+
+先探针后设计。用 `advapi32.GetNamedSecurityInfoW`（`OWNER|DACL`）+ `GetAce` + `ConvertSidToStringSidW`
+读一个目录，实测（本机）：
+
+* **成功**，没有提权、没有 `pywin32`（项目的第三方依赖只有 `jsonschema`，这条必须成立）；
+* 拿到 owner SID 与每条 ACE 的 `type`/`flags`/`mask`/`SID`（`D:\AIRoot` 11 条，`D:\env` 10 条）；
+* **失败即数据**：`GetNamedSecurityInfoW` 返回 rc 而不是抛异常，所以调用方必须自己转成数据。
+
+**同一次探针还测出一件必须写下来的事**：它的输出里全是**真实的机器 SID**。远端仓库是 **public**，
+`AGENTS.md` §9 明令不得提交本机指纹，且当前树里**确实没有**（已实测扫描过）。
+所以本阶段的硬约束是：**语料与测试里不得出现本机 SID**——基线只在 `tests_tmp` 里现算，不写进 fixture。
+
+### 58.3 决策（ADR-0023）
+
+1. **基线是观测值。** 草案 §3.1 自己写着 "`acl_baseline`（**观测值**）"。所以漂移的含义是
+   "**现在看到的和当初记下的不一样**"，**不是**"你违反了某条要求的 ACL"。这正是管家该有的形状：
+   AIROOT 不拥有数据根，不能规定它的 ACL，但可以**注意到它变了**。
+2. **`repair` 的含义是"重新记录基线"。** 同表里 `WHITELIST_REVISION_STALE` 的 `repair` 就是这个读法
+   （把 AIROOT 记的东西更新成事实）。**不是**"把用户的 ACL 改回去"——那会**撤销用户有意的改动**，
+   与 ADR-0004 直接冲突。这一条是本阶段最容易做错的地方，所以写进 ADR。
+3. **ACE 顺序不排序。** Windows 的 ACE 顺序**有语义**（允许/拒绝的先后）；排序会把一次**有意义的**改动
+   洗成"没变"。宁可对一次纯重排报漂移（那是真的变过），也不要漏报一次权限收紧。代价写进 58.5。
+4. **不新增 reason code。** 读不出来时按本文件既有惯例报同一个码：`doctor.py` 对"卷身份**读不出来**"
+   用的就是 `VOLUME_IDENTITY_MISMATCH`（`"volume identity unreadable"`）。但在 `evidence` 里
+   **必须说清是"读不出来"而不是"变了"**——否则读者会把"未知"当成"已变"。
+5. **没记基线 → 不报。** 无法比较就别说漂移；这也让"P2 之前不发"有了精确含义（P2 之前**没有基线**，
+   所以不发）。
+
+### 58.4 修法
+
+1. 新模块 `caps/acl.py`：只读 DACL → 规范形态（`owner` + 有序的 `(type, flags, mask, sid)`）+ `acl_digest`。
+   读不出来返回"为什么"，不抛。
+2. `data-root add` 在登记时**记录观测到的基线**（`acl_baseline_json` 这一列至今没人写过）。
+3. `doctor` 的 D1 数据根检查增加漂移判定（`warning` / `repair`）。
+4. **删掉那条例外**：`test_l0_consistency.py` 的 `RESERVED_DIAGNOSTICS` 去掉 `DATA_ROOT_ACL_DRIFT`，
+   `AGENTS.md` 的"尚未实现"里把"ACL 基线（`DATA_ROOT_ACL_DRIFT` 的发射）"改成"ACL **写入**/broker 一侧"。
+
+### 58.5 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S58.1 只读 ACL 读取器 | ✅ | `caps/acl.py`：`get_named_security_info` + `GetAce` + `ConvertSidToStringSidW`；读不出来返回原因，不抛 |
+| S58.2 登记时记录基线 | ✅ | `data-root add` 写 `acl_baseline`；`docs/schema/README.md` 无需改（列早已存在） |
+| S58.3 `doctor` 发射 | ✅ | `DATA_ROOT_ACL_DRIFT`（`warning`/`repair`），evidence 区分"变了"与"读不出来" |
+| S58.4 例外删除 | ✅ | `RESERVED_DIAGNOSTICS` 不再含它；守卫 `test_no_diagnostic_code_is_promised_without_a_path_that_can_emit_it` 现在要求它**真的可产生** |
+| S58.5 测试 | ✅ | 见下：漂移、无基线不报、负向对照、顺序敏感、失败即数据 |
+| S58.6 测试 + 回写 | ✅ | `pytest cli/tests` 751 → **756 项**；真机验收通过（`data-root add` 现在会读真实 `D:\env` 的 ACL，**无需提权**） |
+| S58.7 场景进验收面 | ✅ | 新增 **`C-034`**（§9 的场景表）：在此之前这个行为会**带着零个场景**上线；场景数 107 → **108**，语料**外科式**重生（只有 `scenario_ledger.json` 变，doctor 语料逐字节不变——那正是"没基线不报"的验证） |
+
+**测试的五个方向**（每个都对应一条判据，不是凑数）：
+
+1. **基线缺席 → 不报**（"无法比较就不说漂移"）；
+2. **基线过期 → 报**（伪造一条与现况不同的基线，确定性且不需要改 ACL）；
+3. **负向对照：基线是刚读的 → 不报**（没有它，"凡有基线就报"也能通过）；
+4. **顺序敏感**：把同一组 ACE **重排**后 digest 必须不同（钉住决策 3，而不是写着"不排序"却悄悄排序）；
+5. **失败即数据**：对不存在的路径读 ACL 不抛异常，返回原因。
+
+**守卫确实会红**：把漂移判定短路 → 第 2 条测试报红；把 digest 改成对 ACE 排序后比较 → 第 4 条报红。
+
+### 58.6 明确不做
+
+1. **不写 ACL。** 把基线"强加"回目录需要 `WRITE_DAC` 与 broker，属 P2 的写一侧；本阶段只读。
+2. **不新增 reason code**（决策 4）。
+3. **不把真实 SID 写进任何被提交的文件**（58.2）。语料里**不新增** ACL fixture：既有 doctor 语料的
+   数据根**没有**基线，所以那条路径不发诊断，**语料逐字节不变**——这也是本阶段"不发"语义的直接验证。
+4. **不对 CLI root 自己的目录做基线**（规划 §8.2 的那张表是 root 布局的必需 ACL，属 P2 的受保护模式），
+   本阶段只做**数据根**（`DATA_ROOT_ACL_DRIFT` 这个名字本来就是数据根的）。
+
+### 58.7 实施顺序
+
+1. 先探针：确认 `ctypes` 能读、不需要提权、不需要新依赖（58.2）——**先测再设计**。
+2. 写 ADR-0023（`repair` 的含义、顺序敏感、失败即数据）。
+3. 写 `caps/acl.py` + 测试 5 条。
+4. 接进 `data-root add` 与 `doctor`。
+5. 删例外、改 AGENTS、重生语料（核对**逐字节不变**）、验红、跑全量 + 旧切片 + 真机验收、提交。
 
 
 

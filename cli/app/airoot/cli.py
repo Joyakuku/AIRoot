@@ -227,6 +227,13 @@ def cmd_data_root_add(args: argparse.Namespace, context: Context) -> tuple[dict[
         # the CLI root by construction.
         target_volume = volume_serial(target)
 
+        # The ACL is recorded as an **observation**, not a requirement (draft §3.1), so a later change
+        # can be reported instead of silently accepted. Reading is all this does: imposing a baseline
+        # needs WRITE_DAC behind the P2 broker (ADR-0023).
+        from .caps.acl import capture_acl
+
+        acl_baseline = capture_acl(target).to_document()
+
         data_root_id = args.data_root_id or _derived_data_root_id(target)
         existing = registry.data_root(data_root_id)
         if existing is not None and existing["path"] != str(target):
@@ -241,6 +248,7 @@ def cmd_data_root_add(args: argparse.Namespace, context: Context) -> tuple[dict[
             path=str(target),
             role=args.role,
             volume_serial=target_volume,
+            acl_baseline=acl_baseline,
             added_at=context.clock.timestamp(),
             whitelist_revision=load_whitelist().revision,
         )

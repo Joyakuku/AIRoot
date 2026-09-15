@@ -548,6 +548,24 @@
       "witness": null
     },
     {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_doctor_steward.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-034",
+      "no_witness_reason": null,
+      "note": null,
+      "status": "evidenced",
+      "superseded": null,
+      "witness": null
+    },
+    {
       "blocked_by": "p2-protected-state",
       "cited_by": [],
       "defined_in": [
@@ -1807,14 +1825,14 @@
   ],
   "schema_version": 1,
   "summary": {
-    "evidenced": 44,
+    "evidenced": 45,
     "families": {
-      "C": 33,
+      "C": 34,
       "P": 21,
       "S": 36,
       "T": 17
     },
-    "total": 107,
+    "total": 108,
     "uncited": 63
   }
 }

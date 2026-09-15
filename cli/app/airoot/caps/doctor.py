@@ -29,6 +29,7 @@ from ..registry.projection import projection_generation
 from ..root import marker_path, read_marker
 from ..schema_io import errors_for, load_schema
 from ..paths import volume_serial
+from .acl import AclSnapshot, acl_digest, capture_acl, differences
 
 AUDIT_RELATIVE = f"{LOGS_DIR}/audit/events.json"
 
@@ -131,6 +132,73 @@ def _check_root(root: Path, diagnostics: list[dict[str, Any]]) -> dict[str, Any]
             )
         )
     return marker
+
+
+def _check_data_root_acl(
+    data_root_id: str, path: Path, row: Any, diagnostics: list[dict[str, Any]]
+) -> None:
+    """Compare the data root's ACL with the baseline recorded when it was registered (ADR-0023).
+
+    Three outcomes, and the distinction between them is the whole point:
+
+    * **no baseline** — nothing to compare, so nothing is claimed. That is what "P2 之前不发" means
+      precisely: before this stage existed there was never a baseline.
+    * **either side unobserved** — the baseline cannot be *confirmed*, which leaves D1 ("this data
+      root's identity is provable") unmet. Reported under the same code, with evidence that says
+      which side could not be read, because "unreadable" and "changed" are different facts and the
+      answer must not blur them. This follows this file's own convention for volume identity
+      ("volume identity unreadable" is reported as ``VOLUME_IDENTITY_MISMATCH``).
+    * **both observed and different** — drift, with the differences named.
+
+    ``remediation`` is ``repair`` as the steward draft's table says, and in this project's vocabulary
+    that means **re-record the baseline once the change is understood** — the same reading
+    ``WHITELIST_REVISION_STALE`` gets. It is deliberately *not* "put the old ACL back": that would
+    undo a change the user may have made on purpose, which the butler model forbids (ADR-0004).
+    """
+
+    recorded_document = row["acl_baseline_json"]
+    recorded = load_json(recorded_document, None) if isinstance(recorded_document, str) else recorded_document
+    if not isinstance(recorded, dict):
+        return  # registered before baselines were recorded: no comparison is possible
+
+    expected = AclSnapshot.from_document(str(path), recorded)
+    current = capture_acl(path)
+    common = [f"data_root={data_root_id}", f"path={path}"]
+
+    if not expected.observed or not current.observed:
+        unreadable = "baseline" if not expected.observed else "current"
+        diagnostics.append(
+            _diagnostic(
+                "warning",
+                "DATA_ROOT_ACL_DRIFT",
+                [
+                    *common,
+                    f"{unreadable} could not be read: {expected.reason or current.reason}",
+                    "this is an unreadable ACL, not a changed one",
+                ],
+                "the data root's ACL cannot be confirmed against the recorded baseline",
+                "repair",
+            )
+        )
+        return
+
+    findings = differences(expected, current)
+    if not findings:
+        return
+    diagnostics.append(
+        _diagnostic(
+            "warning",
+            "DATA_ROOT_ACL_DRIFT",
+            [
+                *common,
+                f"recorded={acl_digest(expected)[:19]}",
+                f"actual={acl_digest(current)[:19]}",
+                *findings[:4],
+            ],
+            "the sharing posture of this data root changed since it was registered",
+            "repair",
+        )
+    )
 
 
 def _check_registry(
@@ -291,6 +359,7 @@ def _check_data_roots(
                     "recover",
                 )
             )
+        _check_data_root_acl(data_root_id, path, row, diagnostics)
         stale_revision = str(row["whitelist_revision"] or "")
         if whitelist_revision and stale_revision and stale_revision != whitelist_revision:
             diagnostics.append(
