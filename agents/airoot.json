@@ -20,7 +20,8 @@
     {
       "question": "where is this capability, and why that one",
       "command": ["where", "<capability>"],
-      "read": ["found", "executable", "management", "selection_reason", "reason_code", "evidence"]
+      "read": ["found", "executable", "management", "selection_reason", "reason_code", "evidence", "zone", "candidates[].machine_discoverable"],
+      "notes": "a candidate row carries `machine_discoverable` (= zone != W): false means healthy and usable but excluded from machine-level discovery, not a fault; Zone W answers only explicit --session/--project activation"
     },
     {
       "question": "does a version-constrained capability exist",
@@ -30,7 +31,8 @@
     {
       "question": "what is declared on this machine",
       "command": ["inventory", "--class", "<managed_tool|runtime|external_reference|unmanaged>"],
-      "read": ["instances", "external_references"]
+      "read": ["instances", "external_references", "bindings[].binding_key", "bindings[].zone"],
+      "notes": "`bindings[].zone` is R/W/P; a machine-scope binding in Zone W is declared but will never be machine-discoverable (see where's `machine_discoverable`)"
     },
     {
       "question": "what is actually inside the data roots (read-only scan)",

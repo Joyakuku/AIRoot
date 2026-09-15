@@ -63,6 +63,17 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 - `PROJECT_MANAGED_HEALTHY` — 项目内有绑定，项目优先。
 - `NOT_FOUND` / `UNMANAGED_ONLY` / `REFERENCE_NOT_USABLE` — 没有可用答案，或只有诊断性候选。
 
+**`zone` 怎么念（R / W / P）**：绑定带一个分区（`inventory --json` 的 `bindings[].zone`、`where --json`
+命中时的 `zone`）。规则只有一条恒定式：**Zone W 永不进入 machine PATH，也不参与机器级发现**。
+
+- `where` 候选行里的 `machine_discoverable: false` **就是这个意思**：它**健康、可用**
+  （`usable: true`、`health: healthy`），只是机器级发现不会选它。**不要**把它念成"坏了"、
+  "降级"或 `CURRENT_SOURCE_DEGRADED`——那是一次**策略性排除**，不是故障。
+- W **可以**用，但只能通过**显式**激活：调用方给出匹配的 `--session <id>` 或 `--project <id>`。
+  所以"这个 W 绑定永远用不了"同样说错了——**两个方向都不要说过头**。
+- 机器级 `where` 遇到唯一的候选是 W 时返回 `found: false` + `NOT_FOUND`：这是**正常结论**，
+  不是错误；候选行仍在 `candidates[]` 里，`machine_discoverable` 就是读者能看到的那个原因。
+
 ## 确认协议（三选一，不得增删改名）
 
 `plan` 判定"必须确认"时会返回 `SCOPE_CONFIRMATION_REQUIRED`（退出码 4）和三个选项。

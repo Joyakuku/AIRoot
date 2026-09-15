@@ -4348,6 +4348,10 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 2. **`search` / `inventory` / `effective` 仍然不过滤 `zone`**，这是有意的：它们报告的是**事实**
    （W 绑定存在、某个引用指向 W 路径），不是机器级发现。ADR-0022 把这一点列进"明确不做"，
    因为 `search` 是**显式查询**——把它一起改是一次单独的裁决。
+   **§73 更正了这份名单**：ADR-0022 的那一行只提到 `search --managed-only`；`effective` **不是命令**
+   （`caps/effective.py` 是模块，被 `where`/`cli` 使用，但 CLI 没有 `effective` 子命令），
+   `inventory` 则**确实**输出 `zone`（那正是它的价值）。真正存在的两个面是 `search` 与 `inventory`，
+   见 §73.2。
 
 ### 56.5 实施顺序
 
@@ -5765,6 +5769,116 @@ source resolve python        # 一个"没有来源"的能力
 4. 执行规则：移除条目，把测量写进文件级 `notes`；
 5. 把"逐条验证状态"升级成守卫，并成对地钉住"缺席 + 理由"；
 6. 给两条阶段记录加"已改判"旁注（保留原数字）；补测试、逐个验红；回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
+
+## 73. 第 73 阶段：`zone` 这条词汇没有任何一份 agent 文档认识它
+
+### 73.1 这一阶段要解决什么
+
+§72 收尾时留下的账里有一条"`search`/`inventory`/`effective` 刻意不过滤 `zone`，这是有意的"。这一轮去量这句话**今天还成不成立**——结果量出的不是"判断过时了"，而是三件更基础的事。
+
+### 73.2 实测
+
+**发现一：那三个名字里有一个不是命令。** 用 `main()` 跑 `effective`（带 `--session` 也一样）得到：
+
+```text
+argument command: invalid choice: 'effective'
+(choose from 'root', 'where', 'doctor', 'inventory', …, 'source')
+```
+
+`caps/effective.py` 是**模块**（被 `where.py` 与 `cli.py` 使用），但 CLI **没有** `effective` 子命令。而 ADR-0022 的"被否掉的替代方案"那一行只提到 `search --managed-only`——**§56.6 pt 2 把名单写宽了**。真正存在、且真的携带这个事实的面只有两个：`search` 与 `inventory`。
+
+**发现二（核心）：`zone` 在任何一份 agent 文档里出现 0 次。**
+
+| 文档 | `zone` / `Zone W` / `分区` 命中数 |
+|---|---|
+| `SKILL.md` | **0** |
+| `agents/airoot.json` | **0** |
+| `references/reason-codes.md` | **0** |
+| `references/confirmation.md` | **0** |
+
+而两个 agent 面**确实**在输出它：
+
+| 响应字段 | 谁输出 |
+|---|---|
+| `where` 命中时的 `zone`、候选行的 `machine_discoverable` | `where --json`（ADR-0022 决策 5 引入） |
+| `bindings[].zone`（`R`/`W`/`P`） | `inventory --json` |
+
+**发现三：会暴露这件事的两条 lane 都没有读携带它的字段。** `where` 的 lane 读
+`["found","executable","management","selection_reason","reason_code","evidence"]`——**连 `candidates` 都没有**；
+`inventory` 的 lane 读 `["instances","external_references"]`——**没有 `bindings`**。
+
+合起来：一个 agent 看到 `machine_discoverable: false`，**没有任何文档化的含义可以讲给用户**；看到
+`bindings[].zone: "W"`，也不知道它要不要紧。ADR-0022 决策 5 的理由正是"排除必须**可见**"——可见的字段
+配上一份不认识它的文档，等于只在机器那一侧可见。
+
+**发现四（量的时候撞到的）：`AGENTS.md` 里的 `read` 路径条数早就漂了。** 它写 **117**；
+实际 **129**（本轮改动前）。查历史：117 在 §1 写下时（commit `40f4937`）**是真的**，之后每一轮加 lane、
+加字段都没回头改这句话——和 §54 修掉"测试总数没人对账"是**同一个失效模式**，只是这个数字没人管。
+
+### 73.3 修法
+
+1. **把词汇教给 Skill 层。** `SKILL.md` 在 `where` 的 `selection_reason` 清单之后新增一段"`zone` 怎么念"：
+   R/W/P 的含义、那条恒定式、`machine_discoverable: false` **不是故障**（候选行仍然 `usable: true`、
+   `health: healthy`）、以及**反向边界**——W 可以通过**显式** `--session`/`--project` 激活执行，
+   所以"这个 W 绑定永远用不了"同样是错的。两个方向都写，因为只写一个方向就是另一条规则（ADR-0022 的测试也是这么成对的）。
+2. **让两条 lane 读携带事实的字段**：`where` lane 增加 `zone` 与 `candidates[].machine_discoverable`；
+   `inventory` lane 增加 `bindings[].binding_key` 与 `bindings[].zone`。这些路径随后被
+   `test_l1_agent_read_fields` **逐条结构化解析**——所以"文档说要读的字段"从这一轮起是**被验证存在**的。
+3. **两份文档互相钉住**：新守卫要求 `SKILL.md` 里有 `machine_discoverable`、有 R/W/P 词汇、并且**两个方向**都在；
+   同时要求那两条 lane 真的注册了对应的 `read` 路径。文档少了字段名，或者 lane 不再读它，都会红。
+4. **两个面说同一件事**：新测试用**同一个** W 绑定跑 `where` 与 `inventory`，断言 `inventory` 报
+   `bindings[].zone == "W"`（`binding_key` 对得上）、`where` 把**同样那个**候选标成
+   `machine_discoverable: false` 且 `usable: true`/`healthy`。两个读者、一个事实、一个结论。
+5. **把 `read` 路径条数接到现实**：`AGENTS.md` 117 → **133**，并加守卫让它与
+   `agents/airoot.json` 的实际条数**相等**（和测试总数一样，从"散文里的数字"变成"可对账的数字"）。
+
+**没有改的**：`where` 的推导（仍是 `zone != "W"`）、`inventory` 的字段（**没有**给绑定行加
+`machine_discoverable`——它已经有了 `zone` 这个原始事实，而"怎么念"现在有文档了；给
+`registry-projection` 这个**已发布 schema** 加派生字段是另一个决定，收益不明而代价明确）、
+以及 `search` 的行为（ADR-0022 已经把"顺手让 `search --managed-only` 排除 W"列为单独裁决，本轮不碰）。
+
+### 73.4 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 把 `machine_discoverable` 从 `SKILL.md` 里抹掉 | 危险 | **红** |
+| 把 `candidates[].machine_discoverable` 从 `where` lane 的 `read` 里删掉 | 危险 | **红** |
+| 把 `bindings[].zone` 从 `inventory` lane 的 `read` 里删掉 | 危险 | **红** |
+| 让 `where` 的推导不再看 `zone`（`machine_discoverable=True`） | 危险 | **红**（跨面一致性测试） |
+| 把 `AGENTS.md` 的 `read` 路径条数改回 117 | 危险 | **红**（计数守卫） |
+
+### 73.5 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S73.1 量出 `effective` 不是命令 | ✅ | 73.2 发现一（`main()` 的 `invalid choice` 列表）；§56.6 已加"§73 更正"旁注 |
+| S73.2 量出 `zone` 在 agent 文档里 0 命中 | ✅ | 73.2 发现二（四份文档逐个 grep） |
+| S73.3 量出两条 lane 都没读它 | ✅ | 73.2 发现三（lane 的 `read` 列表） |
+| S73.4 词汇进 `SKILL.md`（两个方向） | ✅ | `SKILL.md` 新增"`zone` 怎么念"；`test_l1_skill.py#test_the_skill_explains_the_zone_vocabulary_its_responses_carry` |
+| S73.5 两条 lane 注册字段 | ✅ | `agents/airoot.json`；`test_l1_agent_read_fields.py` 逐条解析（含新增的 4 条） |
+| S73.6 两个面一致 | ✅ | `test_l1_where.py#test_inventory_and_where_agree_about_zone_w` |
+| S73.7 `read` 条数接到现实 + 守卫 | ✅ | `AGENTS.md` 117 → **133**；`test_l1_agent_read_fields.py#test_the_documented_read_path_count_is_the_number_this_module_resolves`（117 在 commit `40f4937` 时是真的） |
+| S73.8 计数与语料 | ✅ | 测试 **789 → 792**；审计检查 **74 不变**；台账**不变**；无需重生语料（`where`/`inventory` 的输出形状没动，只动了**谁读它**） |
+
+### 73.6 如实记录的边界
+
+1. **没有给 `inventory` 的绑定行加 `machine_discoverable`。** 它已经有 `zone` 这个**原始事实**，而"W 意味着什么"现在有文档了；给 `registry-projection.schema.json`（**已发布** schema，`state/registry.json` 也是它）加一个派生字段，代价是 schema + 文档 + 语料，收益只是把同一句话换个地方写。**判断，不是遗漏**——如果将来出现"agent 反复把 W 念成坏了"的证据，那才是加它的理由。
+2. **守卫盯的是"文档提到字段名 + lane 注册路径"，不是"agent 真的讲对了"。** 一个把 W 讲成故障的 agent 仍然能通过。可自动化的是**指针**，语义正确性只能靠这段文字本身——所以那段文字把**两个方向**都写死，并各举一个反例（"不要念成降级"、"不要说永远用不了"）。
+3. **`search` 仍然不看 `zone`**：ADR-0022 的"明确不做"那一行仍然有效，本轮没有扩大范围。它的响应里也**没有** `zone` 字段，所以"它不过滤 zone"这句话今天是**真空成立**——这一点现在写清楚了（73.2 发现一）。
+4. **`read` 计数守卫只对总数相等**：它不检查"哪条 lane 该读哪个字段"。lane 与字段的搭配靠 S73.5 的注册 + 人工判断；总数守卫只保证**引用文档里的数字不再静默漂移**（这正是发现四暴露的失效模式）。
+5. **`AGENTS.md` 的 117 是"当时为真"的**：这一轮没有把它写成"一直错"，而是查出它来自 `40f4937` 并记录了漂移过程——与本项目对历史记录的处理一致（标注，不重写）。
+6. **台账与计数**：台账不变（S-006 的处置在 §56 已删除，本轮是同一事实的**文档面**）；测试 789 → 792；审计检查 74 不变。
+
+### 73.7 实施顺序
+
+1. 先量那句话还成不成立：三个面各跑一遍（发现一）；
+2. **grep 四份 agent 文档**（发现二）——"0 命中"是这一轮的核心事实；
+3. 读两条 lane 的 `read` 列表（发现三），确认**没有**任何一条指向携带事实的字段；
+4. 顺手量 `read` 条数并与 `AGENTS.md` 对账，**并查它当年是不是真的**（发现四）；
+5. 教词汇（两个方向）、注册字段、两个面互相钉住、条数接到现实；
+6. 逐个验红（含"推导不再看 zone"这种改行为的变异）；回写 §56 的旁注与计数，跑全量 + 切片 + 两种验收模式，提交。
 
 
 

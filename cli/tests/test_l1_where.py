@@ -348,6 +348,40 @@ def test_where_response_is_json_serialisable_and_stable(registry, clock, root) -
 # --------------------------------------------------------------------------- #
 
 
+def test_inventory_and_where_agree_about_zone_w(registry, clock, root) -> None:
+    """The same binding, read by two surfaces, must not tell two stories (draft §73).
+
+    `where` answers with a **derived** flag (`candidates[].machine_discoverable: false`) and
+    `inventory` answers with the **raw** vocabulary (`bindings[].zone: "W"`). They are two renderings
+    of one fact — the derivation is `zone != "W"` — so this pins that the two readers agree, that the
+    flag is exactly the W rows, and that the machine-level answer stays the honest `NOT_FOUND`.
+    """
+
+    from airoot.caps.inventory import inventory
+
+    plan = commit_version(registry, clock, root, "1.0.0")
+    instance_id = plan["target"]["instance_id"]
+    generation = registry.generation + 1
+    with registry.write(expected_generation=registry.generation, bump=True) as connection:
+        registry.bind_active(
+            connection, Binding(KEY, instance_id, "machine", "W", "none", generation, True)
+        )
+
+    document = inventory(registry)
+    zone_w = [row for row in document["bindings"] if row["scope"] == "machine" and row["zone"] == "W"]
+    assert zone_w, document["bindings"]
+    assert {row["binding_key"] for row in zone_w} == {KEY}
+
+    machine = run(registry, root)
+    assert machine["found"] is False
+    assert machine["reason_code"] == "NOT_FOUND"
+    flagged = [row for row in machine["candidates"] if not row["machine_discoverable"]]
+    assert flagged, machine["candidates"]
+    # The two readers see the same binding: the one `inventory` reports as Zone W is the one `where`
+    # marks non-discoverable. If either surface ever derived it differently, this is where it shows.
+    assert all(row["usable"] is True and row["health"] == "healthy" for row in flagged)
+
+
 def test_S006_zone_w_is_not_machine_discoverable_but_answers_explicit_activation(
     registry, clock, root
 ) -> None:

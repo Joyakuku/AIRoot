@@ -138,6 +138,22 @@ def checksums(tmp_path: Path) -> Path:
     return path
 
 
+def test_the_documented_read_path_count_is_the_number_this_module_resolves() -> None:
+    """`AGENTS.md` states how many `read` paths exist; that number was true once and then drifted.
+
+    Measured in draft §73: it said 117, which *was* the count when §1 was written (commit
+    `40f4937`); every later stage that added a lane or a field left the prose alone, so §73 read 129
+    before it touched anything. The **test** count has been tied to reality since §54 — this is the
+    same tie for the count an agent quotes when it says what it reads.
+    """
+
+    agents_text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    stated = {int(value) for value in re.findall(r"(\d+)\s*条\s*`read`\s*路径", agents_text)}
+    assert stated, "AGENTS.md no longer states the read-path count; this guard is about nothing"
+    actual = sum(len(entry.get("read", [])) for entry in invocations())
+    assert stated == {actual}, f"AGENTS.md states {sorted(stated)} read paths; the metadata has {actual}"
+
+
 def test_every_read_path_resolves_in_the_document_the_cli_prints(
     capsys, root, registry, clock, cli_root: Path, data_root: Path, checksums: Path, tmp_path: Path
 ) -> None:

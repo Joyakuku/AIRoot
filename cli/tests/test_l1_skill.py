@@ -347,6 +347,30 @@ def test_the_reference_set_is_present() -> None:
         assert (REFERENCES / name).is_file(), f"missing on-demand reference: {name}"
 
 
+def test_the_skill_explains_the_zone_vocabulary_its_responses_carry() -> None:
+    """ADR-0022 made the exclusion visible; a visible field still needs a documented meaning.
+
+    Draft §73 measured that `zone` appeared **zero** times in every agent-facing document, while two
+    responses carried it — `where`'s `candidates[].machine_discoverable` and `inventory`'s
+    `bindings[].zone` — and neither lane that exposes the fact read the field. An agent could print
+    `machine_discoverable: false` with nothing to say about it. This is §67's rule applied to a
+    vocabulary rather than a caveat: what a response reports, the document that interprets it names.
+    """
+
+    text = skill_text()
+    assert "machine_discoverable" in text, "the flag `where` reports has no documented meaning"
+    assert "zone" in text and "R" in text and "W" in text and "P" in text, "the vocabulary is unread"
+    # Both boundaries, because either alone is a different rule: W is never machine-discovered, and
+    # W *is* reachable through explicit activation.
+    assert "--session" in text or "--project" in text, "the second boundary (explicit activation) is gone"
+
+    lanes = agents_document()["invocation"]
+    where_lane = next(entry for entry in lanes if entry.get("command", [None])[0] == "where")
+    inventory_lane = next(entry for entry in lanes if entry.get("command", [None])[0] == "inventory")
+    assert any("machine_discoverable" in path for path in where_lane["read"]), where_lane
+    assert any("zone" in path for path in inventory_lane["read"]), inventory_lane
+
+
 def test_the_skill_states_that_a_digest_is_not_a_signature() -> None:
     """v1 does no signature verification; implying otherwise would be worse than admitting it."""
 
