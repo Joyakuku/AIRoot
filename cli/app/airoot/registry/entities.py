@@ -8,6 +8,18 @@ from typing import Any
 
 from ..exits import AirootError
 
+#: The one and only place an owned payload may live (冻结契约 §5.3: "`store` 是唯一 payload 存储；
+#: `tools`/`env` 只是 binding/view"). Spelled once and imported everywhere it is checked, because a
+#: second literal is how "the rule" quietly becomes two rules (draft §66).
+STORE_PREFIX = "store/"
+
+
+def is_store_path(store_path: Any) -> bool:
+    """Whether a declared payload path is inside ``store/``. Pure string test, no filesystem."""
+
+    return str(store_path or "").replace("\\", "/").startswith(STORE_PREFIX)
+
+
 
 @dataclass(frozen=True)
 class Instance:

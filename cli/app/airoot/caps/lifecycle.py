@@ -36,10 +36,14 @@ from ..canon import plan_hash, tree_digest
 from ..clock import Clock, SYSTEM_CLOCK, isoformat, parse_timestamp
 from ..exits import AirootError
 from ..paths import from_root_relative, is_within
+from ..registry.entities import STORE_PREFIX, is_store_path
 from ..schema_io import validate_self
 from ..tx.approval import load_keyring, verify_approval
 
-OWNED_STORE_PREFIX = "store/"
+# Kept as the name this module has always exported; the spelling itself lives in one place now
+# (`registry/entities.STORE_PREFIX`), so doctor/where/toolstate and deletion grading cannot drift
+# apart on what "inside the store" means (draft §66).
+OWNED_STORE_PREFIX = STORE_PREFIX
 EXTERNAL_BACKENDS = frozenset({"external", "external_reference"})
 
 DEFAULT_PLAN_TTL_SECONDS = 900
@@ -60,9 +64,9 @@ def is_owned(row: Any) -> bool:
     that has to hold before anything may be deleted (draft §14.2-3).
     """
 
-    store_path = str(row["store_path"] or "").replace("\\", "/")
+    store_path = str(row["store_path"] or "")
     backend = str(row["install_backend_id"] or "")
-    return store_path.startswith(OWNED_STORE_PREFIX) and backend not in EXTERNAL_BACKENDS
+    return is_store_path(store_path) and backend not in EXTERNAL_BACKENDS
 
 
 def find_target(registry: Any, target: str) -> tuple[str, Any]:

@@ -27,7 +27,7 @@ from typing import Any
 from ..canon import tree_digest
 from ..exits import AirootError
 from ..paths import from_root_relative
-from ..registry.entities import load_json
+from ..registry.entities import is_store_path, load_json
 from .version import satisfies
 
 
@@ -188,6 +188,17 @@ def tool_status(registry: Any, instance_id: str, *, root: Path) -> ToolStatus:
         finding_list.append(
             StatusFinding("info", "PAYLOAD_COLLECTED", f"payload was collected at {row['collected_at']}")
         )
+    elif not is_store_path(row["store_path"]):
+        # Present or not, a payload outside `store/` is layout drift and this verb must not report it
+        # as a healthy owned instance (draft §66). Checked before the existence test: a mislocated
+        # payload that happens to exist is the case that used to read as fine.
+        finding_list.append(
+            StatusFinding(
+                "error",
+                "PAYLOAD_OUTSIDE_STORE",
+                f"store_path is not under store/: {row['store_path']}",
+            )
+        )
     elif not payload_present:
         # A declared instance whose payload is gone is a defect, not a state (D3).
         finding_list.append(
@@ -252,7 +263,16 @@ def tool_verify(registry: Any, instance_id: str, *, root: Path) -> dict[str, Any
             "note": "the payload was collected by an approved gc; there is nothing left to verify",
         }
 
-    if not store_dir.is_dir():
+    if not is_store_path(row["store_path"]):
+        # Same invariant as `tool_status`, and the same code: `verify` must not report a payload
+        # outside the store as a verified owned instance (draft §66).
+        problems.append(
+            {
+                "code": "PAYLOAD_OUTSIDE_STORE",
+                "detail": f"store_path is not under store/: {row['store_path']}",
+            }
+        )
+    elif not store_dir.is_dir():
         problems.append({"code": "PAYLOAD_MISSING", "detail": f"{row['store_path']} does not exist"})
 
     actual = tree_digest(store_dir) if store_dir.is_dir() else None

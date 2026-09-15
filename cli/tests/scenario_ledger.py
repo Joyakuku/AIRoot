@@ -502,13 +502,16 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "'不生成 planned 状态'的邻居是 `test_adopt_import_is_not_implemented`"
         ),
     },
-    "S-027": {
-        "blocked_by": "undesigned",
-        "no_witness_reason": (
-            "没有 `env\\runtimes` 这个视图，也没有任何声明说它应该存在，所以没有任何测试会因为"
-            "'它出现了'而变红。要造一个证人，先得决定这个视图存不存在（那是设计，不是守卫）"
-        ),
-    },
+    # S-027 used to sit here as `undesigned`, with a `no_witness_reason` that was **factually
+    # wrong**: it said "nothing declares that `env\runtimes` should exist". 规划 §7 carries the row
+    # `| env\runtimes（binding/view，无 payload） |` — the view is declared, and the same row says it
+    # holds no payload. §61 had re-derived this entry and kept it, which is exactly the kind of claim
+    # §61's own rule ("a claim that something is missing has to say why") was written to expose: the
+    # reason *was* written down, and it was false. So the scenario was never blocked on a design
+    # decision — it was blocked on an unenforced invariant, and §66 enforced it
+    # (`PAYLOAD_OUTSIDE_STORE`: doctor reports it, `where` refuses to activate it, `tool status` /
+    # `tool verify` stop calling it healthy). `test_l1_doctor.py#test_S027_...` names the scenario, so
+    # the disposition is **deleted rather than rewritten** (§52/§55 treatment).
     "S-028": {
         "blocked_by": "none",
         "evidence": "test_l1_discovery.py#test_scan_is_read_only",

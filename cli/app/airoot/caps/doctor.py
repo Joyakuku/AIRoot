@@ -18,13 +18,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import LOGS_DIR
+from .. import ENV_DIR, LOGS_DIR, TOOLS_DIR
 from ..canon import digest_file, tree_digest
 from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
 from ..paths import from_root_relative
 from ..registry import Registry
-from ..registry.entities import load_json
+from ..registry.entities import is_store_path, load_json
 from ..registry.projection import projection_generation
 from ..root import marker_path, read_marker
 from ..schema_io import errors_for, load_schema
@@ -60,7 +60,7 @@ INVARIANTS: dict[str, tuple[str, ...]] = {
         "REFERENCE_UNPROBED",
         "WHITELIST_REVISION_STALE",
     ),
-    "D4": ("ORPHANED_STORE_INSTANCE", "UNMANAGED_OBJECT_PRESENT"),
+    "D4": ("ORPHANED_STORE_INSTANCE", "UNMANAGED_OBJECT_PRESENT", "PAYLOAD_OUTSIDE_STORE"),
     "D5": ("BINDING_TARGET_MISSING", "MULTIPLE_ACTIVE_BINDINGS", "DESIRED_NOT_SATISFIED"),
     "D6": ("PENDING_TRANSACTION", "RECOVERY_REQUIRED", "JOURNAL_TRUNCATED"),
     "D7": ("REGISTRY_PROJECTION_STALE", "SEARCH_INDEX_DEGRADED", "SEARCH_RESULT_STALE"),
@@ -306,6 +306,62 @@ def _check_orphans(registry: Registry, root: Path, diagnostics: list[dict[str, A
                         "inspect",
                     )
                 )
+
+
+def _check_layout(registry: Registry, root: Path, diagnostics: list[dict[str, Any]]) -> None:
+    """D4: an owned payload belongs in ``store/`` and nowhere else (draft §66).
+
+    Two shapes, one invariant, and the same code for both because the reader's next move is the same
+    ("move it into the store, or stop declaring it"):
+
+    * a **declared** instance whose ``store_path`` points outside ``store/`` — `error`, because that
+      declaration cannot be honoured; `where` refuses to activate it;
+    * a payload **marker** under a view directory (``tools/``, ``env/``) with nobody declaring it —
+      `warning`, because nothing is unusable, the layout merely drifted.
+
+    Reported unconditionally, unlike ``UNMANAGED_OBJECT_PRESENT`` (which is behind
+    ``--include-unmanaged``): an unfamiliar object in a data root is information, while a payload in a
+    view directory contradicts a frozen contract. Gating the second one behind a flag would let the
+    quiet default hide a violated invariant.
+    """
+
+    for row in registry.instances():
+        if is_store_path(row["store_path"]):
+            continue
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "PAYLOAD_OUTSIDE_STORE",
+                [
+                    f"instance={row['instance_id']}",
+                    f"store_path={row['store_path']}",
+                    "the declared payload path is not under store/",
+                ],
+                "the declaration cannot be honoured; where will not select this payload",
+                "repair",
+                str(row["instance_id"]),
+            )
+        )
+
+    declared = {str(row["store_path"]).replace("\\", "/") for row in registry.instances()}
+    for view in (TOOLS_DIR, ENV_DIR):
+        directory = root / view
+        if not directory.is_dir():
+            continue
+        for leaf in sorted(path for path in directory.rglob("*") if path.is_dir() and (path / "artifact.json").is_file()):
+            relative = leaf.relative_to(root).as_posix()
+            if relative in declared:
+                # Already reported above as a mislocated declaration; one fact, one diagnostic.
+                continue
+            diagnostics.append(
+                _diagnostic(
+                    "warning",
+                    "PAYLOAD_OUTSIDE_STORE",
+                    [f"payload marker outside the store: {relative}", f"{view}/ is a binding/view directory and carries no payload"],
+                    "layout drifted from the frozen rule that store is the only payload storage",
+                    "inspect",
+                )
+            )
 
 
 def _check_data_roots(
@@ -773,6 +829,7 @@ def doctor(
     if registry is not None:
         _check_payloads(registry, root, verify, diagnostics)
         _check_orphans(registry, root, diagnostics)
+        _check_layout(registry, root, diagnostics)
         if data_roots:
             whitelist_revision = None
             try:

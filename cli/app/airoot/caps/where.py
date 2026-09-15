@@ -34,7 +34,7 @@ from typing import Any
 
 from ..exits import AirootError
 from ..paths import from_root_relative
-from ..registry.entities import load_json
+from ..registry.entities import is_store_path, load_json
 from ..schema_io import validate_self
 from .effective import effective_state, machine_path, process_path, user_path
 from .selection import SelectionPolicy, load_selection_policy
@@ -132,6 +132,11 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
             identity_match = False
         healthy = str(instance["health"]) == "healthy"
         executable = _executable_path(root, str(instance["store_path"]), entrypoints)
+        # A payload outside `store/` is never selectable, however healthy its row claims to be
+        # (draft §66): `store` is the only payload storage (冻结契约 §5.3), so a declaration pointing
+        # elsewhere cannot be honoured. It is still *reported* as a candidate — skipping it in silence
+        # is the failure mode ADR-0022 already legislated against for Zone W.
+        in_store = is_store_path(instance["store_path"])
         candidates.append(
             _Candidate(
                 binding_key=str(row["binding_key"]),
@@ -143,7 +148,7 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                 management="managed",
                 source="registry",
                 path=executable,
-                usable=healthy,
+                usable=healthy and in_store,
                 version_ok=_version_ok(str(instance["version"]), query.version),                identity_match=identity_match,
                 slot=scope,
                 machine_discoverable=zone != "W",
@@ -155,6 +160,19 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                         "path": executable,
                         "digest": instance["artifact_digest"],
                     },
+                    *(
+                        []
+                        if in_store
+                        else [
+                            {
+                                "kind": "layout",
+                                "detail": (
+                                    f"store_path is not under store/: {instance['store_path']} "
+                                    "(store is the only payload storage)"
+                                ),
+                            }
+                        ]
+                    ),
                 ],
             )
         )

@@ -44,6 +44,100 @@ def test_invariant_catalogue_covers_d1_to_d10() -> None:
     assert all(INVARIANTS[key] for key in INVARIANTS)
 
 
+def test_S027_a_payload_outside_the_store_is_reported_and_never_activated(registry, clock, root) -> None:
+    """S-027: `store` is the only payload storage, so a payload in a view is layout drift.
+
+    The ledger's reason for this scenario used to say "nothing declares that `env\\runtimes` should
+    exist". That was **wrong**, and measurably so: 规划 §7 carries the row
+    ``| env\\runtimes（binding/view，无 payload） |`` — the view is declared, and the same row says it
+    holds no payload. So the scenario was never blocked on a design decision; it was blocked on an
+    invariant nobody enforced, which is what this test pins: the *declaration* is reported as an
+    error and `where` refuses to activate it, while a marker nobody declares is merely a warning.
+
+    Three surfaces, one invariant, because "reported" only means something if every reader of that
+    fact agrees — `doctor` diagnoses it, `where` refuses to select it, and the read-only observation
+    verbs (`tool status` / `tool verify`) do not report it as a healthy owned instance.
+    """
+
+    from airoot.caps.toolstate import tool_status, tool_verify
+    from airoot.caps.where import WhereQuery, where
+    from airoot.registry.entities import Binding, Instance
+
+    # (1) A payload marker in a view directory that no instance declares: drift, nothing unusable.
+    mystery = root.path / "tools" / "mystery"
+    (mystery / "bin").mkdir(parents=True)
+    (mystery / "artifact.json").write_text("{}\n", encoding="utf-8")
+
+    document = doctor(root.path, registry=registry, data_roots=False)
+    listed = diagnostics_by_code(document)
+    assert "PAYLOAD_OUTSIDE_STORE" in listed
+    assert listed["PAYLOAD_OUTSIDE_STORE"]["severity"] == "warning"
+    assert any("tools/mystery" in item for item in listed["PAYLOAD_OUTSIDE_STORE"]["evidence"])
+
+    # (2) A *declared* instance whose payload points outside `store/`: the declaration cannot be
+    # honoured, so it is an error, it stays a candidate for the reader to see, and it is not usable.
+    rogue = root.path / "env" / "runtimes" / "rogue"
+    (rogue / "bin").mkdir(parents=True)
+    (rogue / "bin" / "rogue.exe").write_bytes(b"MZ-placeholder-never-executed\n")
+    (rogue / "artifact.json").write_text("{}\n", encoding="utf-8")
+    instance_id = "rogue/rogue/1.0.0/win-x64"
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_instance(
+            connection,
+            Instance(
+                instance_id=instance_id,
+                kind="managed_tool",
+                capability_id="rogue",
+                version="1.0.0",
+                platform="windows",
+                architecture="x64",
+                install_backend_id="fake_fixture",
+                artifact_digest="sha256:" + "a" * 64,
+                store_path="env/runtimes/rogue",
+                lifecycle_status="active",
+                health="healthy",
+                entrypoints=("bin/rogue.exe",),
+                created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        registry.bind_active(
+            connection, Binding("rogue", instance_id, "machine", "R", "stable_launcher", 1, True)
+        )
+
+    document = doctor(root.path, registry=registry, data_roots=False)
+    listed = diagnostics_by_code(document)
+    mislocated = [item for item in document["diagnostics"] if item["code"] == "PAYLOAD_OUTSIDE_STORE"]
+    assert [item["severity"] for item in mislocated].count("error") == 1, mislocated
+    error_item = next(item for item in mislocated if item["severity"] == "error")
+    assert any("env/runtimes/rogue" in entry for entry in error_item["evidence"])
+    assert error_item["capability"] == instance_id
+    assert document["status"] == "broken", "a declaration that cannot be honoured is not 'degraded'"
+    assert status_exit_code(document["status"]) == 3
+    # The declared-and-mislocated payload is reported once, not twice: the D4 view scan skips paths an
+    # instance already declares (one fact, one diagnostic).
+    assert len(mislocated) == 2, mislocated
+
+    resolved = where(
+        registry,
+        WhereQuery(capability_id="rogue"),
+        root=root.path,
+        process_entries=[],
+        machine_entries=[],
+        user_entries=[],
+    )
+    assert resolved["found"] is False
+    assert resolved["reason_code"] == "BROKEN"
+    candidate = resolved["candidates"][0]
+    assert candidate["usable"] is False
+    assert any("not under store/" in str(item.get("detail")) for item in candidate["evidence"])
+
+    status = tool_status(registry, instance_id, root=root.path)
+    assert "PAYLOAD_OUTSIDE_STORE" in {finding.code for finding in status.findings}
+    verified = tool_verify(registry, instance_id, root=root.path)
+    assert "PAYLOAD_OUTSIDE_STORE" in {item["code"] for item in verified["problems"]}
+    assert verified["verified"] is False
+
+
 def test_health_and_broken_codes_map_to_documented_exit_codes() -> None:
     from airoot.exits import EXIT_BROKEN, EXIT_DEGRADED, EXIT_RECOVERY, EXIT_SUCCESS, REASON_EXIT
 

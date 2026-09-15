@@ -39,6 +39,7 @@
 | `PATH_EXPOSURE_VIOLATION` | PATH 上出现违反冻结规则的东西（重复 AIROOT 条目 / `store` 版本目录 / 非授权目录） |
 | `DATA_ROOT_ACL_DRIFT` | 数据根的 ACL 与基线不一致（**P2 才可能发射**；现在只是注册） |
 | `ORPHANED_STORE_INSTANCE` | `store/` 里有登记不上的对象：只报告，**不删** |
+| `PAYLOAD_OUTSIDE_STORE` | **payload 出现在 `store/` 之外**（`store` 是唯一 payload 存储，`tools`/`env` 只是 binding/view）。声明指到别处 → `doctor` 记 `error` 且 `where` **不选它**；只是没人声明的载荷标记落在视图目录里 → `warning`。下一步是把它移进 `store`，或者停止声明它 |
 | `EXTENSION_TIMEOUT` / `EXTENSION_CANCELLED` / `EXTENSION_HEALTH_DEGRADED` | 扩展超时／被取消／健康度下降：结果不完整，但扩展本身没坏 |
 | `SEARCH_FALLBACK_USED`、`SEARCH_RESULT_STALE`、`SEARCH_INDEX_DEGRADED`、`SEARCH_JOURNAL_GAP`、`SEARCH_PERMISSION_FILTERED`、`SEARCH_ROOT_UNAVAILABLE`、`SEARCH_TIMEOUT` | **搜索专属**，逐条解释见下方《搜索的降级阶梯》 |
 

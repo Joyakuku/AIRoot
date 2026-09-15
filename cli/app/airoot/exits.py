@@ -71,6 +71,13 @@ REASON_EXIT: dict[str, int] = {
     "REFERENCE_STALE": EXIT_DEGRADED,
     "REFERENCE_DRIFTED": EXIT_DEGRADED,
     "DATA_ROOT_ACL_DRIFT": EXIT_DEGRADED,
+    # A payload where the contract says payloads may not be (draft §66). `store` is the only payload
+    # storage and `tools`/`env` are binding/view directories that carry none (冻结契约 §5.3,
+    # 规划 §7:590) — so an `artifact.json` under a view, or an instance row whose `store_path` points
+    # outside `store/`, is **layout drift**: exit 2, not 3, because nothing that *is* declared is
+    # broken; what is broken is the declaration's right to be honoured, and `where` refuses to
+    # activate it for exactly that reason.
+    "PAYLOAD_OUTSIDE_STORE": EXIT_DEGRADED,
     # The filesystem refused a step of an install (draft §62). Exit 2 rather than 3 or 7 because
     # neither is true: no declared object is broken (the previous generation is untouched, and the
     # rollback restores it), and the plan is not invalid (a full disk or a locked file says nothing
