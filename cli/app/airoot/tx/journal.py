@@ -103,6 +103,24 @@ class TransactionJournal:
         apply: Any = None,
     ) -> dict[str, Any]:
         transaction_id = f"tx/{plan['target']['capability_id']}/{_short_id(plan, approval)}"
+
+        # **Get-or-create, never rewind** (draft §61). The id is derived from plan+approval, so a
+        # second `commit` for the same plan and token lands on the same transaction — and it used to
+        # overwrite the durable envelope and row with a fresh ``PROPOSED``, after which the caller
+        # re-drove the whole state machine. Measured with fault injection, that produced one
+        # transaction whose audit trail read `… ACTIVE_BOUND, PROPOSED, … FINALIZED`, i.e. **a second
+        # pass through `ACTIVE_BOUND`** and a throwaway generation bump, and it erased the journal's
+        # record that the binding had already changed. The journal is the recovery authority, so
+        # rewriting it to an earlier state is not a retry, it is a false statement about the past.
+        #
+        # The second caller is already handled correctly one level up: it may only get here while the
+        # approval is unconsumed (an unconsumed nonce is checked in `verify_approval`), so the honest
+        # reading of "someone ran commit again" is *resume the transaction that is already underway*
+        # — which is exactly what `resume` does from the same durable record.
+        underway = self.registry.transaction(transaction_id)
+        if underway is not None:
+            return json.loads(underway["payload_json"])
+
         timestamp = self.clock.timestamp()
         tx: dict[str, Any] = {
             "schema_version": 1,

@@ -4718,6 +4718,123 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 5. 修掉审计路上撞见的两条文档腐烂，并给它们加守卫（60.5）；
 6. 跑全量 + 切片 + 两种验收模式，回写计数，提交。
 
+## 61. 第 61 阶段：复核台账里那 17 条从未被复核过的"缺某能力"判断（顺带抓出一个真缺陷：重复 `commit` 把已落盘的事务倒回起点）
+
+### 61.1 这一阶段要解决什么
+
+场景台账的 `blocked_by` 是**作者判断**：它说"这个场景缺 P2 / P4 / 某个尚未设计的能力"。§53 复核过其中一部分，并且**如实记下了它没有复核的部分**——`p2-protected-state`(10) / `p4-real-backend`(7) / `p3-native-indexer`(0) 那 17 条。§60 在**另一张登记表**（`agents/airoot.json` 的 `deferred`）上做同类审计时刚抓到一条错判，于是"那 17 条呢"从一句备忘变成了必须回答的问题。
+
+实测它们长什么样：**17 条全是裸的 `{"blocked_by": ...}`**——没有 `note`、没有出处、没有解释。台账另外 46 条要么有证据指针，要么有 note，要么有证人；这 17 条是**17 个没人检查过的断言**。
+
+### 61.2 方法：逐条重新推导，**能测的先测**
+
+对每一条：读场景定义原文 → 在代码里找它期望的两个半边 → 能测的**先跑一次探针**，不能测的说清"缺的东西为什么没有对象"。探针清单（都是真实执行过的，不是阅读所得的印象）：
+
+| 探针 | 量到了什么 |
+|---|---|
+| `PYTHONPATH --scope machine` 走两条路径 | CLI 路径在**构造请求时**就被拒；库路径（手工构造 `ExposureRequest`）走到计划构造器 |
+| 同一 token 两次 `commit`（两线程同起） | `['APPROVAL_REPLAYED', 'committed']`，一条 tx、一个 active binding、integrity 干净 |
+| 同一 token，赢家停在 `ACTIVE_BOUND` 后再让第二个调用者跑 | 见 61.4——**这是本阶段最重要的读数** |
+| `grep` 全树找 `revoked_at` / `approval_mode` / `zipfile` | `revoked_at` 无写入方；`events` 表无 `approval_mode` 列；全树无解压实现 |
+| `_accessible` 与 backend 声明的读法 | 可访问性只有"本进程"这一个答案；`reversible` 已是九个冻结声明之一 |
+
+### 61.3 结论表
+
+| ID | 原判断 | 复核结论 | 依据 |
+|---|---|---|---|
+| `P-001` | `p2-protected-state` | **维持** | ACL 不存在，"被 ACL 拒绝"没有可执行对象；"doctor 报告证据"那半已交付（§58），但它测的是**漂移**不是**拒绝** |
+| `P-002` | `p2-protected-state` | **改判 `none` + 证据** | Zone W 可写而机器级 `where` 不发现它，正是 §56/ADR-0022 的执行点，已有测试断言；第三句"不能被 machine PATH 发现"今天**真空成立**（没有 machine PATH 写入功能） |
+| `P-009` | `p2-protected-state` | **维持** | UAC 不存在；"中断可恢复"那半已交付，缺的只是 UAC 取消这个入口 |
+| `P-010` | `p2-protected-state` | **维持** | R 不受保护之前，无法区分"核心没提供直接写 R 的操作"与"它恰好没写"；这句话写进 note，不假装测过 |
+| `P-012` | `p2-protected-state` | **改判 `undesigned`** | 自动批准**没有生产方**（P1 禁止核心铸造批准）；且 `events` 表**没有 `approval_mode` 列**——§13.3 说"审计里可区分"，今天区分不了 |
+| `P-015` | `p2-protected-state` | **改判 `undesigned`** | 撤销那半**不可达**：`revoked_at` 全树只有"读它"与"声明它"两处，**没有写入方**；revision 那半已交付并已被断言 |
+| `P-016` | `p2-protected-state` | **改判 + 修实现** | 见 61.4：它不需要 P2，而且**实现是错的** |
+| `P-017` | `p2-protected-state` | **改判 `undesigned`** | "human 必须记录 `approved_by_sid`"实现了，但被 schema 挡在前面（纵深防御）；"与 issuer 证据不匹配"**没有第二个操作数**（P1 没有生产签发方） |
+| `C-011` | `p2-protected-state` | **维持** | 可访问性只有"本进程"一个答案（`_accessible` 的 docstring 自己写着）；它要的机器级索引属 P3，而那个索引器的初始枚举本身要 broker（ADR-0020）——所以恢复顺序先 P2 |
+| `C-025` | `p2-protected-state` | **改判 + 见 61.5** | 契约要 exit 8；实测**从来没有坏过**，但两条路径的答案不一致 |
+| `T-001` | `p4-real-backend` | **维持** | 下载+摘要校验真跑过（§59），本地失败也不留 stage；缺的是**中断**那种失败的诊断 |
+| `T-003` | `p4-real-backend` | **维持** | 全树没有解压实现（`zipfile`/`tarfile` 都没被导入） |
+| `T-004` | `p4-real-backend` | **维持** | 与 T-001 同族：没有空间证据的生产方，也没有把 `ENOSPC` 变成带证据失败态的路径 |
+| `T-005` | `p4-real-backend` | **维持** | 占用已存在的 store 路径是**被诊断**的（`INSTANCE_CONFLICT` 是 `AirootError`）；`shutil.move` 的**共享冲突**是 `OSError`，runner 不转换它 |
+| `T-013` | `p4-real-backend` | **改判 `none` + 新测试** | 它判的是**声明**，不需要真实 artifact：`reversible` 是九个冻结字段之一，`low_risk_eligible` 要它 |
+| `T-016` | `p4-real-backend` | **改判 `none` + 证据** | 崩溃对账不需要真实 artifact；`test_every_boundary_is_recoverable` 按状态参数化（含 `ACTIVE_BOUND`），断言恰好一个 active binding 且 repair 幂等 |
+| `T-017` | `p4-real-backend` | **改判 `none` + 证据** | `gc` 已在**真实 payload** 上跑过；"不删仍有引用的 payload"与"重试幂等"都有证人 |
+
+**十七条里四条错判**（P-002 / P-012 / P-015 / P-016 / P-017 / T-013 / C-025 之中，改变了"缺什么"这个判断本身的是 P-002、T-013 与 P-016 的缺陷，另有 P-012/P-015/P-017 从"等 P2"改成"根本没东西可等"、C-025 从"等 P2"改成"今天就能测"）。
+
+### 61.4 抓到的真缺陷：重复 `commit` 会把已落盘的事务**倒回** `PROPOSED`
+
+探针是确定性的，不用抢时序：让赢家 `commit` 在 `ACTIVE_BOUND` 处停下（`FaultInjector`），**然后**用同一个 plan 与同一个 token 让第二个调用者在自己的连接上再跑一次。读数：
+
+```text
+winner stopped at: ACTIVE_BOUND   journal_seq: 7
+loser  ended at:   FINALIZED      journal_seq: 10
+tx rows: [('tx/fake-tool/…', 'FINALIZED', 10)]
+event states: PROPOSED APPROVED FETCHED VERIFIED STAGED COMMITTED REGISTERED ACTIVE_BOUND
+              PROPOSED APPROVED FETCHED VERIFIED STAGED COMMITTED REGISTERED ACTIVE_BOUND
+              EXPOSED VERIFIED_AGAIN FINALIZED
+PROPOSED count: 2        generation: 2
+```
+
+一条 transaction 的审计轨迹里出现了**两次 `PROPOSED`、两次 `ACTIVE_BOUND`**，generation 白涨一次。三个后果，一个比一个重：
+
+1. **审计轨迹对过去说了假话**：它声称事务回到过起点，而事实上绑定已经改过了；
+2. **`ACTIVE_BOUND` 被通过了两次**，而 §5.6 把这个状态定义为"**唯一**可以改变 active binding 的提交点"——每个事务只应该经过它一次；
+3. **journal 是恢复权威**（`AGENTS.md` §5.4、§14.1），把它改写回更早的状态不是"重试"，是**抹掉已发生的事实**：如果此时断电，恢复会从一个从未存在过的状态开始分类。
+
+根因一行就能说清：`journal.create` 的 transaction id 由 plan+approval 推导，所以第二次 `commit` 落在**同一条** transaction 上，而它**无条件地**又写了一份全新的 `PROPOSED` envelope 与行。**修法**：`create` 改成 **get-or-create**——同一条记录已经在磁盘上，就返回它，让调用者从**它真实的持久状态**继续。这与 `resume` 从同一条记录出发的行为一致（`resume` 的注释本来就写着"resume 永不倒带 journal"），而"第二个调用者"能走到这里的前提是批准**尚未被消费**（`verify_approval` 查的就是这件事），所以"有人又跑了一次 commit"最诚实的读法是**续做**。
+
+**为什么这不是"放宽权限"**（ADR-0021）：它不改变任何许可，不改任何状态转移表（16 状态 / 62 条边一条没动），只是让 journal 不再被倒着写。
+
+### 61.5 C-025：审计差点"修好"一个**没有坏**的东西
+
+契约（§13.7）要的是 exit 8。我读 `build_reference_plan` 时先看见 machine 门在请求校验之前，判定为"顺序缺陷"并改了顺序——**然后探针推翻了这个前提**：
+
+* **CLI 路径**：`request_from_entry` → `spec_from_entry` → `validate_spec` 在**计划构造之前**就拒绝了禁用变量。所以 C-025 在真实命令路径上**从来没有坏过**；
+* **库路径**：`ExposureRequest` 可以被直接构造，那条路上门确实在前面，会给出 5（"去提权"）——对一个**在每个 scope 都非法**的请求，这是个会把人引向错误方向的答案。
+
+所以修法保留（两条路径现在给同一个答案），但**docstring 按实测改写**：不再写"契约被违反"，而是写"CLI 路径本来就对，库路径与它不一致"。测试同时锁两条路径，并额外断言一个**合法**的 machine 请求仍然得到 5——顺序改了不等于把门吞掉。
+
+**教训写在这里**：只读场景点名的那个函数，会把没坏的东西改掉。探针（两条路径都跑一次）才是把"我以为"变成"我量到"的那一步。
+
+### 61.6 新守卫：声明"缺东西"就必须写下为什么
+
+规则（落在台账的结构校验 `evidence_problems` 里）：`blocked_by` 不是 `none` 时**必须**有 `note`；`undesigned` 的 `no_witness_reason` 也算解释（它本来就是针对这条判断的散文）；`witness` **不算**——指针说的是"哪条测试会红"，不是"为什么缺"。
+
+**红证明是立刻发生的**：规则上线后第一次运行就在**真实语料**上打到 5 条（C-007 / C-009 / C-028 / S-027 / T-017），逐条看、逐条补。其中 T-017 那次的形状值得单独记：它"又变回 `p4-real-backend`"的原因是**重复字典键**——我新增的 `T-017` 块与原地那行同时存在，Python 静默取后者。**长表格里最危险的一类编辑错误**，而它是被这条新规则抓出来的（不是被我看见的）。
+
+### 61.7 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S61.1 十七条逐条重新推导 | ✅ | 见 61.3；探针读数见 61.2 |
+| S61.2 三条改判为"今天可测" | ✅ | P-002（`none`+证据）、T-013（新测试 `test_T013_...`）、T-016/T-017（`none`+证据） |
+| S61.3 三条改判为 `undesigned` | ✅ | P-012（缺 `approval_mode` 列）、P-015（`revoked_at` 无写入方）、P-017（没有签发方身份证据） |
+| S61.4 **修掉重复 commit 的倒带** | ✅ | `journal.create` 改 get-or-create；`test_l1_transaction.py#test_P016_...` 断言 `PROPOSED`/`ACTIVE_BOUND` 各一次、一条 tx、一次消费、integrity 干净；去掉 get-or-create 立刻变红 |
+| S61.5 C-025 按实测改正 | ✅ | docstring 写实测；`test_l1_exposure.py#test_C025_...` 锁两条路径 + 合法请求仍得 5 |
+| S61.6 新守卫 + 真实语料红证明 | ✅ | 规则上线即打到 5 条真条目并逐条补齐；内存变异证明它仍能红 |
+| S61.7 计数与语料回写 | ✅ | evidenced **45 → 48**、uncited **63 → 60**；测试 **759 → 762**；审计 **73 项不变** |
+
+### 61.8 如实记录的边界
+
+1. **复核的是"文档说了什么"，不是"世界上为真"**——与 §60 同一条边界。`P-010` 尤其：它的两半都不可测，我把这件事写成 note，而不是造一条测不出东西的测试。
+2. **错判率值得记住**：17 条里 7 条改了"缺什么"的结论（P-002/P-012/P-015/P-016/P-017/T-013/C-025），另外 10 条维持并补上"哪一半已交付"。这**不**意味着台账剩下 60 条也有同样的错判率——只有被复核过的那些才知道自己错没错。反过来说，"作者判断"这类字段不做复核就会漂，这一点现在有 7 个实例支撑。
+3. **三件没修的事，本轮只把它们写成可读的事实**：(a) `events` 表缺 `approval_mode` 列，所以 §13.3 的"审计里可区分"今天不成立；(b) `revoked_at` 没有写入方，`APPROVAL_REVOKED` 是死分支（没有 revoke 这个操作）；(c) artifact runner 只捕 `AirootError`，`OSError`（中断下载 / 磁盘满 / 文件被锁，即 T-001/T-004/T-005）会直接穿出去。**这三件都该有自己的阶段**，而不是在审计轮里顺手改掉。
+4. **`p3-native-indexer` 仍然零成员**：我把它当作 `C-011` 的候选值考察过，结论是 `C-011` 仍应先记 P2（ADR-0020 把 USN 索引器的初始枚举绑在 broker 上），所以那个值保持零成员并保留——与 `unchecked-invariant` 同一处置，理由也同一句：删掉它等于删掉"为什么需要这个值"。
+5. **审计项的计数口径**：新规则住在 `scenario_ledger.py` 的结构校验里，而"73 项常驻审计"数的是 `test_l0_consistency.py` 的检查函数，所以那个数字不变。它是常驻审计，只是宿主文件不同——写下来，免得下次有人以为"73 没变 = 没加检查"。
+6. **`ACTIVE_BOUND` 的记账口径**：修好之后，同一个 plan+token 的第二次调用会**续做**而不是重开，所以"一个事务恰好经过一次 `ACTIVE_BOUND`"现在是被断言的性质，而不是巧合。契约 §14.1 的措辞（"唯一提交点"）不需要改：它说的是**哪个状态可以改绑定**，而修的是"不要把一个事务倒退回去再经过它一次"。
+7. **验红脚本本身踩了一个坑，记在这里免得下次再踩**：本阶段的验红是"改文件 → 跑测试 → 从备份恢复"，而脚本用的是 `read_text()` / `write_text()`。在 Windows 上那是**文本模式**：读进来时 `\r\n` 被规范化成 `\n`，写回去时 `\n` 又被翻译成 `\r\n`。于是恢复出来的 `environment.py` / `db.py` **一个字节都没改，却整文件变成了 CRLF**（`git diff --stat` 各报 848 与 1786 行），而 `exposure.py` / `journal.py` 的真正改动被埋在全新的行尾里。发现的时机是提交前的 `git diff --stat`——**行数多得不像自己改过的东西**就是那个信号。修法：`git checkout --` 掉两处纯行尾噪声，另两处按字节把 `\r\n` 折回 `\n`。**下次的规矩**：验红脚本一律用 `read_bytes()` / `write_bytes()`，或者 `open(..., newline='')`；`.gitattributes` 是 `* -text`，所以行尾噪声会被**原样提交**，不会有人替你纠正。
+
+### 61.9 实施顺序
+
+1. 先把 17 条**逐条重新推导**，能跑探针的先跑（61.2）——**先量，再判**；
+2. 把结论写进台账（每条一个 `note`，改判的改 `blocked_by` 并给证据或 `no_witness_reason`）；
+3. 只对**已被探针证明是真的缺陷**动实现（本阶段只有一处：`journal.create`）；
+4. 给"声明缺失必须说为什么"加守卫，并让它在**真实语料**上先红一次（61.6）；
+5. 跑全量 + 切片 + 两种验收模式，重生语料，回写计数，提交。
+
 
 
 

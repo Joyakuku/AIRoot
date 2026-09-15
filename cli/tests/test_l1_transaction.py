@@ -309,6 +309,78 @@ def test_replaying_the_same_approval_is_refused(registry: Registry, clock, root)
     assert err.value.exit_code == 4
 
 
+def test_P016_the_same_token_consumed_twice_never_rewinds_the_transaction(
+    registry: Registry, clock, root
+) -> None:
+    """P-016: the same token applied twice — one transaction, one binding change, one consumption.
+
+    A thread race would be the obvious test and a bad one: whether the loser arrives before or after
+    the winner finalizes decides *which* answer it gets, so a race-only test is a coin flip that can
+    pass for the wrong reason. Draft §61 measured the two interleavings deterministically instead.
+    Both are real and both must hold:
+
+    * **mid-flight** — the loser arrives while the winner sits at ``ACTIVE_BOUND``. It picks up the
+      same transaction (the id is derived from plan+approval) and finishes it. It must do so **without
+      rewinding it**: the audit trail below used to read `… ACTIVE_BOUND, PROPOSED, … FINALIZED`,
+      i.e. a second pass through the one commit point that changes the active binding, plus a
+      throwaway generation bump, because `journal.create` overwrote the durable envelope with a fresh
+      `PROPOSED`;
+    * **after the fact** — once the winner has finalized, the same token is ``APPROVAL_REPLAYED``.
+    """
+
+    from conftest import FakeClock, FaultInjector
+
+    fake_issuer.install_keyring(root.path)
+    plan = create_plan(registry, version="41.0.0", clock=clock, ttl_minutes=600)
+    token = fake_issuer.issue(plan, clock=clock, ttl_minutes=600)
+
+    # The winner stops at the one commit point that changes the active binding.
+    winner = SimulationRunner(registry, clock=clock, injector=FaultInjector(stop_after="ACTIVE_BOUND"))
+    stopped = winner.commit(plan, token)
+    assert stopped["state"] == "ACTIVE_BOUND"
+    assert len(registry.bindings(active_only=True)) == 1
+
+    # Mid-flight loser, on its own connection, with the same plan and the same token.
+    other = Registry.open(root.path, clock=FakeClock(start="2024-01-01T00:00:00Z"))
+    try:
+        driven = SimulationRunner(other, clock=FakeClock(start="2024-01-01T00:00:00Z")).commit(plan, token)
+    finally:
+        other.close()
+    assert driven["state"] == "FINALIZED"
+    assert driven["journal_seq"] > stopped["journal_seq"], "the journal only ever moves forward"
+
+    rows = registry.transactions()
+    assert len(rows) == 1, "the same plan and token must never open a second transaction"
+    assert rows[0]["state"] == "FINALIZED"
+    assert rows[0]["journal_seq"] == driven["journal_seq"]
+
+    # The two assertions this test exists for: one pass through the commit point, one beginning.
+    short = str(stopped["transaction_id"]).split("/")[-1]
+    states = [
+        str(event["state"])
+        for event in registry.events()
+        if event["transaction_id"] and str(event["transaction_id"]).split("/")[-1] == short
+    ]
+    assert states.count("PROPOSED") == 1, f"the transaction was restarted, not resumed: {states}"
+    assert states.count("ACTIVE_BOUND") == 1, f"the commit point was passed twice: {states}"
+
+    active = registry.bindings(active_only=True)
+    assert len(active) == 1
+    assert active[0]["instance_id"] == plan["target"]["instance_id"]
+    assert active[0]["generation"] <= registry.generation
+    assert registry.integrity_problems() == []
+
+    # The nonce was consumed exactly once — the scenario's headline claim.
+    consumed = registry.approval(str(token["approval_id"]))
+    assert consumed is not None and consumed["consumed_at"]
+
+    # After the fact, the same token is a replay, on the original runner and a fresh one alike.
+    with pytest.raises(AirootError) as err:
+        SimulationRunner(registry, clock=clock).commit(plan, token)
+    assert err.value.reason_code == "APPROVAL_REPLAYED"
+    assert err.value.exit_code == 4
+
+
 # --------------------------------------------------------------------------- #
 # fault injection at every state boundary (§6.1)
 # --------------------------------------------------------------------------- #

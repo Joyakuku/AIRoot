@@ -187,7 +187,29 @@ def build_reference_plan(
     plan_id: str | None = None,
     resolved: ResolvedExposure | None = None,
 ) -> dict[str, Any]:
-    """Build the canonical plan document for one reference exposure."""
+    """Build the canonical plan document for one reference exposure.
+
+    **A request is judged before the environment's limits are reported** (draft §61). Two of the
+    three refusals below are about the request itself and one is about what this build may do, and
+    the request-level ones have to come first: ``PRIVILEGE_REQUIRED`` (5) says *"elevate and retry"*,
+    which no amount of elevation can make true for the injection-type variables §13.5 forbids at
+    every scope.
+
+    Measured, not assumed, when §61 audited C-025: on the **CLI** route this order was already
+    right, because `request_from_entry` builds the spec through `spec_from_entry` and therefore
+    refuses a forbidden variable before this function is ever called. What was wrong was that the
+    two owners of the rule disagreed: this function is also a library entry point (`ExposureRequest`
+    can be constructed directly, and `resolved=` can be passed in), and *there* the machine gate ran
+    first and answered 5 for a request that is invalid at every scope. Both now answer the request.
+    """
+
+    exposure = resolved or resolve_exposure(request)
+    if exposure.is_empty():
+        raise AirootError(
+            "INVALID_INPUT",
+            f"capability {request.target.capability_id} declares no environment to persist",
+            evidence=["the whitelist entry has neither variables nor path_prepend"],
+        )
 
     if request.scope == SCOPE_MACHINE:
         raise AirootError(
@@ -197,14 +219,6 @@ def build_reference_plan(
                 "HKLM writes require elevation; the broker is P2 (draft §13.3)",
                 "use --scope user, or persist nothing and use session activation",
             ],
-        )
-
-    exposure = resolved or resolve_exposure(request)
-    if exposure.is_empty():
-        raise AirootError(
-            "INVALID_INPUT",
-            f"capability {request.target.capability_id} declares no environment to persist",
-            evidence=["the whitelist entry has neither variables nor path_prepend"],
         )
 
     target = request.target

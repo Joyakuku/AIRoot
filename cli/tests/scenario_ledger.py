@@ -245,14 +245,107 @@ def evidence_token(text: str) -> str | None:
 DISPOSITIONS: dict[str, dict[str, Any]] = {
     # --- P: privilege and provenance. Without a broker there is nothing to test
     # against: the scenario is about a boundary that P2 builds.
-    "P-001": {"blocked_by": "p2-protected-state"},
-    "P-002": {"blocked_by": "p2-protected-state"},
-    "P-009": {"blocked_by": "p2-protected-state"},
-    "P-010": {"blocked_by": "p2-protected-state"},
-    "P-012": {"blocked_by": "p2-protected-state"},
-    "P-015": {"blocked_by": "p2-protected-state"},
-    "P-016": {"blocked_by": "p2-protected-state"},
-    "P-017": {"blocked_by": "p2-protected-state"},
+    #
+    # §61 audited every entry below (and the T-* ones further down) by re-deriving it from the
+    # scenario text and the code. These nine were the *unreviewed* ones: bare `{blocked_by}` with no
+    # note at all, which is an assertion nobody had checked. Findings, in the order they matter:
+    #
+    #   * P-002 and P-016 were filed as "needs P2" and are not — P-002's load-bearing half is
+    #     delivered (§56/ADR-0022) and P-016's turned out to be a real defect that is now fixed;
+    #   * P-012, P-015 and P-017 have a *reachable half* that is implemented and a half that has no
+    #     implementation at all, so `undesigned` is the honest value (recorded in each note);
+    #   * the rest really do wait for P2, and now say which half does.
+    "P-001": {
+        "blocked_by": "p2-protected-state",
+        "note": (
+            "acl 不存在，所以'被 ACL 拒绝'这一半**没有可执行对象**：policy_only 模式下同一用户"
+            "本来就能写 `store`。'doctor 报告证据、不改变 registry'那半**已交付**（§58 的只读 ACL 观测"
+            "与 `DATA_ROOT_ACL_DRIFT`，`test_l1_doctor_steward.py#test_C034_...`），但它测的是**漂移**，"
+            "不是**拒绝**——把基线强加回目录要 `WRITE_DAC` + broker。"
+        ),
+    },
+    "P-002": {
+        "blocked_by": "none",
+        "evidence": "test_l1_where.py#test_S006_zone_w_is_not_machine_discoverable_but_answers_explicit_activation",
+        "note": (
+            "§61 改判：原记 `p2-protected-state`，但期望里承重的那一半**已交付**——Zone W 可写、"
+            "而机器级 `where` 不发现它，正是 §56/ADR-0022 的执行点，由该测试断言（写进 cache 的对象"
+            "在 machine 槽里不被发现，只能由显式激活取到）。'写文件被允许'是真的：索引本身就写在 "
+            "`cache/search/index.db`。**第三句是空的**：'不能被 machine PATH 发现'今天真空成立，"
+            "因为没有 machine PATH 写入功能——它有内容要等 P2，这句话记录在案而不是假装测过。"
+        ),
+    },
+    "P-009": {
+        "blocked_by": "p2-protected-state",
+        "note": (
+            "UAC 不存在，所以'取消'这个触发条件无可执行对象。期望里的'进入可恢复失败态、旧 active 仍可用'"
+            "**已交付并由中断面覆盖**（`test_e2e_p1.py#test_p1_exit_condition_two_interruption_is_explicit_and_repairable`、"
+            "`test_l1_transaction.py#test_every_boundary_is_recoverable`），缺的只是 UAC 取消这个入口，属 P2。"
+        ),
+    },
+    "P-010": {
+        "blocked_by": "p2-protected-state",
+        "note": (
+            "期望分两半，都**不可测**：'R 区真能挡住同用户进程'要 ACL/broker（属 P2）；'接口层拒绝'"
+            "在 R 不受保护之前**无法区分**'核心没提供直接写 R 的操作'与'它恰好没写'——今天扩展与 "
+            "backend 都没有写 `store` 的操作（`ext/fake.py` 拒绝未声明的操作，`base.py` 的九步协议里"
+            "只有 `stage`/`commit`，由 runner 驱动），这是**结构性**事实而不是被断言的性质。"
+        ),
+    },
+    "P-012": {
+        "blocked_by": "undesigned",
+        "no_witness_reason": (
+            "证人要断言一条**不存在的列**。审计实测：`events` 表根本没有 `approval_mode` 列"
+            "（`registry/db.py` 的 `append_event` 只有 `approval_id`），而 §13.3 说'审计里 "
+            "`approval_mode=policy` 可区分'——今天**区分不了**。等列存在，证人就是断言它的那个测试。"
+        ),
+        "note": (
+            "§61 改判：原记 `p2-protected-state`，不准确。两半缺的是不同的东西：(1) **自动批准这个动作"
+            "没有生产方**——P1 禁止核心凭空铸造批准（`AGENTS.md` §7），只有 `cli/tests/fake_issuer.py`；"
+            "策略审批签发方是待裁决项。(2) **审计面没有 `approval_mode` 列**，所以"
+            "'不伪装成人工批准'在审计里不可验证。已交付的是**资格谓词**（`base.py` 的 `low_risk_eligible`，"
+            "`test_l2_backends.py#test_script_execution_disqualifies_the_low_risk_path`）与 `approve` 的"
+            "输出字段（`cli.py`）。"
+        ),
+    },
+    "P-015": {
+        "blocked_by": "undesigned",
+        "no_witness_reason": (
+            "被撤销那一半**没有可撤销的东西**：`revoked_at` 全树只有两处出现——读它的 "
+            "`tx/approval.py` 与声明它的 `ddl.sql`——**没有任何代码写入它**，所以 `APPROVAL_REVOKED` "
+            "是死分支，不存在能让它变红的测试。要证人，先要有 revoke 这个操作。"
+        ),
+        "note": (
+            "§61 改判：原记 `p2-protected-state`，错——撤销批准不需要 ACL/broker。期望是复合句："
+            "**policy revision 改变那半已交付并被断言**（`tx/approval.py` 的 `POLICY_REVISION_MISMATCH`，"
+            "`test_l1_transaction.py` 有测试点名该码）；**撤销那半不可达**（见 `no_witness_reason`）。"
+        ),
+    },
+    "P-017": {
+        "blocked_by": "undesigned",
+        "no_witness_reason": (
+            "证人要断言一次**没有第二个操作数**的比较。'与 issuer 证据不匹配'需要签发方持有身份证据，"
+            "而 P1 没有生产签发方（只有 `cli/tests/fake_issuer.py`）。能测的是'缺 SID 就拒绝'，"
+            "那**不是**这个场景。"
+        ),
+        "note": (
+            "§61 改判：原记 `p2-protected-state`，不准确。实测：'human 模式必须记录 `approved_by_sid`'"
+            "这条规则**实现了**（`tx/approval.py`：'an agent request is never a human approval'），并且发布 "
+            "schema 的 `if/then` 也要求该字段为字符串；但它在 CLI 路径上**被 schema 挡在前面**"
+            "（`_load_token` → `_load_document(..., 'approval-token')`），所以规则本身是**纵深防御**，"
+            "而场景要的'与 issuer 证据不匹配'根本没有实现对象。"
+        ),
+    },
+    # P-016's disposition is **deleted**, not rewritten: §61's audit found the scenario reachable and
+    # the implementation wrong. `journal.create` is keyed on plan+approval, so a second `commit` landed
+    # on the same transaction and **overwrote the durable envelope with a fresh `PROPOSED`**, after
+    # which the caller re-drove the whole state machine: measured with fault injection, the audit trail
+    # read `… ACTIVE_BOUND, PROPOSED, … FINALIZED` — a second pass through the one commit point that
+    # changes the active binding, plus a throwaway generation bump, and the journal's record that the
+    # binding had already changed was erased. It is now get-or-create (a duplicate is a *resume*, which
+    # is what `resume` already did from the same record), and
+    # `test_l1_transaction.py#test_P016_...` names the scenario and pins one `PROPOSED`, one
+    # `ACTIVE_BOUND`, one consumption.
     "P-003": {
         "blocked_by": "none",
         "evidence": "test_l1_toolstate.py#test_a_clean_path_has_no_violation",
@@ -432,13 +525,76 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
         "note": "`forget` 的输出里就有 `project_manifest_check: not_implemented_before_p6`，那条测试断言了它",
     },
     # --- T: transaction cases that need a real artifact to interrupt.
-    "T-001": {"blocked_by": "p4-real-backend"},
-    "T-003": {"blocked_by": "p4-real-backend"},
-    "T-004": {"blocked_by": "p4-real-backend"},
-    "T-005": {"blocked_by": "p4-real-backend"},
-    "T-013": {"blocked_by": "p4-real-backend"},
-    "T-016": {"blocked_by": "p4-real-backend"},
-    "T-017": {"blocked_by": "p4-real-backend"},
+    #
+    # §61 audited all seven. The value's own definition names what it covers — a real artifact:
+    # download, extraction, stage, commit, disk, locks — so four of them are correct *even though*
+    # part of the path is delivered, and the notes now say which part. Two were wrong: the real
+    # backend exists, and the failure handling they were filed under does not.
+    "T-001": {
+        "blocked_by": "p4-real-backend",
+        "note": (
+            "§61 复核，**维持原判**，把'哪一半已交付'写清：下载 + 摘要校验**真的跑过真实上游**"
+            "（§59：`rustup-init.exe` 12 721 664 字节），本地失败也没留下 stage"
+            "（`test_l2_backends.py#test_a_missing_artifact_fails_without_leaving_a_stage`）。缺的是"
+            "**中断**那种失败：artifact runner 只捕获 `AirootError`，`fetch` 半途抛出的 `OSError`"
+            "会直接穿出去，既不诊断也不回滚。"
+        ),
+    },
+    "T-003": {
+        "blocked_by": "p4-real-backend",
+        "note": (
+            "§61 复核，**维持原判**：全树没有任何解压实现（`zipfile`/`tarfile` 都没被导入），所以"
+            "'安全解压发现路径穿越'没有对象。相邻但**不同**的保证是 `paths.py` 的 root-relative 原语"
+            "（`PATH_ESCAPES_ROOT`），它拦的是 AIROOT 自己拼出来的路径，不是 artifact 内容里的路径。"
+        ),
+    },
+    "T-004": {
+        "blocked_by": "p4-real-backend",
+        "note": (
+            "§61 复核，**维持原判**，理由与 T-001 同族：stage/commit 在真实 backend 上已存在，缺的是"
+            "**磁盘类失败**的诊断——没有空间证据的生产方，也没有把 `ENOSPC` 变成带证据的失败态的路径"
+            "（runner 只捕 `AirootError`）。"
+        ),
+    },
+    "T-005": {
+        "blocked_by": "p4-real-backend",
+        "note": (
+            "§61 复核，**维持原判**，并把边界量准：占用**已存在的 store 路径**是被诊断的"
+            "（`portable_file.commit` 抛 `INSTANCE_CONFLICT`，是个 `AirootError`，因此会回滚）；"
+            "而 `shutil.move` 遇到的**共享冲突/锁**是 `OSError`，runner 不转换它——所以'进入 "
+            "rollback/recovery，不覆盖旧 generation'在锁这一类上今天不成立。"
+        ),
+    },
+    # T-013 used to sit here as `p4-real-backend` (and then as `none` + evidence for a test that did
+    # not name it). §61's audit found the scenario needs no real artifact at all — it judges a
+    # *declaration* — and `test_l2_backends.py#test_T013_...` now names it and exercises both ends of
+    # the rule (`reversible=False` → not low-risk → explicit approval; the rollback half is covered by
+    # the ROLLED_BACK tests). So the disposition is **deleted rather than rewritten**, the §52/§55
+    # treatment: `status` is a measurement and flips on its own, and a note saying "nothing checks
+    # this" next to a test that now checks it is a record that reads as information and carries none.
+    "T-016": {
+        "blocked_by": "none",
+        "evidence": "test_l1_transaction.py#test_every_boundary_is_recoverable",
+        "note": (
+            "§61 改判：原记 `p4-real-backend`，但崩溃对账**不需要真实 artifact**。该测试按 "
+            "`happy_path_states()` **逐状态参数化**（含 `ACTIVE_BOUND`），断言：中断只发生在状态已落盘之后、"
+            "重开进程只从磁盘读、`repair` 收敛到 `FINALIZED`、**恰好一个 active binding**、"
+            "generation 与 active 一致、integrity 无问题、且 repair 幂等。"
+            "'失败时回旧 generation'那半由回滚面覆盖（`test_failure_before_commit_changes_nothing`）。"
+        ),
+    },
+    "T-017": {
+        "blocked_by": "none",
+        "evidence": "test_l1_lifecycle.py#test_gc_apply_is_idempotent",
+        "note": (
+            "§61 改判：原记 `p4-real-backend`，但 `gc` 已在**真实 payload** 上跑过"
+            "（`test_l2_backends.py#test_retire_and_gc_collect_the_real_payload`）。期望的两半都有证人："
+            "'不删除仍有引用的 payload'由 `test_l1_lifecycle.py#test_an_unfinished_transaction_blocks_collection`"
+            "（`collectable is False`，blocker 里写明 `unfinished_transaction_references_it`）与"
+            "`test_gc_apply_removes_only_the_store_payload`（只删 `store/<instance>`，行与审计事件保留）断言；"
+            "'重试必须幂等'由本条的证人断言（同一 token 第二次 apply 被拒为 replay，而不是再删一次）。"
+        ),
+    },
     # --- C: contract-conformance cases.
     "C-003": {"blocked_by": "none", "evidence": "test_l1_registry.py#test_only_one_active_binding_per_key_is_accepted"},
     "C-004": {
@@ -484,6 +640,11 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     "C-009": {
         "blocked_by": "undesigned",
         "witness": "test_cli_steward.py#test_adopt_import_is_not_implemented",
+        "note": (
+            "`adopt --mode import|recreate` 没有实现（规划 §15.5 定义了三档 mode，只有 `reference` 落地），"
+            "所以证人断言的是'它仍然没实现'。§61 复核时补上这条 note：按本轮的规则，"
+            "**声明某样东西缺失就必须写下为什么**——只给证人而不说理由，是这一轮在另外 17 条上刚修掉的形状"
+        ),
     },
     "C-010": {
         "blocked_by": "none",
@@ -495,7 +656,16 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "而不是'输出里没有这句话'（pytest 自己的 `os.environ` 也未被断言）"
         ),
     },
-    "C-011": {"blocked_by": "p2-protected-state"},
+    "C-011": {
+        "blocked_by": "p2-protected-state",
+        "note": (
+            "§61 复核，**维持原判**，但把缺的是什么写清：本 build 唯一的可访问性答案是**本进程**能到哪"
+            "（`caps/search.py` 的 `_accessible`），它自己的 docstring 就写着'面向其他身份的 ACL 过滤要 "
+            "broker；假装不是会更糟'。所以'结果被过滤且不泄露路径'这一半今天**没有实现对象**。"
+            "它需要的机器级索引属 P3 的 USN 常驻索引器，而那个索引器的**初始全量枚举本身要 broker**"
+            "（ADR-0020），所以恢复顺序是先 P2——这也是这里仍填 `p2-protected-state` 而不是 p3 的原因。"
+        ),
+    },
     "C-012": {
         "blocked_by": "none",
         "evidence": "test_l1_desired.py#test_cli_pin_reports_when_no_plan_can_be_built",
@@ -584,7 +754,19 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     # C-021. `status` is a measurement and flips to `evidenced` on its own once a test names the ID;
     # keeping a stale "nothing checks this" note next to a test that now checks it would be exactly the
     # kind of record that reads as information while carrying none.
-    "C-025": {"blocked_by": "p2-protected-state"},
+    # C-025 used to sit here as `p2-protected-state`, and §61's audit is why it does not any more.
+    # The scenario asks for exit 8, not exit 5, and the audit **measured** which of the two refusals
+    # answers it: both are true of `PYTHONPATH --scope machine`, and the useful one is "the request is
+    # bad". On the CLI route this was already right (`request_from_entry` validates the spec before the
+    # plan is built), and on the library route — a hand-built `ExposureRequest` — the machine gate ran
+    # first and answered 5, which would have sent an agent looking for elevation it can never obtain.
+    # Both routes now answer the request, and `test_l1_exposure.py#test_C025_...` names the scenario
+    # and holds both, so the disposition is **deleted rather than rewritten** (the §52/§55 treatment).
+    #
+    # The general lesson is worth keeping next to it: an audit that reads only the function the
+    # scenario *names* can "fix" something that was never broken, in the direction of a behaviour
+    # change nobody asked for. Two routes existed; measuring both is what turned a wrong premise into
+    # a small, real inconsistency.
     "C-027": {
         "blocked_by": "none",
         "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
@@ -697,6 +879,25 @@ def evidence_problems(repo: Path, ledger: list[dict[str, Any]] | None = None) ->
                     problems.extend(_evidence_pointer_problems(repo, key, entry["evidence"]))
             elif entry["evidence"] is not None:
                 problems.append(f"{key}: blocked_by={blocked!r} is a missing capability, so it cannot have evidence")
+
+            # **A claim that something is missing has to say why** (draft §61). `blocked_by: none` is
+            # self-documenting — the evidence pointer *is* the statement — but `p2`/`p4`/`p3`/
+            # `undesigned`/`unchecked-invariant` all assert that a named thing is absent, and that is
+            # a judgement, not a measurement. §61 found seventeen of them written as bare
+            # `{"blocked_by": ...}`: no reason, no note, nothing a reader could check or argue with.
+            # Four of the seventeen turned out to be simply wrong (P-002, P-016, T-013 and, in the
+            # other register, `reconcile`) — which is the argument for the rule, not an argument that
+            # it is pedantic.
+            #
+            # `no_witness_reason` counts as the explanation where it exists: for `undesigned` it is
+            # already prose about *this* claim, and demanding a second paragraph beside it would
+            # produce duplication, not information. `witness` does **not** count — a pointer says
+            # which test will go red, never why the capability is missing.
+            explained = str(entry.get("note") or "").strip() or str(entry.get("no_witness_reason") or "").strip()
+            if blocked != "none" and not explained:
+                problems.append(
+                    f"{key}: blocked_by={blocked!r} claims something is missing and gives no note saying why"
+                )
 
         if blocked == "undesigned":
             problems.extend(_undesigned_problems(repo, key, entry))

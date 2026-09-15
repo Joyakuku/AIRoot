@@ -104,6 +104,25 @@ def test_script_execution_disqualifies_the_low_risk_path() -> None:
     assert declaration_for("https_artifact").low_risk_eligible is True
 
 
+def test_T013_an_irreversible_backend_is_never_on_the_low_risk_path() -> None:
+    """A backend that declares it cannot be undone must need an explicit approval (T-013).
+
+    The declaration exists for this: `reversible` is one of the nine frozen fields, and the whole
+    point of declaring it is that the low-risk automatic path answers "may this run without a human?"
+    — for an irreversible step the answer has to be no, so the step falls back to an explicit token
+    instead of being silently auto-approved. The `executes_scripts` input to the same predicate was
+    the only one watched before §61's audit of T-013, which had filed this scenario as
+    `p4-real-backend`; the judgement needs no real artifact, only the declaration.
+    """
+
+    backend = BackendDeclaration(backend_id="uninstaller", reversible=False)
+
+    assert backend.low_risk_eligible is False
+    assert backend.to_document()["reversible"] is False
+    # ...and the declaration is what the plan-side judgement reads, not a private flag.
+    assert declaration_for("portable_file").low_risk_eligible is True
+
+
 def test_an_unknown_backend_is_refused_with_the_known_list() -> None:
     with pytest.raises(AirootError) as caught:
         resolve_backend("pip", root=Path("."))

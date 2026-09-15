@@ -356,6 +356,60 @@ def test_machine_scope_needs_the_protected_broker(registry, registered: Path) ->
     assert caught.value.reason_code == "PRIVILEGE_REQUIRED"
 
 
+def test_C025_a_forbidden_variable_at_machine_scope_is_an_invalid_request_not_a_privilege_one(
+    registry, registered: Path
+) -> None:
+    """C-025: `PYTHONPATH --scope machine` → exit 8, **not** exit 5.
+
+    Both refusals are true of that request and only one of them is useful. Exit 5 means "elevate and
+    retry", and §13.5 forbids these variables at *every* scope — so 5 would send an agent to look for
+    elevation it can never obtain, and then to the user scope, where it would be refused for the same
+    reason it was refused here. The audit in draft §61 measured this on both routes rather than
+    trusting either: the CLI route was already right (`request_from_entry` → `spec_from_entry`
+    refuses before the plan is built), and the library route — a hand-built `ExposureRequest` — used
+    to answer 5 because the machine gate ran first. The two routes are now the same answer, and this
+    test holds both.
+    """
+
+    # Route 1: what the CLI does. The refusal happens while the request is *built* — `spec_from_entry`
+    # runs `validate_spec`, so this route never reaches `build_reference_plan` at all. Recording the
+    # difference matters: it is why C-025 was never actually broken on the CLI path, and why an
+    # audit that only read `build_reference_plan` would have "fixed" something that was not wrong.
+    with pytest.raises(AirootError) as caught:
+        make_request(
+            registered,
+            entry={"variables": {"PYTHONPATH": "<object_root>"}, "path_prepend": []},
+            scope=SCOPE_MACHINE,
+        )
+    assert caught.value.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
+    assert "PYTHONPATH" in caught.value.message
+
+    # Route 2: a hand-built request, which is how a caller bypasses `spec_from_entry` entirely. This
+    # one *does* reach the plan builder, and the machine gate used to answer 5 before the spec was
+    # ever looked at.
+    hand_built = ExposureRequest(
+        target=make_target(registered),
+        spec=EnvironmentSpec(capability_id="java", variables=(("PYTHONPATH", "<object_root>"),)),
+        scope=SCOPE_MACHINE,
+        data_roots=(registered.parent,),
+    )
+    with pytest.raises(AirootError) as caught_hand_built:
+        build_reference_plan(hand_built, registry=registry)
+    assert caught_hand_built.value.reason_code == "PERSISTENCE_TARGET_FORBIDDEN"
+
+    # ...and with a *valid* machine-scope request the answer is still the privilege one, so the
+    # reordering did not swallow the gate: both refusals survive, in the order that helps.
+    with pytest.raises(AirootError) as still_privilege:
+        build_reference_plan(make_request(registered, scope=SCOPE_MACHINE), registry=registry)
+    assert still_privilege.value.reason_code == "PRIVILEGE_REQUIRED"
+
+    # The exit code is the scenario's other half: 8 means "the request is bad", and it is what an
+    # agent will branch on. Asserting only the reason code would leave the mapping unwatched.
+    from airoot.exits import exit_code_for
+
+    assert exit_code_for("PERSISTENCE_TARGET_FORBIDDEN") == 8
+
+
 # --------------------------------------------------------------------------- #
 # the published schema and the code must not drift (S9.1)
 # --------------------------------------------------------------------------- #
