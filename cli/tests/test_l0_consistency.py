@@ -1864,3 +1864,94 @@ def test_every_undesigned_scenario_names_a_witness_or_says_why_it_cannot() -> No
         "does not exist" in item or "does not appear" in item
         for item in evidence_problems(REPO, [{**sample, "witness": "no_such_file.py#token", "no_witness_reason": None}])
     )
+
+
+# --- Guard group 21: a pointer must name a test function, not a token (draft §53) ----------------
+#
+# Group 17 checked a pointer with `token in path.read_text()` — a **substring** test. It therefore
+# could not fail in the direction that matters. §53 audited the forty-one entries that claim nothing
+# is missing (`blocked_by=none`) by hand — read the pointed-at test, then the code — and found the
+# *judgements* were almost all right while about thirty *pointers* resolved to a docstring, a
+# comment, an import line, or a **different test than the one that exercises the expectation**. Three
+# dispositions were wrong and are corrected in the table; every pointer now names a function.
+#
+# The rule lives in `scenario_ledger._evidence_pointer_problems` and covers `witness` as well as
+# `evidence`, because a witness has the same job. What follows pins the rule and proves the failure
+# modes are reported — including the one the old rule could not report at all.
+
+_POINTER_SAMPLE = "test_l1_registry.py#payload"
+_POINTER_ACCIDENTAL = "test_l1_rebuild.py#audit"
+
+
+def test_every_evidence_and_witness_pointer_names_a_test_function() -> None:
+    from scenario_ledger import _evidence_pointer_problems, evidence_problems
+
+    assert evidence_problems(REPO) == [], "; ".join(evidence_problems(REPO))
+
+    # Non-vacuity: every failure mode the helper claims to detect must actually be reported. The
+    # first case is a pointer this ledger really carried before §53, so the regression is pinned
+    # to a concrete historical value rather than an invented one.
+    reported = _evidence_pointer_problems(REPO, "SYNTHETIC", _POINTER_SAMPLE)
+    assert reported and "is not a test function name" in reported[0], reported
+    assert _evidence_pointer_problems(REPO, "SYNTHETIC", "test_l1_rebuild.py#test_not_a_real_function")
+    assert _evidence_pointer_problems(REPO, "SYNTHETIC", "no_such_file.py#test_x")
+    assert _evidence_pointer_problems(REPO, "SYNTHETIC", "test_l1_rebuild.py")
+    assert _evidence_pointer_problems(REPO, "SYNTHETIC", "test_l1_rebuild.py#test_unmanaged_references_are_reported_not_adopted") == []
+
+    # The ledger must not have quietly lost its `none` entries, or the rule above would be vacuous.
+    from scenario_ledger import build_ledger
+
+    none_entries = [entry for entry in build_ledger(REPO) if entry["blocked_by"] == "none"]
+    assert none_entries, "no `blocked_by=none` entries left; this guard is now about nothing"
+    assert all(entry["evidence"] for entry in none_entries)
+
+
+def test_the_old_substring_rule_could_not_go_red_and_the_new_one_does() -> None:
+    """The defect stated executably, in its two shapes.
+
+    **(a)** A token that names no test at all. `test_l1_registry.py#payload` — the pointer this
+    ledger really carried — is satisfied under the substring rule by an **import line** and by local
+    variables; `payload` never appears on a test-function line in that file. So the rule accepted a
+    pointer to nothing, and it kept accepting it after the test it should have named was deleted.
+
+    **(b)** A token that is accidentally part of a test's *name*. `test_l1_rebuild.py#audit` resolves
+    partly because `test_rebuild_repairs_a_stale_audit_projection` contains the word — but the same
+    word is also a local variable three lines away, so "it resolves" carries no information about
+    whether a test exists. A rule that cannot tell these apart cannot fail.
+
+    The checkability is the point: the function rule rejects both for a reason a reader can verify.
+    """
+
+    from scenario_ledger import _evidence_pointer_problems
+
+    # (a) a token that is never a test name — the strongest form of the defect.
+    name, token = _POINTER_SAMPLE.split("#", 1)
+    text = (REPO / "cli" / "tests" / name).read_text(encoding="utf-8")
+    lines = text.splitlines()
+    occurrences = [number for number, line in enumerate(lines, 1) if token in line]
+    assert occurrences, f"{token!r} no longer occurs in {name}; this test is about nothing"
+    assert not any(re.match(r"\s*def test_", lines[number - 1]) for number in occurrences), (
+        f"{token!r} now occurs on a test-function line, so it is no longer an example of defect (a)"
+    )
+
+    # ...and it survives deleting the test it should have pointed at, which is the load-bearing half:
+    # the substring rule had no way to notice.
+    first = text.index("def test_adding_the_same_instance_twice_is_idempotent")
+    second = text.index("def test_same_instance_id_with_a_different_digest_is_refused")
+    assert second > first
+    assert token in text[:first] + text[second:], "deleting that test removes the token; claim (a) is wrong"
+
+    # (b) the accidental case: the token is a substring of one test's name *and* of unrelated code.
+    name2, token2 = _POINTER_ACCIDENTAL.split("#", 1)
+    lines2 = (REPO / "cli" / "tests" / name2).read_text(encoding="utf-8").splitlines()
+    hits = [number for number, line in enumerate(lines2, 1) if token2 in line]
+    on_def = [number for number in hits if re.match(r"\s*def test_", lines2[number - 1])]
+    assert len(on_def) == 1, f"{token2!r} now occurs on {len(on_def)} def lines; claim (b) needs updating"
+    assert len(hits) > len(on_def), (
+        f"{token2!r} occurs only on a def line now; it is no longer an example of defect (b)"
+    )
+
+    # Both are rejected for a checkable reason, not a stylistic one.
+    for sample in (_POINTER_SAMPLE, _POINTER_ACCIDENTAL):
+        reported = _evidence_pointer_problems(REPO, "SYNTHETIC", sample)
+        assert reported and "is not a test function name" in reported[0], (sample, reported)

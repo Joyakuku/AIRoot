@@ -21,6 +21,12 @@ separated:
   resolvable evidence pointer). A judgement is never dressed up as a
   measurement.
 
+The pointer rule is itself part of that structure, and §53 tightened it: a
+pointer must name a **module-level test function**, not a bare substring. The
+first version accepted any token that appeared anywhere in the file, which meant
+it could not fail when the test it named was deleted — a check that cannot go
+red. See :func:`_evidence_pointer_problems`.
+
 ``status`` is therefore ``evidenced`` (at least one test file names the ID) or
 ``uncited`` (none does). There is deliberately **no** "covered" value: no guard
 can decide coverage, so calling 68 IDs "untested" would be as unfounded as
@@ -212,6 +218,21 @@ def evidence_token(text: str) -> str | None:
 
 # ---------------------------------------------------------------------------
 # Authored dispositions. Every key here is an ID that no test names.
+#
+# Two rules have been added to this table by review, each because a hand audit found the previous
+# shape unable to be wrong (draft §52 then §53):
+#
+#   * every `undesigned` entry names a **witness** — what goes red the moment the missing
+#     capability appears — or states why it cannot have one;
+#   * every `evidence` / `witness` pointer names a **module-level test function**, never a bare
+#     token. §53 audited the 41 `blocked_by=none` entries one by one and found about thirty
+#     pointers resolving to a docstring, a comment, an import line, or a *different* test — the
+#     judgements were mostly right, the pointers were not.
+#
+# Where an expectation has halves in different tests, the pointer names the one covering the
+# **dangerous** direction and the `note` names the others and any half that nothing asserts.
+# A `note` is free text and no guard checks it; it exists so that "we only proved half of this"
+# is written down rather than implied.
 # ---------------------------------------------------------------------------
 
 DISPOSITIONS: dict[str, dict[str, Any]] = {
@@ -225,10 +246,41 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     "P-015": {"blocked_by": "p2-protected-state"},
     "P-016": {"blocked_by": "p2-protected-state"},
     "P-017": {"blocked_by": "p2-protected-state"},
-    "P-003": {"blocked_by": "none", "evidence": "test_l1_toolstate.py#PATH"},
-    "P-018": {"blocked_by": "none", "evidence": "test_l1_registry.py#managed_tool_payload"},
-    "P-019": {"blocked_by": "none", "evidence": "test_l1_discovery.py#unmanaged"},
-    "P-020": {"blocked_by": "none", "evidence": "test_l1_toolstate.py#test_verify_refuses_an_unknown_instance"},
+    "P-003": {
+        "blocked_by": "none",
+        "evidence": "test_l1_toolstate.py#test_a_clean_path_has_no_violation",
+        "note": (
+            "该测试把一个**陌生用户项**（`C:\\Users\\me\\bin`）放进 user PATH，断言 0 violation、"
+            "`path_written is False`——即 AIROOT 既不认领它、也不动它。期望里的'标记 unmanaged'"
+            "在本面**没有对应字段**（`path verify` 只报违规，不给条目分类），所以真正的半边是'不声称它受保护'"
+        ),
+    },
+    "P-018": {
+        "blocked_by": "none",
+        "evidence": "test_l1_registry.py#test_same_instance_id_with_a_different_digest_is_refused",
+        "note": (
+            "'不得覆盖旧 store instance'由它断言（同 id 换 digest → 拒绝）；"
+            "另一半'payload 必须 immutable'由 `test_instance_identity_and_digest_are_immutable` 覆盖。"
+            "`tools` 只生成 binding 是**结构性**的：binding 只存 `instance_id`，payload 只在 `store/<instance_id>`"
+        ),
+    },
+    "P-019": {
+        "blocked_by": "none",
+        "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry",
+        "note": (
+            "危险方向是'扩展自己去 adopt'，由它断言：扩展跑完 probe/status/invoke 后 `declared_state_digest` 不变。"
+            "'只产生 unmanaged candidate'那一半由 `test_l1_discovery.py#test_unmatched_object_stays_unmanaged` 覆盖"
+        ),
+    },
+    "P-020": {
+        "blocked_by": "none",
+        "evidence": "test_l1_toolstate.py#test_verify_refuses_an_unknown_instance",
+        "note": (
+            "reference 没有 `instance_id`，`tool verify <reference-id>` 因此是 `NOT_FOUND`——"
+            "它**根本没有**'把引用升级为 managed'的路径。相邻规则由 `test_a_reference_is_never_uninstallable`"
+            "（test_l1_lifecycle.py）与 `test_the_three_verbs_do_not_change_the_generation` 覆盖"
+        ),
+    },
     "P-021": {
         "blocked_by": "none",
         "evidence": "test_cli_steward.py#test_data_root_on_another_volume_is_accepted",
@@ -241,20 +293,72 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     },
     # --- S: steward/registry behaviour that is exercised, plus a few that need
     # a capability that does not exist yet.
-    "S-001": {"blocked_by": "none", "evidence": "test_l1_desired.py#desired"},
-    "S-002": {"blocked_by": "none", "evidence": "test_l1_doctor.py#broken"},
-    "S-003": {"blocked_by": "none", "evidence": "test_cli_steward.py#discover never adopts"},
-    "S-004": {"blocked_by": "none", "evidence": "test_l1_toolstate.py#MANIFEST_DIGEST_MISMATCH"},
-    "S-006": {"blocked_by": "none", "evidence": "test_l1_where.py#effective"},
-    "S-007": {"blocked_by": "none", "evidence": "test_l1_where.py#VERSION_UNSATISFIED"},
-    "S-008": {"blocked_by": "none", "evidence": "test_l1_rebuild.py#unmanaged"},
+    "S-001": {
+        "blocked_by": "none",
+        "evidence": "test_l1_desired.py#test_an_unsatisfied_pin_is_reported",
+        "note": (
+            "'报告 policy drift'由它断言；'可生成 plan'由 `test_cli_pin_offers_a_real_plan_when_a_source_exists`，"
+            "'不自动安装'的观察点是 `test_cli_pin_writes_nothing_to_the_registry`——注意它证明的是"
+            "*pin 不改 declared*，不是'没有安装路径'"
+        ),
+    },
+    "S-002": {
+        "blocked_by": "none",
+        "evidence": "test_l1_doctor.py#test_missing_payload_is_reported_as_broken",
+    },
+    "S-003": {
+        "blocked_by": "none",
+        "evidence": "test_cli_steward.py#test_discover_record_persists_only_non_owning_observations",
+    },
+    "S-004": {
+        "blocked_by": "none",
+        "evidence": "test_l1_toolstate.py#test_verify_detects_a_tampered_payload_and_does_not_repair",
+        "note": (
+            "'状态为 broken + 保留证据 + 不修复'由它断言（`MANIFEST_DIGEST_MISMATCH` / 退出码 3 / "
+            "`repaired is False` / 字节未动）。期望后半句'`where` 不返回 healthy'**没有**断言——"
+            "`where` 对 broken 绑定的行为由 `test_l1_where.py#test_broken_managed_binding_is_reported_not_skipped` 覆盖，"
+            "但那条测的是 machine 绑定，不是 digest 漂移后的同一条链"
+        ),
+    },
+    "S-006": {
+        "blocked_by": "unchecked-invariant",
+        "note": (
+            "复核时发现这条**比'没点名'更严重**：'W 不参与机器级发现'这条冻结不变量**没有任何执行点**。"
+            "`where.py::_managed_candidates` 只按 `scope` 过滤，**不按 `zone`**；而今天也不可能出现 W——"
+            "唯一的两个 binding 生产者（`tx/simulate.py`、`tx/artifact.py`）都硬编码 `\"R\"`。"
+            "所以它是**不可达但未强制执行**：今天没有测试能红，因为先得有代码去违反它。"
+            "补 `zone` 过滤会改变 `where` 的选择语义（属单独决策，本轮不擅自做）；"
+            "它能被证伪的那一刻是：出现一个写 `zone=\"W\"` 的生产者"
+        ),
+    },
+    "S-007": {
+        "blocked_by": "none",
+        "evidence": "test_l1_where.py#test_multiple_versions_coexist_but_only_one_is_active",
+        "note": (
+            "'两个版本共存 + 返回明确 instance（不是裸 python）'由它断言；"
+            "约束解析那一半（`>=2.0` 不满足时如实报 `VERSION_UNSATISFIED`，而不是退回任意版本）由 "
+            "`test_version_constraint_selects_or_reports_unsatisfied` 覆盖"
+        ),
+    },
+    "S-008": {
+        "blocked_by": "none",
+        "evidence": "test_l1_rebuild.py#test_unmanaged_references_are_reported_not_adopted",
+    },
     "S-011": {
         "blocked_by": "undesigned",
         "witness": "test_l0_consistency.py#test_every_declared_unimplemented_command_is_still_unimplemented",
         "note": "`reconcile` 在 agents/airoot.json 的未实现清单里，那条守卫断言清单里的每条都仍未实现",
     },
     "S-012": {"blocked_by": "unchecked-invariant"},
-    "S-013": {"blocked_by": "none", "evidence": "test_l1_registry.py#payload"},
+    "S-013": {
+        "blocked_by": "none",
+        "evidence": "test_l1_registry.py#test_adding_the_same_instance_twice_is_idempotent",
+        "note": (
+            "'不会把同一 payload 复制两份'由它断言；'binding/view 可重建'由 "
+            "`test_rebinding_switches_the_single_active_row`（同一文件）与 §24 的 `rebuild` 面覆盖。"
+            "`tools`/`env` 里没有 payload 是**结构性**的：payload 路径只由 `store/<instance_id>` 推导"
+        ),
+    },
     "S-015": {
         "duplicate_of": "S-010",
         "note": (
@@ -262,12 +366,37 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "只是措辞不同。规范方向取'被测试引用的那个'，即 test_l1_plan_routing.py 引用的 S-010。"
         ),
     },
-    "S-016": {"blocked_by": "none", "evidence": "test_l1_sources.py#digest"},
-    "S-017": {"blocked_by": "none", "evidence": "test_l1_doctor_steward.py#REFERENCE_STALE"},
-    "S-023": {"blocked_by": "none", "evidence": "test_l1_lifecycle.py#retire"},
-    "S-024": {"blocked_by": "none", "evidence": "test_l1_lifecycle.py#gc"},
+    "S-016": {
+        "blocked_by": "none",
+        "evidence": "test_l1_transaction.py#test_source_drift_after_planning_is_refused",
+        "note": (
+            "原指针指 `test_l1_sources.py#digest`——那里只有 import 行与 docstring。真正的行为在事务面："
+            "规划之后 source 变化 → `ROLLED_BACK` / `DIGEST_MISMATCH` / bindings 为空 / generation 不变"
+        ),
+    },
+    "S-017": {
+        "blocked_by": "none",
+        "evidence": "test_l1_doctor_steward.py#test_drift_is_detected_by_re_observation",
+        "note": "与 S-030 的分工：这条是**重观测发现漂移**（版本变了即报），S-030 是对象被删（`REFERENCE_STALE`）",
+    },
+    "S-023": {
+        "blocked_by": "none",
+        "evidence": "test_l1_lifecycle.py#test_a_retired_instance_is_no_longer_selected",
+        "note": "'payload 保留到 GC 条件满足'由同文件的 `test_retire_clears_the_binding_and_keeps_the_payload` 覆盖",
+    },
+    "S-024": {
+        "blocked_by": "none",
+        "evidence": "test_l1_lifecycle.py#test_an_unfinished_transaction_blocks_collection",
+    },
     "S-025": {"blocked_by": "none", "evidence": "test_l1_toolstate.py#test_verify_detects_a_tampered_payload_and_does_not_repair"},
-    "S-026": {"blocked_by": "none", "evidence": "test_l1_discovery.py#candidate"},
+    "S-026": {
+        "blocked_by": "none",
+        "evidence": "test_cli_steward.py#test_discover_record_persists_only_non_owning_observations",
+        "note": (
+            "'不写入 managed binding'由它断言（只记 `unmanaged`，且 `management != \"external_reference\"`）；"
+            "'不生成 planned 状态'的邻居是 `test_adopt_import_is_not_implemented`"
+        ),
+    },
     "S-027": {
         "blocked_by": "undesigned",
         "no_witness_reason": (
@@ -275,11 +404,21 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "'它出现了'而变红。要造一个证人，先得决定这个视图存不存在（那是设计，不是守卫）"
         ),
     },
-    "S-028": {"blocked_by": "none", "evidence": "test_cli_steward.py#digest"},
-    "S-030": {"blocked_by": "none", "evidence": "test_l1_doctor_steward.py#stale"},
+    "S-028": {
+        "blocked_by": "none",
+        "evidence": "test_l1_discovery.py#test_scan_is_read_only",
+        "note": (
+            "'文件树 digest 完全不变'由它断言（`tree_digest` 前后相等）；PATH 那一半由 "
+            "`test_l1_toolstate.py#test_cli_path_verify_never_writes` 覆盖（`path_written is False`）"
+        ),
+    },
+    "S-030": {
+        "blocked_by": "none",
+        "evidence": "test_l1_doctor_steward.py#test_a_reference_whose_object_vanished_is_stale",
+    },
     "S-031": {
         "blocked_by": "undesigned",
-        "witness": "test_cli_steward.py#project_manifest_check",
+        "witness": "test_cli_steward.py#test_forget_drops_the_record_and_keeps_the_file",
         "note": "`forget` 的输出里就有 `project_manifest_check: not_implemented_before_p6`，那条测试断言了它",
     },
     # --- T: transaction cases that need a real artifact to interrupt.
@@ -292,9 +431,33 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     "T-017": {"blocked_by": "p4-real-backend"},
     # --- C: contract-conformance cases.
     "C-003": {"blocked_by": "none", "evidence": "test_l1_registry.py#test_only_one_active_binding_per_key_is_accepted"},
-    "C-004": {"blocked_by": "none", "evidence": "test_l1_searchindex.py#index.db"},
-    "C-005": {"blocked_by": "none", "evidence": "test_l1_transaction.py#REGISTERED"},
-    "C-006": {"blocked_by": "none", "evidence": "test_l1_rebuild.py#audit"},
+    "C-004": {
+        "blocked_by": "none",
+        "evidence": "test_l1_searchindex.py#test_the_index_writes_nothing_outside_its_cache_directory",
+        "note": (
+            "'规范位置必须是 `cache\\search`'由它断言（整棵树里唯一被写的文件就是 `cache/search/index.db`）。"
+            "前半句'写入 `state\\search` → **ACL/path conformance 失败**'没有断言：那条判据是 P2 的 ACL 基线"
+            "（`DATA_ROOT_ACL_DRIFT` 至今不发），P1 只能用'写了什么'证明规范位置"
+        ),
+    },
+    "C-005": {
+        "blocked_by": "none",
+        "evidence": "test_l1_transaction.py#test_registered_instance_is_inactive_until_active_bound",
+        "note": (
+            "'REGISTERED 不得被选中'由它断言（`bindings(active_only=True) == []`，消息就是 'REGISTERED must never "
+            "be selectable'）。'被 **launcher** 查询'那一半没有对象：P1 **不写任何 launcher 文件**（§8），"
+            "所以 launcher 面无从断言"
+        ),
+    },
+    "C-006": {
+        "blocked_by": "none",
+        "evidence": "test_l1_rebuild.py#test_rebuild_repairs_a_stale_audit_projection",
+        "note": (
+            "由它断言：audit 投影被改坏 → `AUDIT_PROJECTION_DRIFT`；`rebuild` 之后该码消失——"
+            "即 SQLite event 是权威、投影可重建。相邻两条在 doctor 面："
+            "`test_l1_doctor.py#test_audit_projection_drift_is_reported` 与 `#test_audit_projection_is_rebuildable_from_events`"
+        ),
+    },
     "C-007": {
         "blocked_by": "undesigned",
         "no_witness_reason": (
@@ -312,16 +475,75 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
         "blocked_by": "undesigned",
         "witness": "test_cli_steward.py#test_adopt_import_is_not_implemented",
     },
-    "C-010": {"blocked_by": "none", "evidence": "test_cli_env.py#script"},
+    "C-010": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_activate_prints_a_powershell_script_and_persists_nothing",
+        "note": (
+            "'只输出脚本'由它断言（脚本文本 + `environment_persist_records() == []`）；"
+            "'或由 `exec` 创建子进程'由 `test_exec_injects_the_environment_into_one_child_process` 覆盖。"
+            "**'不得声称父进程已改变'是措辞禁令，没有直接断言**：测试能观察的是'没有持久化记录'，"
+            "而不是'输出里没有这句话'（pytest 自己的 `os.environ` 也未被断言）"
+        ),
+    },
     "C-011": {"blocked_by": "p2-protected-state"},
-    "C-012": {"blocked_by": "none", "evidence": "test_l1_desired.py#plan_blocked_by"},
-    "C-013": {"blocked_by": "none", "evidence": "test_l1_skill.py#SKILL.md"},
-    "C-014": {"blocked_by": "none", "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry"},
-    "C-015": {"blocked_by": "none", "evidence": "test_l1_desired.py#pin"},
-    "C-016": {"blocked_by": "none", "evidence": "test_l1_discovery.py#unmanaged"},
-    "C-017": {"blocked_by": "none", "evidence": "test_l1_planner.py#SCOPE_PROJECT"},
-    "C-018": {"blocked_by": "none", "evidence": "test_l1_planner.py#SCOPE_DATA_ROOT"},
-    "C-019": {"blocked_by": "none", "evidence": "test_l1_plan_routing.py#SIZE_ESTIMATE_UNAVAILABLE"},
+    "C-012": {
+        "blocked_by": "none",
+        "evidence": "test_l1_desired.py#test_cli_pin_reports_when_no_plan_can_be_built",
+        "note": (
+            "'没有可信来源 → 只能出诊断、`plan` 为 null、`plan_blocked_by=NOT_FOUND`'由它断言。"
+            "**'不能 install'与'不能提升到 machine scope'两半没有断言**：前者没有安装入口可拒（desired 层只写 "
+            "`state/desired.json`），后者属 P2（`--scope machine` 报 `PRIVILEGE_REQUIRED`，见 C-025）"
+        ),
+    },
+    "C-013": {
+        "blocked_by": "none",
+        "evidence": "test_l1_skill.py#test_the_skill_entry_lives_at_the_skill_root",
+        "note": (
+            "'SKILL.md 必须在 Skill 根、不得在 `cli/` 下'由它断言。"
+            "**'Skill 加载失败'那一半没有对象**：这个项目里**没有 Skill 加载器**——`SKILL.md` 由 agent 读，"
+            "不是被代码载入的；所以'把目录误识别为可执行 Skill'没有可失败的代码路径"
+        ),
+    },
+    "C-014": {
+        "blocked_by": "none",
+        "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry",
+        "note": (
+            "'Extension implementation identity 与 managed payload identity 必须分离'在今天**是结构性的**："
+            "extension manifest 里没有 instance/identity 字段，schema 也没有这个属性，所以'声明不同生命周期'"
+            "根本无处安放。已断言的是它的后果——扩展跑完 `declared_state_digest` 不变。"
+            "**没有**测试去构造一个'复用 instance identity 的 manifest'并期待被拒（那种输入今天无法表达）"
+        ),
+    },
+    "C-015": {
+        "blocked_by": "none",
+        "evidence": "test_l1_desired.py#test_cli_pin_writes_nothing_to_the_registry",
+        "note": (
+            "'不能直接改 launcher 或覆盖 store'由它断言（pin 后 registry 一个字节不变）；"
+            "'先生成新的 selection/generation plan'由 `test_cli_pin_offers_a_real_plan_when_a_source_exists` 覆盖"
+        ),
+    },
+    "C-016": {
+        "blocked_by": "none",
+        "evidence": "test_l1_discovery.py#test_unmatched_object_stays_unmanaged",
+        "note": (
+            "**原指针把输入类型说宽了**：这条测试放的是一个 PE（`mystery.exe`），不是批处理/安装器/脚本——"
+            "本次复核翻遍 `test_l1_discovery.py`，**没有任何测试用 `.bat`/`.cmd`/安装器作为输入**。"
+            "期望仍然成立，但成立的理由不同：发现面**只有 PE 静态探测**（`probe_pe`），没有执行路径，"
+            "这一点由 `test_scan_is_read_only` 与 `test_scan_never_deletes_excluded_or_unmatched` 断言"
+        ),
+    },
+    "C-017": {
+        "blocked_by": "none",
+        "evidence": "test_l1_planner.py#test_project_declaration_wins_and_is_never_asked",
+    },
+    "C-018": {
+        "blocked_by": "none",
+        "evidence": "test_l1_planner.py#test_generic_tool_goes_to_the_data_root_without_asking",
+    },
+    "C-019": {
+        "blocked_by": "none",
+        "evidence": "test_l1_plan_routing.py#test_dry_run_reports_the_target_size_and_approval_without_writing",
+    },
     # C-021 used to sit here as `undesigned`, and that was **wrong** (draft §52.2-F1): `decide_scope`
     # consults `.ai/tooling.json` first and returns `confirmation=False`, `origin="memory"`, and a test
     # was already exercising it. The fix was not a better note — it was to have that test *name* the
@@ -335,14 +557,75 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "会写它的通道，而那属 P2 的人工批准通道（ADR-0004 §12.2）——所以这条仍算 `undesigned`"
         ),
     },
-    "C-023": {"blocked_by": "none", "evidence": "test_cli_env.py#test_env_list_reports_what_was_persisted"},
-    "C-024": {"blocked_by": "none", "evidence": "test_cli_env.py#PERSISTENCE_TARGET_FORBIDDEN"},
+    "C-023": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_list_reports_what_was_persisted",
+        "note": (
+            "'写入成功'由它断言（持久化后 `env list` 报出 JAVA_HOME 与 Path）；"
+            "'值指向数据根真实路径'由 `test_env_persist_dry_run_builds_the_plan_and_writes_nothing` 覆盖。"
+            "**'新进程可见'在 pytest 里没有断言**——它断的是进程内可达；真正跨进程的观察在 "
+            "`cli/tests/real_machine_acceptance.py`（`exec ... cmd /c echo %JAVA_HOME%`）"
+        ),
+    },
+    "C-024": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_persist_outside_every_data_root_is_refused",
+        "note": (
+            "**原指针指错了测试**（它落在 C-0'outside every data root'那条上，是同码不同判据），"
+            "而且复核发现：**没有任何测试真的去持久化一个 `cli\\exposure\\bin` 值**——"
+            "全仓库只有两处 `shim` 字样，都在 docstring 里。这条期望成立的机制是同一条："
+            "`validate_target_in_data_root` 要求值在**已注册数据根**内，而 `cli\\exposure\\bin` 在 CLI root 内、"
+            "永远不是数据根。所以它由'数据根之外'的同一条测试覆盖，**而不是**由一条点名 shim 的测试覆盖"
+        ),
+    },
     "C-025": {"blocked_by": "p2-protected-state"},
-    "C-026": {"blocked_by": "none", "evidence": "test_l1_exposure.py#template"},
-    "C-027": {"blocked_by": "none", "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything"},
-    "C-028": {"blocked_by": "none", "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything"},
-    "C-029": {"blocked_by": "none", "evidence": "test_cli_env.py#PERSISTENCE_REQUIRES_APPROVAL"},
-    "C-030": {"blocked_by": "none", "evidence": "test_cli_env.py#script"},
+    "C-026": {
+        "blocked_by": "unchecked-invariant",
+        "note": (
+            "**本次复核改正的第二条**：原记 `blocked_by=none` + 指针 `test_l1_exposure.py#template`，"
+            "但那条测试测的是**未知模板 token**（`<object_rootd>` → `INVALID_INPUT`），与'值含换行 / `%VAR%`'"
+            "是两件事。复核实测：**行为已实现、测试一条都没有**——"
+            "`caps/environment.py::validate_value` 恰好实现了换行、未配对引号、`%...%` 在 `REG_SZ` 下会被字面存储、"
+            "以及歧义 `%` 展开四种拒绝，全部抛 `PERSISTENCE_TARGET_FORBIDDEN`（退出码 8，与期望一致）；"
+            "它在 `caps/exposure.py` 的两处被调用，而 `PERSISTENCE_TARGET_FORBIDDEN` 在测试里只出现在"
+            "**另外三条判据**上（数据根之外、禁用变量名）。所以这条是**测试债**而不是缺能力或没设计——"
+            "正是 `unchecked-invariant` 这个词汇值存在的理由"
+        ),
+    },
+    "C-027": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
+        "note": (
+            "它断言的是**dry run 的语义**（报出要还原哪些变量、且不消费记录）。"
+            "'精确恢复旧值、其它变量一字不动'的 apply 半边由 `test_l1_exposure.py#"
+            "test_apply_then_forget_restores_the_exact_previous_value` 覆盖"
+        ),
+    },
+    "C-028": {
+        "blocked_by": "undesigned",
+        "no_witness_reason": (
+            "`env forget --all` **这个命令形式不存在**：`cmd_env_forget` 的 parser（cli.py）只接受 "
+            "`external_id` / `--variable` / `--dry-run`，`agents/airoot.json` 登记的也是 `[\"env\", \"forget\", "
+            "\"<external-id>\"]`，`not_implemented` 清单里没有它（那条清单管命令路径，`env forget` 本身是实现的）。"
+            "原记 `blocked_by=none` 并指向 dry-run 测试，是**本次复核抓到的第一条判断错误**。"
+            "证人造不出来：加一条'`--all` 不被接受'的断言只会在**别人把它实现出来**时变红，"
+            "而那正是'台账好看这件事自己生出一条自证断言'——与 C-007 同一处置"
+        ),
+    },
+    "C-029": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_persist_without_a_token_stops_at_the_approval_boundary",
+    },
+    "C-030": {
+        "blocked_by": "none",
+        "evidence": "test_cli_env.py#test_env_activate_prints_a_powershell_script_and_persists_nothing",
+        "note": (
+            "与 C-010 是**同一行为的两种措辞**（§16.4 与 §16.4 的引用），所以共用同一个证据函数——"
+            "这不是重复登记（两条的定义行不同、期望不同：C-010 讲'试图修改父 shell'，"
+            "C-030 讲'子进程不得声称改变了父进程'），而是同一断言同时支撑两条期望。"
+            "'不得声称'那一半与 C-010 一样没有直接断言"
+        ),
+    },
 }
 
 
@@ -462,22 +745,37 @@ def _undesigned_problems(repo: Path, key: str, entry: dict[str, Any]) -> list[st
 
 
 def _evidence_pointer_problems(repo: Path, key: str, pointer: str, *, kind: str = "evidence") -> list[str]:
-    """A pointer is ``<test-file>#<literal token>`` and both halves must resolve.
+    """A pointer is ``<test-file>#<module-level test function>`` and that function must exist.
 
-    This is the only part of an authored judgement a guard can decide, and it is
-    worth deciding: it catches a pointer to a test that was renamed, or to a
-    token that was deleted, without pretending to judge whether the behaviour is
-    really exercised.
+    §53 replaced a **substring** rule with this one. The old rule — ``token in path.read_text()`` —
+    could not fail in the dangerous direction: a pointer of ``test_l1_rebuild.py#audit`` stayed
+    "valid" after the test it claimed to point at was deleted, because the word ``audit`` also
+    occurs in an unrelated local variable. That is §50's tautology in a new place: a check that
+    cannot go red is not a check.
+
+    Auditing the 41 ``blocked_by=none`` entries by hand found that the *judgements* were almost all
+    right and the *pointers* were the weak half — about thirty of them resolved to a docstring, a
+    comment, an import line, or a different test entirely. Requiring a real function name makes the
+    pointer expire the moment the test that carries the behaviour is renamed or deleted, which is
+    the only thing a pointer is for. It also forces the author to decide: if no single function
+    covers an expectation, name the one covering the **dangerous** direction and say in the ``note``
+    which halves live elsewhere. Every such note written under this rule is a place where a
+    half-covered expectation is now visible instead of implied.
     """
 
     if "#" not in pointer:
-        return [f"{key}: {kind} {pointer!r} must be spelled <test-file>#<token>"]
+        return [f"{key}: {kind} {pointer!r} must be spelled <test-file>#<test-function>"]
     name, token = pointer.split("#", 1)
     path = repo / "cli" / "tests" / name
     if not path.is_file():
         return [f"{key}: {kind} names a test file that does not exist ({name})"]
-    if token not in path.read_text(encoding="utf-8"):
-        return [f"{key}: {kind} token {token!r} does not appear in {name}"]
+    if not re.fullmatch(r"test_\w+", token):
+        return [
+            f"{key}: {kind} {token!r} is not a test function name — a bare token survives the "
+            f"deletion of the test it claims to point at (draft §53)"
+        ]
+    if not re.search(rf"(?m)^def {re.escape(token)}\(", path.read_text(encoding="utf-8")):
+        return [f"{key}: {kind} names a test function that {name} does not define ({token})"]
     return []
 
 

@@ -3904,6 +3904,200 @@ F4 是"验收文档要求一个已被明确否决的行为"。**没有任何测�
 4. 加守卫第二十组（含非空性演练：两个方向各造一次）。
 5. 验红、跑全量 + 旧切片 + 真机验收、回写。
 
+## 53. 第 53 阶段：复核 41 条 `blocked_by=none`（守卫第二十一组）
+
+### 53.1 这一阶段要解决什么
+
+§52.6 把一处欠账写在了明处：
+
+> 那 41 条的 `evidence` 指针**只经过结构检查**（文件与 token 存在），是否真支撑各自的期望**没有复核**。
+
+§52 只核对了 8 条 `undesigned`，理由是那 8 条"错"是二元的（行为到底存不存在）；而 41 条 `none` 的"错"
+是判断性的（那个测试算不算覆盖）。这两句话都对，但它们合起来会留下一个**没人看着的 41 条**——
+而 §35 的教训正是"记下来不等于做了"。
+
+本阶段就把这 41 条**逐条拿去核对**：读被指的测试，再读它调用的代码。
+
+### 53.2 复核方法
+
+对每一条：
+
+1. 从两份文档的**场景表**里取出它的 `setup` 与 `expectation`（不是从处置表里读自己的注记——那等于问自己）；
+2. 打开 `evidence` 指针指向的**文件**，定位那个 token **真正落在哪一行**；
+3. 若那一行不是断言，就继续在文件里找**哪一条测试真的断言了这条期望**；
+4. 找到之后**读实现**，确认断言不是恒真式；
+5. 记下期望里**没有**任何测试覆盖的那一半。
+
+### 53.3 复核结果：判断大多是对的，指针大多是错的
+
+**41 条里没有一条的 `blocked_by=none` 是因为"测试不存在"而错的**（除 53.4 的两条）——期望本身基本都成立。
+错的是**指针**：41 条里约 **30 条**的 `evidence` 是一串**裸 token**，而把它们逐条落到行上之后，指向的东西是：
+
+| 指针 | 它实际落在哪 | 类 |
+|---|---|---|
+| `test_l1_desired.py#desired` | 模块 **docstring** 与 import 块 | 散文 |
+| `test_l1_sources.py#digest` | **import 行**（`digest_for`, `parse_single_digest`） | 散文 |
+| `test_l1_toolstate.py#PATH` | 一段**小节注释**（`# the PATH invariant`） | 散文 |
+| `test_l1_registry.py#payload` | **import 行** + 若干局部变量 | 散文 |
+| `test_l1_registry.py#managed_tool_payload` | **import 行** | 散文 |
+| `test_l1_rebuild.py#audit` | **局部变量**（`audit = Path(...)` / `before_audit`） | 散文 |
+| `test_l1_where.py#effective` | docstring + **另一条**测试（`effective_now/new_process`，与 Zone W 无关） | 指错测试 |
+| `test_l1_exposure.py#template` | **另一条**测试（未知模板 token，与"值含换行/`%VAR%`"是两件事） | 指错测试 |
+| `test_cli_env.py#PERSISTENCE_TARGET_FORBIDDEN` | **另一条**判据（值在数据根之外——同码不同规则） | 指错测试 |
+| `test_l1_discovery.py#candidate` | **另一条**测试（长路径 `\\?\` 前缀） | 指错测试 |
+| `test_l1_doctor.py#broken` | **另一条**测试（状态 → 退出码映射） | 指错测试 |
+
+而那 41 条里只有 **11 条**从一开始就写的是**测试函数名**（`test_l1_registry.py#test_only_one_active_binding_per_key_is_accepted`
+这一类）。
+
+**为什么这是一个缺陷而不是"风格问题"**：那时的结构检查是
+
+```python
+if token not in path.read_text(encoding="utf-8"):
+    return [f"{key}: {kind} token {token!r} does not appear in {name}"]
+```
+
+——一个**子串**判断。子串在那个方向上**不可能变红**：把 `test_l1_rebuild_rewrites_the_derived_files_and_archives_the_previous_ones`
+整个删掉，`audit` 仍然在文件里（它还是别处的局部变量名）。也就是说，**指针可以在它声称指向的测试消失之后继续"有效"**。
+这正是 §50 的恒真式换了个地方：**一个不可能红的检查不是检查**。
+
+最干净的一例是 `test_l1_registry.py#payload`：它**从来没有**出现在该文件的任何 `def test_` 行上，
+只出现在 import 行与局部变量里——所以那条指针从一开始就**没有指向任何测试**，却通过了结构检查。
+
+### 53.4 三条判断真的错了
+
+**（F1）`C-028`：`env forget --all` 这个命令形式不存在。**
+
+期望写的是"`env forget --all`：AIROOT 写过的全部恢复；用户自己的变量不变"，处置写的是 `blocked_by=none`、
+指针指向 `env forget` 的 dry-run 测试。复核：`cli.py` 里 `env forget` 的 parser **只接受**
+`external_id` / `--variable` / `--dry-run`；`agents/airoot.json` 登记的也是 `["env", "forget", "<external-id>"]`；
+`not_implemented` 清单里没有它（那条清单管的是**命令路径**，而 `env forget` 本身是实现的）。
+所以这条期望描述的是一个**不存在的命令形式** → 改判 `undesigned`，且与 `C-007` 同一处置：
+**给不出证人**（加一条"`--all` 不被接受"的断言只会在别人把它实现出来时变红，那正是"让台账好看这件事
+自己生出一条自证的断言"），所以写 `no_witness_reason`。
+
+**（F2）`C-026`：行为已实现，测试一条都没有。**
+
+期望是"值含换行 / `%VAR%` → 拒绝，退出码 8"，原指针指向的测试测的是**未知模板 token**。
+复核 `caps/environment.py::validate_value`：它恰好实现了**换行**、**未配对引号**、**`%...%` 在 `REG_SZ` 下
+会被字面存储**、**歧义 `%` 展开**四种拒绝，全部抛 `PERSISTENCE_TARGET_FORBIDDEN`（`exits.py` 映射到退出码 8，
+与期望**逐字一致**），并在 `caps/exposure.py` 的两处被调用。但把测试全树翻一遍：`PERSISTENCE_TARGET_FORBIDDEN`
+只出现在**另外三条判据**上（数据根之外、禁用变量名、无数据根），**没有任何测试构造过一个含换行的值**。
+所以它既不是缺能力、也不是没设计，而是**测试债** → `unchecked-invariant`（这个词汇值在 §49 就是为
+`S-012` 这类情形造的）。
+
+**（F3）`S-006`：比"没点名"更严重——那条不变量根本没有执行点。**
+
+期望是"W 中有同名 python → machine `where` 不选择 W；激活 session 后才可见"，原处置 `blocked_by=none`、
+指针 `test_l1_where.py#effective`（指错测试）。复核：
+
+* `where.py::_managed_candidates` 遍历 `registry.active_bindings_for_capability()`，只按 **`scope`** 过滤，
+  **从不读 `zone`**；
+* `Binding(...)` 的生产者只有两个——`tx/simulate.py` 与 `tx/artifact.py`——**都硬编码 `"R"`**。
+
+所以"Zone W 永不进入 machine PATH"这条在 `AGENTS.md` §4 与 §5.8 里写着的恒定式，今天是**不可达但未强制执行**：
+没有任何代码能违反它（因为没有代码产生 W），也没有任何代码阻止它被违反（因为没有过滤器）。
+它**不是**"少一条测试"——先补测试的话那条测试会**当场变红**。
+→ 改判 `unchecked-invariant`，并在注记里写明：补 `zone` 过滤会**改变 `where` 的选择语义**，
+属单独决策，本轮**不擅自做**；它能被证伪的那一刻是"出现一个写 `zone="W"` 的生产者"。
+
+### 53.5 修法
+
+1. **改判 3 条**：`C-028` → `undesigned`（+ `no_witness_reason`）、`C-026` → `unchecked-invariant`、
+   `S-006` → `unchecked-invariant`。分布由 `none 41 / undesigned 7 / unchecked-invariant 1`
+   变为 **`none 38 / undesigned 8 / unchecked-invariant 3`**。
+2. **把每个指针改成测试函数名**（`<file.py>#test_...`），并让**守卫**要求这一点——见第 3 条。
+   改的时候必须做一次选择：一条期望的两半落在两个测试里时，**指那个覆盖"危险方向"的**，
+   另一半写进 `note`。于是"只证明了一半"第一次变成**写下来的事实**而不是读者的猜测。
+3. **守卫第二十一组（2 项）**：指针必须是**该文件里真实存在的模块级 `def test_*`**——
+   `evidence` 与 `witness` 用同一条规则（证人的职责一样）。第二项是**红向自测**，把旧规则的失效
+   执行化：`test_l1_registry.py#payload` 在该文件里**从不出现在 `def test_` 行**上，且**删掉它本该指向的
+   测试之后仍然存在**——所以旧规则无论如何都不会红。
+4. **把"只覆盖了一半"逐条写进 `note`**（18 条），例如：
+   `C-004` 的"ACL/path conformance 失败"半边要等 P2 的 ACL 基线；`C-005` 的"被 launcher 查询"半边
+   没有对象（P1 **不写任何 launcher 文件**）；`C-010`/`C-030` 的"不得声称父进程已改变"是**措辞禁令**，
+   测试能观察的是"没有持久化记录"；`C-013` 的"Skill 加载失败"半边没有对象（这个项目**没有 Skill 加载器**）；
+   `C-016` 的期望把输入类型说宽了（**没有任何测试用 `.bat`/安装器作为输入**，发现面只有 PE 静态探测）；
+   `C-023` 的"新进程可见"在 pytest 里没有断言（跨进程的观察在 `real_machine_acceptance.py`）；
+   `C-024` **没有任何测试真的去持久化一个 `cli\exposure\bin` 值**（全仓库只有两处 `shim` 字样，都在 docstring 里）。
+5. **改一处陈旧的措辞**：`S-031` 的证人是 `test_cli_steward.py#project_manifest_check`——那是个**字段名**不是测试名，
+   在新规则下会红；改成断言它的那条测试 `test_forget_drops_the_record_and_keeps_the_file`。
+
+### 53.6 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S53.1 逐条复核 41 条 | ✅ | 每条都读了被指的测试与其实现；11 条指针本来正确，约 30 条被改写 |
+| S53.2 改判 3 条 | ✅ | `C-028` → `undesigned`；`C-026` / `S-006` → `unchecked-invariant`；分布 `none 41→38`、`undesigned 7→8`、`unchecked-invariant 1→3` |
+| S53.3 指针一律改成测试函数名 | ✅ | 全部 `none` 条目 + 全部证人；`evidence_problems` 为 0 |
+| S53.4 18 条"只覆盖一半"的 `note` | ✅ | 见 53.5-4 的清单 |
+| S53.5 守卫第二十一组 | ✅ | `test_every_evidence_and_witness_pointer_names_a_test_function` + `test_the_old_substring_rule_could_not_go_red_and_the_new_one_does`（审计 66 → **68 项**） |
+| S53.6 测试 + 回写 | ✅ | `pytest cli/tests` 743 → **745 项**；语料重新生成是**外科式**的（27 个 fixture 里**只有 `scenario_ledger.json` 逐字节改变**，`index.json` 都没动） |
+
+**守卫确实会红（两个方向都验过）**：
+
+* 把 `C-006` 的指针改回裸 token `test_l1_rebuild.py#audit` → `test_every_evidence_and_witness_pointer_names_a_test_function`
+  报 `"C-006: evidence 'audit' is not a test function name — a bare token survives the deletion of the test it claims to point at"`；
+* 把同一个指针改成**不存在**的函数名 → 报 `"C-006: evidence names a test function that test_l1_rebuild.py does not define"`；
+* 语料与处置表不一致 → 逐项相等守卫报"语料已陈旧"。
+
+**本轮被自己的守卫教了一次（如实记录）**：红向自测的第一版断言写的是"`audit` 在该文件里从不出现在
+`def test_` 行上"。它**当场失败**——因为 `test_rebuild_repairs_a_stale_audit_projection` 的**函数名里就有 `audit`**。
+我的论断是错的：那个 token 是**偶然**落在一个测试名上的，而它同时也落在别处的局部变量上，
+所以"能解析"这件事不携带任何信息。修法是把两个形状**分开陈述**：用 `test_l1_registry.py#payload` 讲
+"**从不**出现在测试名上"（强形式），用 `#audit` 讲"偶然是某个测试名的一部分"（弱形式，断言它
+**既**出现在 `def` 行上**也**出现在非 `def` 行上）。这与 §51"135 条错误全是假阳性"是同一种教训：
+**论断要拿实测校准，而不是拿直觉**。
+
+**（F4）`AGENTS.md` 已经涨到超过 agent 入口文档的读取预算。**
+
+这一条**不是**场景台账的缺陷，是本轮**自己造成**的：把 §53 的段落追加进 `AGENTS.md` §1 的阶段日志之后，文件达到
+约 **65.8 KB**，而在**加载为工作区指令**时被静默截断到约 **65.2 KB**——被切掉的正好是**结尾**（§8 的末尾与
+§9「维护远端仓库」）。也就是说：**agent 读到的 `AGENTS.md` 少了最后两节，而文件本身看起来是完整的**。
+这与 §48（状态文档否认已交付的东西）是同一类问题的另一种形状：**文档在入口处静默说谎**，只是这次的
+说谎者是加载路径而不是文档作者。
+
+根因不是"这一轮写多了"，而是**结构**：§1 用一个不断增长的段落承载 §31–§53 的逐阶段日志，而**同样的内容
+在契约草案里各有一节**（§31…§53），于是同一份事实被维护两遍、其中一遍还在膨胀。
+
+**本轮不修**，因为它是一次**入口文档的结构变更**，需要先规划（按项目的既定要求"做下一阶段前先规划"）：
+
+* 把 §1 那段**逐阶段细节**换成**一段摘要 + 指向契约草案各节的引用**（草案里已有全文，不是删除信息）；
+* 保留 §1 里被守卫依赖的东西（schema 数、测试数、语料数、场景数、"尚未实现"清单、两条禁令）；
+* 并考虑加一条**守卫**："入口文档不得超过 N 字节"，理由是**超过就会被加载路径截断**——这条守卫的危险方向
+  是"文档长了却没人发现"，与 §35 的"记下来不等于做了"同一类。取 N 之前要先确认这个预算是**部署属性**
+  还是**项目属性**，不把宿主机的限制硬编码成项目的契约。
+
+在那之前，本轮的 `AGENTS.md` 是**完整且正确**的（守卫全绿、计数一致）；只是**作为指令被加载时会被截断**——
+这件事本身就值得记在这里而不是留白。
+
+**三处如实记录的边界**：
+
+1. **没有为了把台账变绿而新写行为测试。** `C-026`（值注入拒绝）与 `C-024`（shim 路径）都是 §13.2 的硬规则、
+   都值得有测试，但本轮的产物是**正确的测量**；此刻补测试会让"复核发现这两条是空的"这件事**消失**。
+   它们以 `unchecked-invariant` 和 `note` 的形式留在台账里，补测试是后续步骤的事。
+2. **没有为 `S-006` 补 `zone` 过滤。** 它会改变 `where` 的选择语义（`machine` 级绑定在 `zone="W"` 时的行为），
+   属单独决策。本轮只把"不可达但未强制执行"这件事写下来。
+3. **没有复核 `p2-protected-state`(10) / `p4-real-backend`(7) / `p3-native-indexer`(0) 那 17 条。**
+   它们的"错"要等能力存在之后才可判定，§52.4 已经写明这条边界，本轮延续它。
+
+**与"放宽优先"（ADR-0021）的关系**：把指针从"任何 token"收紧成"真实存在的测试函数"**不是收紧用户权限**，
+而是把一致性检查加严——属 ADR-0021 明确列出的第四种例外（审计守卫）。本轮**没有**改动任何用户可见行为：
+`env forget` 仍然没有 `--all`，`where` 仍然不按 `zone` 过滤。台账的 `status` 语义、`blocked_by` 词汇与
+`none` 条目的门槛全部未变。
+
+### 53.7 实施顺序
+
+1. 写一个只读探针，把每条 `none` 的 `expectation` 与它的指针**实际落在哪一行**并排打出来（不读自己的注记）。
+2. 逐条读被指的测试，再读它调用的代码；把"指针错了"与"期望只覆盖一半"分开记。
+3. 改判 `C-028` / `C-026`，复核 `S-006` 时去读 `where.py` 与两个 `Binding(...)` 生产者（F3 是这么出来的）。
+4. 指针全部改成函数名 + 写 18 条 `note` + 改 `S-031` 的证人。
+5. 收紧 `_evidence_pointer_problems`，加守卫第二十一组（含红向自测）。
+6. 验红（两个分支各来一次）、重生语料并核对**外科式**、跑全量 + 旧切片 + 真机验收、回写。
+
+
 
 
 

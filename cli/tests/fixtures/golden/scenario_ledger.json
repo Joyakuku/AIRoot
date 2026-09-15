@@ -59,11 +59,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_searchindex.py#index.db",
+      "evidence": "test_l1_searchindex.py#test_the_index_writes_nothing_outside_its_cache_directory",
       "family": "C",
       "id": "C-004",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u89c4\u8303\u4f4d\u7f6e\u5fc5\u987b\u662f `cache\\search`'\u7531\u5b83\u65ad\u8a00\uff08\u6574\u68f5\u6811\u91cc\u552f\u4e00\u88ab\u5199\u7684\u6587\u4ef6\u5c31\u662f `cache/search/index.db`\uff09\u3002\u524d\u534a\u53e5'\u5199\u5165 `state\\search` \u2192 **ACL/path conformance \u5931\u8d25**'\u6ca1\u6709\u65ad\u8a00\uff1a\u90a3\u6761\u5224\u636e\u662f P2 \u7684 ACL \u57fa\u7ebf\uff08`DATA_ROOT_ACL_DRIFT` \u81f3\u4eca\u4e0d\u53d1\uff09\uff0cP1 \u53ea\u80fd\u7528'\u5199\u4e86\u4ec0\u4e48'\u8bc1\u660e\u89c4\u8303\u4f4d\u7f6e",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -75,11 +75,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_transaction.py#REGISTERED",
+      "evidence": "test_l1_transaction.py#test_registered_instance_is_inactive_until_active_bound",
       "family": "C",
       "id": "C-005",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'REGISTERED \u4e0d\u5f97\u88ab\u9009\u4e2d'\u7531\u5b83\u65ad\u8a00\uff08`bindings(active_only=True) == []`\uff0c\u6d88\u606f\u5c31\u662f 'REGISTERED must never be selectable'\uff09\u3002'\u88ab **launcher** \u67e5\u8be2'\u90a3\u4e00\u534a\u6ca1\u6709\u5bf9\u8c61\uff1aP1 **\u4e0d\u5199\u4efb\u4f55 launcher \u6587\u4ef6**\uff08\u00a78\uff09\uff0c\u6240\u4ee5 launcher \u9762\u65e0\u4ece\u65ad\u8a00",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -91,11 +91,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_rebuild.py#audit",
+      "evidence": "test_l1_rebuild.py#test_rebuild_repairs_a_stale_audit_projection",
       "family": "C",
       "id": "C-006",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u7531\u5b83\u65ad\u8a00\uff1aaudit \u6295\u5f71\u88ab\u6539\u574f \u2192 `AUDIT_PROJECTION_DRIFT`\uff1b`rebuild` \u4e4b\u540e\u8be5\u7801\u6d88\u5931\u2014\u2014\u5373 SQLite event \u662f\u6743\u5a01\u3001\u6295\u5f71\u53ef\u91cd\u5efa\u3002\u76f8\u90bb\u4e24\u6761\u5728 doctor \u9762\uff1a`test_l1_doctor.py#test_audit_projection_drift_is_reported` \u4e0e `#test_audit_projection_is_rebuildable_from_events`",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -155,11 +155,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#script",
+      "evidence": "test_cli_env.py#test_env_activate_prints_a_powershell_script_and_persists_nothing",
       "family": "C",
       "id": "C-010",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u53ea\u8f93\u51fa\u811a\u672c'\u7531\u5b83\u65ad\u8a00\uff08\u811a\u672c\u6587\u672c + `environment_persist_records() == []`\uff09\uff1b'\u6216\u7531 `exec` \u521b\u5efa\u5b50\u8fdb\u7a0b'\u7531 `test_exec_injects_the_environment_into_one_child_process` \u8986\u76d6\u3002**'\u4e0d\u5f97\u58f0\u79f0\u7236\u8fdb\u7a0b\u5df2\u6539\u53d8'\u662f\u63aa\u8f9e\u7981\u4ee4\uff0c\u6ca1\u6709\u76f4\u63a5\u65ad\u8a00**\uff1a\u6d4b\u8bd5\u80fd\u89c2\u5bdf\u7684\u662f'\u6ca1\u6709\u6301\u4e45\u5316\u8bb0\u5f55'\uff0c\u800c\u4e0d\u662f'\u8f93\u51fa\u91cc\u6ca1\u6709\u8fd9\u53e5\u8bdd'\uff08pytest \u81ea\u5df1\u7684 `os.environ` \u4e5f\u672a\u88ab\u65ad\u8a00\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -187,11 +187,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_desired.py#plan_blocked_by",
+      "evidence": "test_l1_desired.py#test_cli_pin_reports_when_no_plan_can_be_built",
       "family": "C",
       "id": "C-012",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u6ca1\u6709\u53ef\u4fe1\u6765\u6e90 \u2192 \u53ea\u80fd\u51fa\u8bca\u65ad\u3001`plan` \u4e3a null\u3001`plan_blocked_by=NOT_FOUND`'\u7531\u5b83\u65ad\u8a00\u3002**'\u4e0d\u80fd install'\u4e0e'\u4e0d\u80fd\u63d0\u5347\u5230 machine scope'\u4e24\u534a\u6ca1\u6709\u65ad\u8a00**\uff1a\u524d\u8005\u6ca1\u6709\u5b89\u88c5\u5165\u53e3\u53ef\u62d2\uff08desired \u5c42\u53ea\u5199 `state/desired.json`\uff09\uff0c\u540e\u8005\u5c5e P2\uff08`--scope machine` \u62a5 `PRIVILEGE_REQUIRED`\uff0c\u89c1 C-025\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -203,11 +203,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_skill.py#SKILL.md",
+      "evidence": "test_l1_skill.py#test_the_skill_entry_lives_at_the_skill_root",
       "family": "C",
       "id": "C-013",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'SKILL.md \u5fc5\u987b\u5728 Skill \u6839\u3001\u4e0d\u5f97\u5728 `cli/` \u4e0b'\u7531\u5b83\u65ad\u8a00\u3002**'Skill \u52a0\u8f7d\u5931\u8d25'\u90a3\u4e00\u534a\u6ca1\u6709\u5bf9\u8c61**\uff1a\u8fd9\u4e2a\u9879\u76ee\u91cc**\u6ca1\u6709 Skill \u52a0\u8f7d\u5668**\u2014\u2014`SKILL.md` \u7531 agent \u8bfb\uff0c\u4e0d\u662f\u88ab\u4ee3\u7801\u8f7d\u5165\u7684\uff1b\u6240\u4ee5'\u628a\u76ee\u5f55\u8bef\u8bc6\u522b\u4e3a\u53ef\u6267\u884c Skill'\u6ca1\u6709\u53ef\u5931\u8d25\u7684\u4ee3\u7801\u8def\u5f84",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -223,7 +223,7 @@
       "family": "C",
       "id": "C-014",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'Extension implementation identity \u4e0e managed payload identity \u5fc5\u987b\u5206\u79bb'\u5728\u4eca\u5929**\u662f\u7ed3\u6784\u6027\u7684**\uff1aextension manifest \u91cc\u6ca1\u6709 instance/identity \u5b57\u6bb5\uff0cschema \u4e5f\u6ca1\u6709\u8fd9\u4e2a\u5c5e\u6027\uff0c\u6240\u4ee5'\u58f0\u660e\u4e0d\u540c\u751f\u547d\u5468\u671f'\u6839\u672c\u65e0\u5904\u5b89\u653e\u3002\u5df2\u65ad\u8a00\u7684\u662f\u5b83\u7684\u540e\u679c\u2014\u2014\u6269\u5c55\u8dd1\u5b8c `declared_state_digest` \u4e0d\u53d8\u3002**\u6ca1\u6709**\u6d4b\u8bd5\u53bb\u6784\u9020\u4e00\u4e2a'\u590d\u7528 instance identity \u7684 manifest'\u5e76\u671f\u5f85\u88ab\u62d2\uff08\u90a3\u79cd\u8f93\u5165\u4eca\u5929\u65e0\u6cd5\u8868\u8fbe\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -235,11 +235,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_desired.py#pin",
+      "evidence": "test_l1_desired.py#test_cli_pin_writes_nothing_to_the_registry",
       "family": "C",
       "id": "C-015",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u4e0d\u80fd\u76f4\u63a5\u6539 launcher \u6216\u8986\u76d6 store'\u7531\u5b83\u65ad\u8a00\uff08pin \u540e registry \u4e00\u4e2a\u5b57\u8282\u4e0d\u53d8\uff09\uff1b'\u5148\u751f\u6210\u65b0\u7684 selection/generation plan'\u7531 `test_cli_pin_offers_a_real_plan_when_a_source_exists` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -251,11 +251,11 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_discovery.py#unmanaged",
+      "evidence": "test_l1_discovery.py#test_unmatched_object_stays_unmanaged",
       "family": "C",
       "id": "C-016",
       "no_witness_reason": null,
-      "note": null,
+      "note": "**\u539f\u6307\u9488\u628a\u8f93\u5165\u7c7b\u578b\u8bf4\u5bbd\u4e86**\uff1a\u8fd9\u6761\u6d4b\u8bd5\u653e\u7684\u662f\u4e00\u4e2a PE\uff08`mystery.exe`\uff09\uff0c\u4e0d\u662f\u6279\u5904\u7406/\u5b89\u88c5\u5668/\u811a\u672c\u2014\u2014\u672c\u6b21\u590d\u6838\u7ffb\u904d `test_l1_discovery.py`\uff0c**\u6ca1\u6709\u4efb\u4f55\u6d4b\u8bd5\u7528 `.bat`/`.cmd`/\u5b89\u88c5\u5668\u4f5c\u4e3a\u8f93\u5165**\u3002\u671f\u671b\u4ecd\u7136\u6210\u7acb\uff0c\u4f46\u6210\u7acb\u7684\u7406\u7531\u4e0d\u540c\uff1a\u53d1\u73b0\u9762**\u53ea\u6709 PE \u9759\u6001\u63a2\u6d4b**\uff08`probe_pe`\uff09\uff0c\u6ca1\u6709\u6267\u884c\u8def\u5f84\uff0c\u8fd9\u4e00\u70b9\u7531 `test_scan_is_read_only` \u4e0e `test_scan_never_deletes_excluded_or_unmatched` \u65ad\u8a00",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -267,7 +267,7 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_planner.py#SCOPE_PROJECT",
+      "evidence": "test_l1_planner.py#test_project_declaration_wins_and_is_never_asked",
       "family": "C",
       "id": "C-017",
       "no_witness_reason": null,
@@ -283,7 +283,7 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_planner.py#SCOPE_DATA_ROOT",
+      "evidence": "test_l1_planner.py#test_generic_tool_goes_to_the_data_root_without_asking",
       "family": "C",
       "id": "C-018",
       "no_witness_reason": null,
@@ -299,7 +299,7 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_plan_routing.py#SIZE_ESTIMATE_UNAVAILABLE",
+      "evidence": "test_l1_plan_routing.py#test_dry_run_reports_the_target_size_and_approval_without_writing",
       "family": "C",
       "id": "C-019",
       "no_witness_reason": null,
@@ -371,7 +371,7 @@
       "family": "C",
       "id": "C-023",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u5199\u5165\u6210\u529f'\u7531\u5b83\u65ad\u8a00\uff08\u6301\u4e45\u5316\u540e `env list` \u62a5\u51fa JAVA_HOME \u4e0e Path\uff09\uff1b'\u503c\u6307\u5411\u6570\u636e\u6839\u771f\u5b9e\u8def\u5f84'\u7531 `test_env_persist_dry_run_builds_the_plan_and_writes_nothing` \u8986\u76d6\u3002**'\u65b0\u8fdb\u7a0b\u53ef\u89c1'\u5728 pytest \u91cc\u6ca1\u6709\u65ad\u8a00**\u2014\u2014\u5b83\u65ad\u7684\u662f\u8fdb\u7a0b\u5185\u53ef\u8fbe\uff1b\u771f\u6b63\u8de8\u8fdb\u7a0b\u7684\u89c2\u5bdf\u5728 `cli/tests/real_machine_acceptance.py`\uff08`exec ... cmd /c echo %JAVA_HOME%`\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -383,11 +383,11 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#PERSISTENCE_TARGET_FORBIDDEN",
+      "evidence": "test_cli_env.py#test_env_persist_outside_every_data_root_is_refused",
       "family": "C",
       "id": "C-024",
       "no_witness_reason": null,
-      "note": null,
+      "note": "**\u539f\u6307\u9488\u6307\u9519\u4e86\u6d4b\u8bd5**\uff08\u5b83\u843d\u5728 C-0'outside every data root'\u90a3\u6761\u4e0a\uff0c\u662f\u540c\u7801\u4e0d\u540c\u5224\u636e\uff09\uff0c\u800c\u4e14\u590d\u6838\u53d1\u73b0\uff1a**\u6ca1\u6709\u4efb\u4f55\u6d4b\u8bd5\u771f\u7684\u53bb\u6301\u4e45\u5316\u4e00\u4e2a `cli\\exposure\\bin` \u503c**\u2014\u2014\u5168\u4ed3\u5e93\u53ea\u6709\u4e24\u5904 `shim` \u5b57\u6837\uff0c\u90fd\u5728 docstring \u91cc\u3002\u8fd9\u6761\u671f\u671b\u6210\u7acb\u7684\u673a\u5236\u662f\u540c\u4e00\u6761\uff1a`validate_target_in_data_root` \u8981\u6c42\u503c\u5728**\u5df2\u6ce8\u518c\u6570\u636e\u6839**\u5185\uff0c\u800c `cli\\exposure\\bin` \u5728 CLI root \u5185\u3001\u6c38\u8fdc\u4e0d\u662f\u6570\u636e\u6839\u3002\u6240\u4ee5\u5b83\u7531'\u6570\u636e\u6839\u4e4b\u5916'\u7684\u540c\u4e00\u6761\u6d4b\u8bd5\u8986\u76d6\uff0c**\u800c\u4e0d\u662f**\u7531\u4e00\u6761\u70b9\u540d shim \u7684\u6d4b\u8bd5\u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -409,17 +409,17 @@
       "witness": null
     },
     {
-      "blocked_by": "none",
+      "blocked_by": "unchecked-invariant",
       "cited_by": [],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_exposure.py#template",
+      "evidence": null,
       "family": "C",
       "id": "C-026",
       "no_witness_reason": null,
-      "note": null,
+      "note": "**\u672c\u6b21\u590d\u6838\u6539\u6b63\u7684\u7b2c\u4e8c\u6761**\uff1a\u539f\u8bb0 `blocked_by=none` + \u6307\u9488 `test_l1_exposure.py#template`\uff0c\u4f46\u90a3\u6761\u6d4b\u8bd5\u6d4b\u7684\u662f**\u672a\u77e5\u6a21\u677f token**\uff08`<object_rootd>` \u2192 `INVALID_INPUT`\uff09\uff0c\u4e0e'\u503c\u542b\u6362\u884c / `%VAR%`'\u662f\u4e24\u4ef6\u4e8b\u3002\u590d\u6838\u5b9e\u6d4b\uff1a**\u884c\u4e3a\u5df2\u5b9e\u73b0\u3001\u6d4b\u8bd5\u4e00\u6761\u90fd\u6ca1\u6709**\u2014\u2014`caps/environment.py::validate_value` \u6070\u597d\u5b9e\u73b0\u4e86\u6362\u884c\u3001\u672a\u914d\u5bf9\u5f15\u53f7\u3001`%...%` \u5728 `REG_SZ` \u4e0b\u4f1a\u88ab\u5b57\u9762\u5b58\u50a8\u3001\u4ee5\u53ca\u6b67\u4e49 `%` \u5c55\u5f00\u56db\u79cd\u62d2\u7edd\uff0c\u5168\u90e8\u629b `PERSISTENCE_TARGET_FORBIDDEN`\uff08\u9000\u51fa\u7801 8\uff0c\u4e0e\u671f\u671b\u4e00\u81f4\uff09\uff1b\u5b83\u5728 `caps/exposure.py` \u7684\u4e24\u5904\u88ab\u8c03\u7528\uff0c\u800c `PERSISTENCE_TARGET_FORBIDDEN` \u5728\u6d4b\u8bd5\u91cc\u53ea\u51fa\u73b0\u5728**\u53e6\u5916\u4e09\u6761\u5224\u636e**\u4e0a\uff08\u6570\u636e\u6839\u4e4b\u5916\u3001\u7981\u7528\u53d8\u91cf\u540d\uff09\u3002\u6240\u4ee5\u8fd9\u6761\u662f**\u6d4b\u8bd5\u503a**\u800c\u4e0d\u662f\u7f3a\u80fd\u529b\u6216\u6ca1\u8bbe\u8ba1\u2014\u2014\u6b63\u662f `unchecked-invariant` \u8fd9\u4e2a\u8bcd\u6c47\u503c\u5b58\u5728\u7684\u7406\u7531",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -435,22 +435,22 @@
       "family": "C",
       "id": "C-027",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u5b83\u65ad\u8a00\u7684\u662f**dry run \u7684\u8bed\u4e49**\uff08\u62a5\u51fa\u8981\u8fd8\u539f\u54ea\u4e9b\u53d8\u91cf\u3001\u4e14\u4e0d\u6d88\u8d39\u8bb0\u5f55\uff09\u3002'\u7cbe\u786e\u6062\u590d\u65e7\u503c\u3001\u5176\u5b83\u53d8\u91cf\u4e00\u5b57\u4e0d\u52a8'\u7684 apply \u534a\u8fb9\u7531 `test_l1_exposure.py#test_apply_then_forget_restores_the_exact_previous_value` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
     },
     {
-      "blocked_by": "none",
+      "blocked_by": "undesigned",
       "cited_by": [],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
+      "evidence": null,
       "family": "C",
       "id": "C-028",
-      "no_witness_reason": null,
+      "no_witness_reason": "`env forget --all` **\u8fd9\u4e2a\u547d\u4ee4\u5f62\u5f0f\u4e0d\u5b58\u5728**\uff1a`cmd_env_forget` \u7684 parser\uff08cli.py\uff09\u53ea\u63a5\u53d7 `external_id` / `--variable` / `--dry-run`\uff0c`agents/airoot.json` \u767b\u8bb0\u7684\u4e5f\u662f `[\"env\", \"forget\", \"<external-id>\"]`\uff0c`not_implemented` \u6e05\u5355\u91cc\u6ca1\u6709\u5b83\uff08\u90a3\u6761\u6e05\u5355\u7ba1\u547d\u4ee4\u8def\u5f84\uff0c`env forget` \u672c\u8eab\u662f\u5b9e\u73b0\u7684\uff09\u3002\u539f\u8bb0 `blocked_by=none` \u5e76\u6307\u5411 dry-run \u6d4b\u8bd5\uff0c\u662f**\u672c\u6b21\u590d\u6838\u6293\u5230\u7684\u7b2c\u4e00\u6761\u5224\u65ad\u9519\u8bef**\u3002\u8bc1\u4eba\u9020\u4e0d\u51fa\u6765\uff1a\u52a0\u4e00\u6761'`--all` \u4e0d\u88ab\u63a5\u53d7'\u7684\u65ad\u8a00\u53ea\u4f1a\u5728**\u522b\u4eba\u628a\u5b83\u5b9e\u73b0\u51fa\u6765**\u65f6\u53d8\u7ea2\uff0c\u800c\u90a3\u6b63\u662f'\u53f0\u8d26\u597d\u770b\u8fd9\u4ef6\u4e8b\u81ea\u5df1\u751f\u51fa\u4e00\u6761\u81ea\u8bc1\u65ad\u8a00'\u2014\u2014\u4e0e C-007 \u540c\u4e00\u5904\u7f6e",
       "note": null,
       "status": "uncited",
       "superseded": null,
@@ -463,7 +463,7 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#PERSISTENCE_REQUIRES_APPROVAL",
+      "evidence": "test_cli_env.py#test_env_persist_without_a_token_stops_at_the_approval_boundary",
       "family": "C",
       "id": "C-029",
       "no_witness_reason": null,
@@ -479,11 +479,11 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_env.py#script",
+      "evidence": "test_cli_env.py#test_env_activate_prints_a_powershell_script_and_persists_nothing",
       "family": "C",
       "id": "C-030",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u4e0e C-010 \u662f**\u540c\u4e00\u884c\u4e3a\u7684\u4e24\u79cd\u63aa\u8f9e**\uff08\u00a716.4 \u4e0e \u00a716.4 \u7684\u5f15\u7528\uff09\uff0c\u6240\u4ee5\u5171\u7528\u540c\u4e00\u4e2a\u8bc1\u636e\u51fd\u6570\u2014\u2014\u8fd9\u4e0d\u662f\u91cd\u590d\u767b\u8bb0\uff08\u4e24\u6761\u7684\u5b9a\u4e49\u884c\u4e0d\u540c\u3001\u671f\u671b\u4e0d\u540c\uff1aC-010 \u8bb2'\u8bd5\u56fe\u4fee\u6539\u7236 shell'\uff0cC-030 \u8bb2'\u5b50\u8fdb\u7a0b\u4e0d\u5f97\u58f0\u79f0\u6539\u53d8\u4e86\u7236\u8fdb\u7a0b'\uff09\uff0c\u800c\u662f\u540c\u4e00\u65ad\u8a00\u540c\u65f6\u652f\u6491\u4e24\u6761\u671f\u671b\u3002'\u4e0d\u5f97\u58f0\u79f0'\u90a3\u4e00\u534a\u4e0e C-010 \u4e00\u6837\u6ca1\u6709\u76f4\u63a5\u65ad\u8a00",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -582,11 +582,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_toolstate.py#PATH",
+      "evidence": "test_l1_toolstate.py#test_a_clean_path_has_no_violation",
       "family": "P",
       "id": "P-003",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u8be5\u6d4b\u8bd5\u628a\u4e00\u4e2a**\u964c\u751f\u7528\u6237\u9879**\uff08`C:\\Users\\me\\bin`\uff09\u653e\u8fdb user PATH\uff0c\u65ad\u8a00 0 violation\u3001`path_written is False`\u2014\u2014\u5373 AIROOT \u65e2\u4e0d\u8ba4\u9886\u5b83\u3001\u4e5f\u4e0d\u52a8\u5b83\u3002\u671f\u671b\u91cc\u7684'\u6807\u8bb0 unmanaged'\u5728\u672c\u9762**\u6ca1\u6709\u5bf9\u5e94\u5b57\u6bb5**\uff08`path verify` \u53ea\u62a5\u8fdd\u89c4\uff0c\u4e0d\u7ed9\u6761\u76ee\u5206\u7c7b\uff09\uff0c\u6240\u4ee5\u771f\u6b63\u7684\u534a\u8fb9\u662f'\u4e0d\u58f0\u79f0\u5b83\u53d7\u4fdd\u62a4'",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -838,11 +838,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_registry.py#managed_tool_payload",
+      "evidence": "test_l1_registry.py#test_same_instance_id_with_a_different_digest_is_refused",
       "family": "P",
       "id": "P-018",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u4e0d\u5f97\u8986\u76d6\u65e7 store instance'\u7531\u5b83\u65ad\u8a00\uff08\u540c id \u6362 digest \u2192 \u62d2\u7edd\uff09\uff1b\u53e6\u4e00\u534a'payload \u5fc5\u987b immutable'\u7531 `test_instance_identity_and_digest_are_immutable` \u8986\u76d6\u3002`tools` \u53ea\u751f\u6210 binding \u662f**\u7ed3\u6784\u6027**\u7684\uff1abinding \u53ea\u5b58 `instance_id`\uff0cpayload \u53ea\u5728 `store/<instance_id>`",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -854,11 +854,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_discovery.py#unmanaged",
+      "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry",
       "family": "P",
       "id": "P-019",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u5371\u9669\u65b9\u5411\u662f'\u6269\u5c55\u81ea\u5df1\u53bb adopt'\uff0c\u7531\u5b83\u65ad\u8a00\uff1a\u6269\u5c55\u8dd1\u5b8c probe/status/invoke \u540e `declared_state_digest` \u4e0d\u53d8\u3002'\u53ea\u4ea7\u751f unmanaged candidate'\u90a3\u4e00\u534a\u7531 `test_l1_discovery.py#test_unmatched_object_stays_unmanaged` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -874,7 +874,7 @@
       "family": "P",
       "id": "P-020",
       "no_witness_reason": null,
-      "note": null,
+      "note": "reference \u6ca1\u6709 `instance_id`\uff0c`tool verify <reference-id>` \u56e0\u6b64\u662f `NOT_FOUND`\u2014\u2014\u5b83**\u6839\u672c\u6ca1\u6709**'\u628a\u5f15\u7528\u5347\u7ea7\u4e3a managed'\u7684\u8def\u5f84\u3002\u76f8\u90bb\u89c4\u5219\u7531 `test_a_reference_is_never_uninstallable`\uff08test_l1_lifecycle.py\uff09\u4e0e `test_the_three_verbs_do_not_change_the_generation` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -902,11 +902,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_desired.py#desired",
+      "evidence": "test_l1_desired.py#test_an_unsatisfied_pin_is_reported",
       "family": "S",
       "id": "S-001",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u62a5\u544a policy drift'\u7531\u5b83\u65ad\u8a00\uff1b'\u53ef\u751f\u6210 plan'\u7531 `test_cli_pin_offers_a_real_plan_when_a_source_exists`\uff0c'\u4e0d\u81ea\u52a8\u5b89\u88c5'\u7684\u89c2\u5bdf\u70b9\u662f `test_cli_pin_writes_nothing_to_the_registry`\u2014\u2014\u6ce8\u610f\u5b83\u8bc1\u660e\u7684\u662f*pin \u4e0d\u6539 declared*\uff0c\u4e0d\u662f'\u6ca1\u6709\u5b89\u88c5\u8def\u5f84'",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -918,7 +918,7 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_doctor.py#broken",
+      "evidence": "test_l1_doctor.py#test_missing_payload_is_reported_as_broken",
       "family": "S",
       "id": "S-002",
       "no_witness_reason": null,
@@ -934,7 +934,7 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_steward.py#discover never adopts",
+      "evidence": "test_cli_steward.py#test_discover_record_persists_only_non_owning_observations",
       "family": "S",
       "id": "S-003",
       "no_witness_reason": null,
@@ -950,11 +950,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_toolstate.py#MANIFEST_DIGEST_MISMATCH",
+      "evidence": "test_l1_toolstate.py#test_verify_detects_a_tampered_payload_and_does_not_repair",
       "family": "S",
       "id": "S-004",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u72b6\u6001\u4e3a broken + \u4fdd\u7559\u8bc1\u636e + \u4e0d\u4fee\u590d'\u7531\u5b83\u65ad\u8a00\uff08`MANIFEST_DIGEST_MISMATCH` / \u9000\u51fa\u7801 3 / `repaired is False` / \u5b57\u8282\u672a\u52a8\uff09\u3002\u671f\u671b\u540e\u534a\u53e5'`where` \u4e0d\u8fd4\u56de healthy'**\u6ca1\u6709**\u65ad\u8a00\u2014\u2014`where` \u5bf9 broken \u7ed1\u5b9a\u7684\u884c\u4e3a\u7531 `test_l1_where.py#test_broken_managed_binding_is_reported_not_skipped` \u8986\u76d6\uff0c\u4f46\u90a3\u6761\u6d4b\u7684\u662f machine \u7ed1\u5b9a\uff0c\u4e0d\u662f digest \u6f02\u79fb\u540e\u7684\u540c\u4e00\u6761\u94fe",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -978,17 +978,17 @@
       "witness": null
     },
     {
-      "blocked_by": "none",
+      "blocked_by": "unchecked-invariant",
       "cited_by": [],
       "defined_in": [
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_where.py#effective",
+      "evidence": null,
       "family": "S",
       "id": "S-006",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u590d\u6838\u65f6\u53d1\u73b0\u8fd9\u6761**\u6bd4'\u6ca1\u70b9\u540d'\u66f4\u4e25\u91cd**\uff1a'W \u4e0d\u53c2\u4e0e\u673a\u5668\u7ea7\u53d1\u73b0'\u8fd9\u6761\u51bb\u7ed3\u4e0d\u53d8\u91cf**\u6ca1\u6709\u4efb\u4f55\u6267\u884c\u70b9**\u3002`where.py::_managed_candidates` \u53ea\u6309 `scope` \u8fc7\u6ee4\uff0c**\u4e0d\u6309 `zone`**\uff1b\u800c\u4eca\u5929\u4e5f\u4e0d\u53ef\u80fd\u51fa\u73b0 W\u2014\u2014\u552f\u4e00\u7684\u4e24\u4e2a binding \u751f\u4ea7\u8005\uff08`tx/simulate.py`\u3001`tx/artifact.py`\uff09\u90fd\u786c\u7f16\u7801 `\"R\"`\u3002\u6240\u4ee5\u5b83\u662f**\u4e0d\u53ef\u8fbe\u4f46\u672a\u5f3a\u5236\u6267\u884c**\uff1a\u4eca\u5929\u6ca1\u6709\u6d4b\u8bd5\u80fd\u7ea2\uff0c\u56e0\u4e3a\u5148\u5f97\u6709\u4ee3\u7801\u53bb\u8fdd\u53cd\u5b83\u3002\u8865 `zone` \u8fc7\u6ee4\u4f1a\u6539\u53d8 `where` \u7684\u9009\u62e9\u8bed\u4e49\uff08\u5c5e\u5355\u72ec\u51b3\u7b56\uff0c\u672c\u8f6e\u4e0d\u64c5\u81ea\u505a\uff09\uff1b\u5b83\u80fd\u88ab\u8bc1\u4f2a\u7684\u90a3\u4e00\u523b\u662f\uff1a\u51fa\u73b0\u4e00\u4e2a\u5199 `zone=\"W\"` \u7684\u751f\u4ea7\u8005",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1000,11 +1000,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_where.py#VERSION_UNSATISFIED",
+      "evidence": "test_l1_where.py#test_multiple_versions_coexist_but_only_one_is_active",
       "family": "S",
       "id": "S-007",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u4e24\u4e2a\u7248\u672c\u5171\u5b58 + \u8fd4\u56de\u660e\u786e instance\uff08\u4e0d\u662f\u88f8 python\uff09'\u7531\u5b83\u65ad\u8a00\uff1b\u7ea6\u675f\u89e3\u6790\u90a3\u4e00\u534a\uff08`>=2.0` \u4e0d\u6ee1\u8db3\u65f6\u5982\u5b9e\u62a5 `VERSION_UNSATISFIED`\uff0c\u800c\u4e0d\u662f\u9000\u56de\u4efb\u610f\u7248\u672c\uff09\u7531 `test_version_constraint_selects_or_reports_unsatisfied` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1016,7 +1016,7 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_rebuild.py#unmanaged",
+      "evidence": "test_l1_rebuild.py#test_unmanaged_references_are_reported_not_adopted",
       "family": "S",
       "id": "S-008",
       "no_witness_reason": null,
@@ -1100,11 +1100,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_registry.py#payload",
+      "evidence": "test_l1_registry.py#test_adding_the_same_instance_twice_is_idempotent",
       "family": "S",
       "id": "S-013",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u4e0d\u4f1a\u628a\u540c\u4e00 payload \u590d\u5236\u4e24\u4efd'\u7531\u5b83\u65ad\u8a00\uff1b'binding/view \u53ef\u91cd\u5efa'\u7531 `test_rebinding_switches_the_single_active_row`\uff08\u540c\u4e00\u6587\u4ef6\uff09\u4e0e \u00a724 \u7684 `rebuild` \u9762\u8986\u76d6\u3002`tools`/`env` \u91cc\u6ca1\u6709 payload \u662f**\u7ed3\u6784\u6027**\u7684\uff1apayload \u8def\u5f84\u53ea\u7531 `store/<instance_id>` \u63a8\u5bfc",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1151,11 +1151,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_sources.py#digest",
+      "evidence": "test_l1_transaction.py#test_source_drift_after_planning_is_refused",
       "family": "S",
       "id": "S-016",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u539f\u6307\u9488\u6307 `test_l1_sources.py#digest`\u2014\u2014\u90a3\u91cc\u53ea\u6709 import \u884c\u4e0e docstring\u3002\u771f\u6b63\u7684\u884c\u4e3a\u5728\u4e8b\u52a1\u9762\uff1a\u89c4\u5212\u4e4b\u540e source \u53d8\u5316 \u2192 `ROLLED_BACK` / `DIGEST_MISMATCH` / bindings \u4e3a\u7a7a / generation \u4e0d\u53d8",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1167,11 +1167,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_doctor_steward.py#REFERENCE_STALE",
+      "evidence": "test_l1_doctor_steward.py#test_drift_is_detected_by_re_observation",
       "family": "S",
       "id": "S-017",
       "no_witness_reason": null,
-      "note": null,
+      "note": "\u4e0e S-030 \u7684\u5206\u5de5\uff1a\u8fd9\u6761\u662f**\u91cd\u89c2\u6d4b\u53d1\u73b0\u6f02\u79fb**\uff08\u7248\u672c\u53d8\u4e86\u5373\u62a5\uff09\uff0cS-030 \u662f\u5bf9\u8c61\u88ab\u5220\uff08`REFERENCE_STALE`\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1273,11 +1273,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_lifecycle.py#retire",
+      "evidence": "test_l1_lifecycle.py#test_a_retired_instance_is_no_longer_selected",
       "family": "S",
       "id": "S-023",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'payload \u4fdd\u7559\u5230 GC \u6761\u4ef6\u6ee1\u8db3'\u7531\u540c\u6587\u4ef6\u7684 `test_retire_clears_the_binding_and_keeps_the_payload` \u8986\u76d6",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1289,7 +1289,7 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_lifecycle.py#gc",
+      "evidence": "test_l1_lifecycle.py#test_an_unfinished_transaction_blocks_collection",
       "family": "S",
       "id": "S-024",
       "no_witness_reason": null,
@@ -1321,11 +1321,11 @@
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_discovery.py#candidate",
+      "evidence": "test_cli_steward.py#test_discover_record_persists_only_non_owning_observations",
       "family": "S",
       "id": "S-026",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u4e0d\u5199\u5165 managed binding'\u7531\u5b83\u65ad\u8a00\uff08\u53ea\u8bb0 `unmanaged`\uff0c\u4e14 `management != \"external_reference\"`\uff09\uff1b'\u4e0d\u751f\u6210 planned \u72b6\u6001'\u7684\u90bb\u5c45\u662f `test_adopt_import_is_not_implemented`",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1353,11 +1353,11 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_cli_steward.py#digest",
+      "evidence": "test_l1_discovery.py#test_scan_is_read_only",
       "family": "S",
       "id": "S-028",
       "no_witness_reason": null,
-      "note": null,
+      "note": "'\u6587\u4ef6\u6811 digest \u5b8c\u5168\u4e0d\u53d8'\u7531\u5b83\u65ad\u8a00\uff08`tree_digest` \u524d\u540e\u76f8\u7b49\uff09\uff1bPATH \u90a3\u4e00\u534a\u7531 `test_l1_toolstate.py#test_cli_path_verify_never_writes` \u8986\u76d6\uff08`path_written is False`\uff09",
       "status": "uncited",
       "superseded": null,
       "witness": null
@@ -1388,7 +1388,7 @@
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
       "duplicate_of": null,
-      "evidence": "test_l1_doctor_steward.py#stale",
+      "evidence": "test_l1_doctor_steward.py#test_a_reference_whose_object_vanished_is_stale",
       "family": "S",
       "id": "S-030",
       "no_witness_reason": null,
@@ -1411,7 +1411,7 @@
       "note": "`forget` \u7684\u8f93\u51fa\u91cc\u5c31\u6709 `project_manifest_check: not_implemented_before_p6`\uff0c\u90a3\u6761\u6d4b\u8bd5\u65ad\u8a00\u4e86\u5b83",
       "status": "uncited",
       "superseded": null,
-      "witness": "test_cli_steward.py#project_manifest_check"
+      "witness": "test_cli_steward.py#test_forget_drops_the_record_and_keeps_the_file"
     },
     {
       "blocked_by": null,
