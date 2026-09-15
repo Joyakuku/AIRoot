@@ -1045,6 +1045,184 @@ def test_the_documented_test_count_is_the_same_everywhere(request: pytest.Fixtur
     )
 
 
+# --- Guard group 25: the stage records' own count chain (draft §83) ------------------------------
+#
+# Every stage record states "the suite went from A to B". §54 ties the *current* total to the tree,
+# but says nothing about history: `B` is anchored from both sides (the next stage's `A`, and the
+# final total), while `A` was anchored to nothing at all. Same fact written twice — the previous
+# stage's `B` and this stage's `A` — with only one of the two ever checked. Measured in §83: three of
+# the four discontinuities on that chain were simply wrong (draft §60 said 758 where the previous
+# stage ended at 756; §68 said 781 for 780; §76 said 808 for 807).
+#
+# The chain is allowed to break in exactly one situation: a commit that changed the count without
+# adding a stage section. The draft declares those in its own table (draft §83.4), and this guard
+# reads that table rather than carrying an exception list of its own — an exception nobody can read
+# is indistinguishable from a typo, which is the whole defect.
+
+_STAGE_HEADING = re.compile(r"(?m)^## (\d+)\. ")
+
+#: How a stage record states its test total. The introducing token is *required*, and the arrow form
+#: is kept separate from the solo form on purpose: `测试` also introduces sentences about the
+#: **ledger** ("台账处置删除，`evidenced` 42 → 43"), about a test *file*, and about a test *function*,
+#: and only one of those is a count. Two earlier versions of this parser read a ledger figure as the
+#: suite size, which is how the stage ended up learning that a parser has to know what its sentence
+#: is about (§83.5).
+_STAGE_INTRO = r"(?:`pytest cli/tests`|测试\s*(?:\||\*\*))[^\d\n]{0,20}"
+_STAGE_PAIR = re.compile(_STAGE_INTRO + r"(\d{2,4})\s*→\s*(?:\*\*)?(\d{2,4})")
+_STAGE_SOLO = re.compile(_STAGE_INTRO + r"(\d{2,4})\s*项")
+
+#: Where the draft declares a count change that has no stage section of its own. Anchored on the
+#: heading *line* and on the title, not on its number: the title is also mentioned in §51's pointer
+#: sentence, and splitting on the bare phrase finds that mention first — the same trap §82 hit when a
+#: pointer sentence contained the very heading it pointed at.
+_STAGE_JUMP_HEADING = re.compile(r"(?m)^#{2,4} .*跨阶段的计数变化")
+_STAGE_JUMP_ROW = re.compile(
+    r"^\|\s*§(\d+)\s*\|\s*§(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|(.+?)\|", re.M
+)
+
+
+def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int]]:
+    """Per stage section: ``(stage, stated_from_or_None, to, heading_line)``.
+
+    A section that states a single total (`**684 项全绿**`) has no `from` of its own; the pair form
+    (`681 → **684 项**`) does. The first pair in a section wins, because that is the one the section
+    labels as its own change; §71 states the same pair twice (table row + prose) and both agree.
+    """
+
+    starts = [(int(match.group(1)), match.start()) for match in _STAGE_HEADING.finditer(text)]
+    chain: list[tuple[int, int | None, int, int]] = []
+    for position, (stage, index) in enumerate(starts):
+        end = starts[position + 1][1] if position + 1 < len(starts) else len(text)
+        body = text[index:end]
+        line = text.count("\n", 0, index) + 1
+        pairs = _STAGE_PAIR.findall(body)
+        if pairs:
+            chain.append((stage, int(pairs[0][0]), int(pairs[0][1]), line))
+            continue
+        solos = _STAGE_SOLO.findall(body)
+        if solos:
+            chain.append((stage, None, int(solos[-1]), line))
+    return chain
+
+
+def _declared_stage_jumps(text: str) -> dict[tuple[int, int], tuple[int, int, str]]:
+    """The draft's own declaration table: (from §, to §) -> (previous end, this start, reason)."""
+
+    section = _STAGE_JUMP_HEADING.split(text)
+    if len(section) < 2:
+        return {}
+    body = section[-1].split("\n### ", 1)[0]
+    return {
+        (int(before), int(after)): (int(previous), int(start), reason.strip())
+        for before, after, previous, start, reason in _STAGE_JUMP_ROW.findall(body)
+    }
+
+
+def _stage_chain_problems(text: str, current: int | None = None) -> list[str]:
+    """The five rules of draft §83.5, as a list of problems rather than an assertion."""
+
+    problems: list[str] = []
+    declared = _declared_stage_jumps(text)
+    for (before, after), (previous, start, reason) in sorted(declared.items()):
+        if not reason:
+            problems.append(f"§{before}→§{after} is declared as a jump with no reason given")
+
+    chain = _stage_count_chain(text)
+    jumps: set[tuple[int, int]] = set()
+    previous_stage: int | None = None
+    previous_to: int | None = None
+    for stage, stated_from, to, line in chain:
+        if stated_from is not None and stated_from > to:
+            problems.append(f"§{stage} (line {line}) reads {stated_from} → {to}: the suite cannot shrink")
+        if previous_to is not None and to < previous_to:
+            problems.append(
+                f"§{stage} (line {line}) ends at {to}, below §{previous_stage}'s {previous_to}"
+            )
+        if previous_to is not None and stated_from is not None and stated_from != previous_to:
+            jumps.add((previous_stage, stage))
+            if (previous_stage, stage) in declared:
+                want_previous, want_start, _ = declared[(previous_stage, stage)]
+                if (want_previous, want_start) != (previous_to, stated_from):
+                    problems.append(
+                        f"§{previous_stage}→§{stage} declares the jump {want_previous}→{want_start}, but "
+                        f"the chain says {previous_to}→{stated_from}; a declaration that is not true is "
+                        "worse than none"
+                    )
+            else:
+                problems.append(
+                    f"§{stage} (line {line}) starts at {stated_from} but §{previous_stage} ended at "
+                    f"{previous_to}; declare the jump in the draft's table or fix the number"
+                )
+        previous_stage, previous_to = stage, to
+
+    stale = sorted(set(declared) - jumps)
+    if stale:
+        problems.append(f"declared jumps that the chain does not have: {stale}")
+
+    if current is not None and chain:
+        last_stage, _, last_to, _ = chain[-1]
+        if last_to != current:
+            problems.append(f"the chain ends at §{last_stage}'s {last_to}; the suite has {current} tests")
+    return problems
+
+
+def _current_test_total() -> int:
+    match = re.search(r"\*\*(\d+)\s*项测试通过\*\*", AGENTS.read_text(encoding="utf-8"))
+    assert match is not None, "AGENTS.md no longer states the current test total in a readable form"
+    return int(match.group(1))
+
+
+def test_the_stage_records_count_the_suite_without_an_unexplained_jump() -> None:
+    """The chain of stage totals: ordered, monotone, contiguous, and ending where the suite is.
+
+    A break is legal only when a commit changed the count without adding a stage section, and the
+    draft has to say so in its own table. Read the table, not a list in this file: §82 learned that a
+    hard-coded exception list is where a guard starts to lie, and the fix there was to make the
+    exception a sentence a reader can find.
+    """
+
+    text = DRAFT.read_text(encoding="utf-8")
+    assert _stage_chain_problems(text, _current_test_total()) == [], "; ".join(
+        _stage_chain_problems(text, _current_test_total())
+    )
+
+    # Non-vacuity, one mutation per rule — including the two directions of the declaration rule,
+    # because an exception mechanism has to be checked in both: a jump that is *not* declared, and a
+    # declaration that does not match the chain.
+    def problems(mutated: str) -> str:
+        return "; ".join(_stage_chain_problems(mutated, _current_test_total()))
+
+    restored = text.replace("`pytest cli/tests` 756 → **759 项**", "`pytest cli/tests` 758 → **759 项**", 1)
+    assert restored != text and "§60" in problems(restored), (
+        "the wrong `from` this guard was written for must be reported"
+    )
+    # The other two wrong `from` values §83 found, so this guard is measured against all three and
+    # not just the one that happened to be first.
+    for stage, correct, wrong in (("§68", "**780 → 782**", "**781 → 782**"), ("§76", "**807 → 809**", "**808 → 809**")):
+        mutated = text.replace(correct, wrong, 1)
+        assert mutated != text and stage in problems(mutated), f"the wrong `from` in {stage} must be reported"
+    undeclared = text.replace("| §50 | §51 | 737 | 739 |", "| —— | —— | 737 | 739 |", 1)
+    assert undeclared != text and "declare the jump" in problems(undeclared), (
+        "a jump with no declaration must be reported"
+    )
+    wrong_declaration = text.replace("| §50 | §51 | 737 | 739 |", "| §50 | §51 | 737 | 740 |", 1)
+    assert wrong_declaration != text and "declares the jump" in problems(wrong_declaration), (
+        "a declaration that does not match the chain must be reported"
+    )
+    shrunk = text.replace("| 测试 | **792 → 803**", "| 测试 | **804 → 803**", 1)
+    assert shrunk != text and "cannot shrink" in problems(shrunk), (
+        "a stage that ends below where it started must be reported"
+    )
+    stale = text.replace("| §50 | §51 | 737 | 739 |", "| §50 | §52 | 737 | 739 |", 1)
+    assert stale != text and "the chain does not have" in problems(stale), (
+        "a declaration for a jump that is not there must be reported"
+    )
+    shortened = text.replace("| 测试 | **826 → 827**", "| 测试 | **826 → 826**", 1)
+    assert shortened != text and "the suite has" in problems(shortened), (
+        "a chain that ends below the real total must be reported"
+    )
+
+
 def test_selection_policy_values_match_the_code_constants() -> None:
     from airoot.caps.selection import PRECEDENCES, load_selection_policy
 
