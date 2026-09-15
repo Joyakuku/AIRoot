@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/managed-tool-instance-v1.json",
+  "title": "AIROOT Managed Tool Instance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool_id", "instance_id", "kind", "capability_id", "version", "platform", "architecture", "artifact_digest", "install_backend_id", "store_path", "file_manifest_digest", "lifecycle_status", "health", "entrypoints", "bindings", "source"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "tool_id": { "$ref": "common.schema.json#/$defs/id" },
+    "instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "kind": { "const": "managed_tool" },
+    "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+    "version": { "type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$" },
+    "platform": { "$ref": "common.schema.json#/$defs/platform" },
+    "architecture": { "$ref": "common.schema.json#/$defs/architecture" },
+    "artifact_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "install_backend_id": { "$ref": "common.schema.json#/$defs/id" },
+    "store_path": { "type": "string", "pattern": "^store(?:\\\\|/)[^\\0]+$" },
+    "file_manifest_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "lifecycle_status": { "$ref": "common.schema.json#/$defs/lifecycle" },
+    "health": { "$ref": "common.schema.json#/$defs/health" },
+    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[^\\\\/]+$" }, "uniqueItems": true },
+    "bindings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/binding" }, "uniqueItems": true },
+    "source": { "$ref": "common.schema.json#/$defs/source" },
+    "manifest_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "retired_at": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+    "file_manifest": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/fileManifestEntry" }, "uniqueItems": true }
+  }
+}

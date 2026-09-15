@@ -1,0 +1,77 @@
+{
+  "candidates": [
+    {
+      "evidence": [
+        {
+          "detail": "machine/fake-tool/windows/x64 active at generation 1",
+          "kind": "binding"
+        },
+        {
+          "detail": "lifecycle=active health=broken",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "registry",
+          "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin"
+        }
+      ],
+      "health": "broken",
+      "management": "managed",
+      "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin",
+      "source": "registry",
+      "usable": false
+    },
+    {
+      "evidence": [
+        {
+          "detail": "observed at 2024-01-01T00:00:00Z (external_reference)",
+          "digest": null,
+          "kind": "external_reference",
+          "path": "<BASE>\\catalogue\\root\\tools\\fake-tool.bin"
+        }
+      ],
+      "health": "healthy",
+      "management": "external_reference",
+      "path": "<BASE>\\catalogue\\root\\tools\\fake-tool.bin",
+      "source": "path",
+      "usable": true
+    }
+  ],
+  "capability_id": "fake-tool",
+  "effective_new_process": false,
+  "effective_now": false,
+  "evidence": [
+    {
+      "detail": "capability=fake-tool version=* scope=*",
+      "kind": "query"
+    },
+    {
+      "detail": "selection precedence=steward (revision=sp-1, source=file)",
+      "kind": "policy"
+    },
+    {
+      "detail": "deprecated_flag_ignored: --allow-external-fallback no longer changes the answer; a healthy reference is a first-class candidate (draft \u00a76)",
+      "kind": "policy"
+    },
+    {
+      "detail": "an owned binding is declared but not healthy; a healthy reference answered instead (normal degradation, not a conflict)",
+      "kind": "registry"
+    },
+    {
+      "detail": "degraded_from=machine/fake-tool/windows/x64 health=broken version=1.0.0",
+      "kind": "registry",
+      "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin"
+    }
+  ],
+  "executable": "<BASE>\\catalogue\\root\\tools\\fake-tool.bin",
+  "found": true,
+  "health": "healthy",
+  "instance_id": "external/tools-fake-tool",
+  "management": "external_reference",
+  "reason_code": "CURRENT_SOURCE_DEGRADED",
+  "schema_version": 1,
+  "scope": "machine",
+  "selection_reason": "CURRENT_SOURCE_DEGRADED",
+  "source": "path",
+  "usable": true,
+  "version": null,
+  "zone": "R"
+}

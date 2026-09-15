@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/reference-plan-v1.json",
+  "title": "AIROOT Reference Exposure Plan",
+  "description": "A canonical plan for changing how an external reference is exposed (session activation or persisted environment variables). Kept separate from plan.schema.json because that plan targets managed instances only (kind: managed_tool|runtime) and cannot express a mutation of an external reference. Approval tokens bind to this document's plan_hash exactly as they do for install plans.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "plan_id", "plan_hash", "operation", "root_instance_id", "machine_id",
+    "policy_revision", "created_at", "expires_at", "requested_by", "target", "operations",
+    "side_effects", "exposure"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_hash": { "$ref": "common.schema.json#/$defs/digest" },
+    "operation": { "type": "string", "const": "record_reference_exposure" },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "machine_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+    "policy_revision": { "type": "integer", "minimum": 0 },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "requested_by": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,256}$" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_id", "capability_id", "management", "path"],
+      "properties": {
+        "external_id": { "$ref": "common.schema.json#/$defs/id" },
+        "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+        "management": { "type": "string", "const": "external_reference" },
+        "path": { "type": "string", "minLength": 3, "maxLength": 2048 }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step_id", "kind", "description", "target_scope", "reversible"],
+        "properties": {
+          "step_id": { "$ref": "common.schema.json#/$defs/id" },
+          "kind": { "type": "string", "enum": ["expose", "rollback"] },
+          "description": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "target_scope": {
+            "description": "Which persistence scope the step changes. Deliberately not common.schema.json#/$defs/scope: that enum describes a binding's scope (system/machine/session/project) and has no spelling for a per-user persisted value, which is exactly what this operation writes.",
+            "type": "string",
+            "enum": ["user", "machine"]
+          },
+          "reversible": { "type": "boolean" }
+        }
+      }
+    },
+    "side_effects": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/sideEffect" },
+      "uniqueItems": true
+    },
+    "exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "variables", "path_prepend"],
+      "properties": {
+        "scope": { "type": "string", "enum": ["user", "machine"] },
+        "value_kind": { "type": "string", "enum": ["REG_SZ", "REG_EXPAND_SZ"] },
+        "variables": {
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+                "NODE_OPTIONS", "NODE_PATH",
+                "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+                "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_CONFIG_GLOBAL",
+                "PATHEXT", "COMSPEC", "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND"
+              ]
+            }
+          },
+          "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "path_prepend": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "canonicalization": { "type": "string", "const": "jcs-rfc8785-compatible" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}

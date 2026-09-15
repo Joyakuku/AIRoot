@@ -1,0 +1,53 @@
+{
+  "bindings": [],
+  "data_roots": [
+    {
+      "active": true,
+      "added_at": "2024-01-01T00:00:00Z",
+      "data_root_id": "dr-env",
+      "path": "<BASE>\\steward\\env",
+      "role": "runtime",
+      "volume_serial": "deadbeef",
+      "whitelist_revision": "wl-3"
+    }
+  ],
+  "external_references": [
+    {
+      "active_version": null,
+      "architecture": "x64",
+      "capability_id": "python",
+      "capability_kind": "runtime",
+      "data_root_id": "dr-env",
+      "entrypoints": [
+        "python.exe"
+      ],
+      "evidence": [
+        {
+          "detail": "ProductName=Python; architecture=x64",
+          "kind": "pe_static"
+        },
+        {
+          "detail": "entrypoint depth 0 below the object root",
+          "kind": "discovery"
+        }
+      ],
+      "external_id": "external/dr-env/python",
+      "health": "healthy",
+      "management": "external_reference",
+      "observed_at": "2024-01-01T00:00:00Z",
+      "observed_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "path": "<BASE>\\steward\\env\\python",
+      "probe_level": 2,
+      "source_kind": "pe_static",
+      "version": "3.11.11",
+      "versions": []
+    }
+  ],
+  "generated_at": "2024-01-01T00:00:01Z",
+  "generation": 1,
+  "instances": [],
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "policy_revision": 1,
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1
+}

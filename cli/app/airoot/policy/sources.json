@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "revision": "src-1",
+  "notes": [
+    "Trusted upstream sources (draft §23). This file answers three questions and nothing else:",
+    "  which host may be contacted, what artifact a (capability, version) maps to, and where the",
+    "  expected digest is published.",
+    "It deliberately does NOT contain digests. A digest written next to a download and never",
+    "checked against anything is decoration; the only acceptable source of an expected digest is",
+    "a published checksum file, and that is what `checksum` points at (draft §23.3-1).",
+    "`provenance` and `integrity` are separate on purpose (§4.4:368). v1 does no signature",
+    "verification: `signature` stays null, and a digest is never described as a signature.",
+    "Growth path: only hosts and capabilities that were actually verified end up here. An entry",
+    "that has never been resolved successfully must not be added 'for completeness'."
+  ],
+  "allowed_hosts": [
+    "static.rust-lang.org",
+    "github.com",
+    "objects.githubusercontent.com",
+    "raw.githubusercontent.com"
+  ],
+  "sources": [
+    {
+      "capability_id": "rust-toolchain",
+      "kind": "https",
+      "artifact_url": "https://static.rust-lang.org/rustup/dist/{arch}-pc-windows-msvc/rustup-init.exe",
+      "checksum": {
+        "kind": "https",
+        "url": "https://static.rust-lang.org/rustup/dist/{arch}-pc-windows-msvc/rustup-init.exe.sha256",
+        "format": "single"
+      },
+      "filename": "rustup-init.exe",
+      "publisher": "The Rust Project",
+      "notes": "ADR-0001: acquired through AIROOT's own plan/approval/fetch/verify/digest path, no admin, --no-modify-path"
+    },
+    {
+      "capability_id": "build",
+      "kind": "https",
+      "artifact_url": "https://github.com/Kitware/CMake/releases/download/v{version}/cmake-{version}-windows-x86_64.zip",
+      "checksum": {
+        "kind": "https",
+        "url": "https://github.com/Kitware/CMake/releases/download/v{version}/cmake-{version}-SHA-256.txt",
+        "format": "sha256sums"
+      },
+      "filename": "cmake-{version}-windows-x86_64.zip",
+      "publisher": "Kitware",
+      "notes": "a portable archive with no installer script; the checksum file lists the archive by name"
+    },
+    {
+      "capability_id": "archive",
+      "kind": "https",
+      "artifact_url": "https://github.com/ip7z/7zip/releases/download/{version}/7z{version_nodots}-extra.7z",
+      "checksum": {
+        "kind": "https",
+        "url": "https://github.com/ip7z/7zip/releases/download/{version}/checksums.txt",
+        "format": "sha256sums"
+      },
+      "filename": "7z{version_nodots}-extra.7z",
+      "publisher": "Igor Pavlov",
+      "notes": "listed for completeness of the pattern; not verified on this machine, so treat it as untested"
+    }
+  ]
+}

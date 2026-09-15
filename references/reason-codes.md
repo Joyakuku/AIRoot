@@ -1,0 +1,119 @@
+# Reason code 速查（按需参考）
+
+**先读 `reason_code`，再读退出码。** 退出码只有 0–9，是粗粒度的；`reason_code` 才告诉你
+"是未知还是没有""是降级还是损坏"。权威表在 `docs/AIROOT-v0.3-诊断码与ReasonCode表.md`，
+代码在 `cli/app/airoot/exits.py`（**每个注册的码都在这份速查里出现**，有测试守这条）。
+
+## 0 — 成功（含"结论是负面的"与"信息级")
+
+| code | 什么时候会出现 | 你要怎么说 |
+|---|---|---|
+| `SUCCESS` | 一切正常 | 照实汇报 |
+| `CURRENT_PROCESS_ENV_OLD` | 新进程能看到，当前 shell 看不到 | 让用户重开 shell；**不是**失败 |
+| `POLICY_ONLY_MODE` | 每次 `doctor` 都会带 | 说清"强制手段是约定与审计，不是 ACL" |
+| `UNMANAGED_OBJECT_PRESENT` | `doctor --include-unmanaged` | 只是观测，AIROOT 不接管 |
+| `REFERENCE_UNPROBED` | 只有路径、没有版本证据 | 说"版本未知"，不要编 |
+| `WHITELIST_REVISION_STALE` | 数据根记录的判定版本落后 | 建议重跑 `discover` |
+| `SIZE_ESTIMATE_UNAVAILABLE` | `--dry-run` 拿不到体积 | 照实说未知 |
+
+## 1 — 没找到
+
+`NOT_FOUND`、`VERSION_UNSATISFIED`。区分"机器上没有"与"有但不满足约束"：
+后者看 `where` 的 `evidence`，它可能写着"对象内有满足约束的版本但未激活"——
+**切不切活跃版本是用户的决定**，不要替他切。
+
+## 2 — 降级或漂移（结果可用）
+
+| code | 含义 |
+|---|---|
+| `CURRENT_SOURCE_DEGRADED` | owned payload 不可用，已正常降级到健康 reference。**不是失败** |
+| `STALE_GENERATION` | 状态在你读取后被别人改了：重读再试，不要重放旧计划 |
+| `REFERENCE_STALE` / `REFERENCE_DRIFTED` | 被引用对象消失／观测事实变了 |
+| `REFERENCE_IN_USE` | 仍被引用，拒绝 `gc`/`forget` |
+| `CHILD_PROCESS_FAILED` | `exec` 的子进程失败；子进程状态在 `exit_status` |
+| `REGISTRY_PROJECTION_STALE` / `AUDIT_PROJECTION_DRIFT` | 派生投影落后，权威是 registry/events |
+| `DRIFT_DETECTED` | **观测**与声明不一致（与"意图未满足"不同，见 `DESIRED_NOT_SATISFIED`） |
+| `DESIRED_NOT_SATISFIED` | `state/desired.json` 里有 pin，但当前 active binding 不满足它。**下一步是改 manifest 或重装，不是修环境** |
+| `SESSION_STATE_STALE` | 会话栈记录时的 generation 与现在不一致；重开会话，不要手工改环境变量 |
+| `PATH_EXPOSURE_VIOLATION` | PATH 上出现违反冻结规则的东西（重复 AIROOT 条目 / `store` 版本目录 / 非授权目录） |
+| `DATA_ROOT_ACL_DRIFT` | 数据根的 ACL 与基线不一致（**P2 才可能发射**；现在只是注册） |
+| `ORPHANED_STORE_INSTANCE` | `store/` 里有登记不上的对象：只报告，**不删** |
+| `EXTENSION_TIMEOUT` / `EXTENSION_CANCELLED` / `EXTENSION_HEALTH_DEGRADED` | 扩展超时／被取消／健康度下降：结果不完整，但扩展本身没坏 |
+| `SEARCH_FALLBACK_USED`、`SEARCH_RESULT_STALE`、`SEARCH_INDEX_DEGRADED`、`SEARCH_JOURNAL_GAP`、`SEARCH_PERMISSION_FILTERED`、`SEARCH_ROOT_UNAVAILABLE`、`SEARCH_TIMEOUT` | **搜索专属**，逐条解释见下方《搜索的降级阶梯》 |
+
+## 3 — 损坏
+
+`BROKEN`（声明了但不可用且没有可替代的健康候选）、`PAYLOAD_MISSING`、
+`MANIFEST_DIGEST_MISMATCH`、`BINDING_TARGET_MISSING`、`MULTIPLE_ACTIVE_BINDINGS`、
+`REGISTRY_INTEGRITY_FAILED`、`EXTERNAL_REFERENCE_DRIFTED`。**不要自己修**：跑 `airoot repair`，
+或把证据交给用户。
+
+> `CONFLICT_MANAGED_BROKEN` 仍注册但**不再由 `where` 发射**：steward-first 之后，
+> "owned 坏了 + reference 健康"是正常降级（见上表）。
+
+## 4 — 需要批准
+
+`SCOPE_CONFIRMATION_REQUIRED`（三选一）、`SCOPE_UPGRADE_REQUIRES_APPROVAL`（项目 → 数据根）、
+`PERSISTENCE_REQUIRES_APPROVAL`、`APPROVAL_REQUIRED`、`APPROVAL_EXPIRED`、`APPROVAL_REPLAYED`、
+`APPROVAL_REVOKED`、`INVALID_APPROVAL`、`POLICY_REVISION_MISMATCH`。
+**唯一正确的行为**：把 `plan_hash` 与 plan 文件路径交给用户，等人工批准。
+`airoot approve` 只消费批准，永远不制造它。
+
+## 5 — 需要权限
+
+`PRIVILEGE_REQUIRED`（如 `env persist --scope machine`）、`ACL_MISMATCH`。
+P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用户手工改 HKLM 绕过。
+
+## 6 — 需要恢复
+
+`ROOT_MARKER_MISSING`、`ROOT_MARKER_INVALID`、`VOLUME_IDENTITY_MISMATCH`、`REGISTRY_MISSING`、
+`DATA_ROOT_MISSING`、`DATA_ROOT_VOLUME_MISMATCH`、`PENDING_TRANSACTION`、
+`RECOVERY_REQUIRED`、`JOURNAL_TRUNCATED`。
+**停止**，先 `repair`；不要在身份不可证明的 root 上继续任何操作。
+
+## 7 — 计划/来源问题
+
+`INVALID_PLAN`（hash 不匹配、缺 digest）、`DIGEST_MISMATCH`、`PROVENANCE_FAILED`
+（含"拒绝非 https 来源"与"ed25519 未实现"）、`OWNERSHIP_REQUIRED`
+（**对 reference 调 `uninstall`**：把绝对路径和 `airoot forget` 建议交给用户）、
+`INSTANCE_CONFLICT`、`UNSUPPORTED_BACKEND`、`ILLEGAL_TRANSITION`（状态机不允许的迁移）。
+
+## 8 — 输入或 Schema 非法
+
+`INVALID_INPUT`、`SCHEMA_UNSUPPORTED`、`PERSISTENCE_TARGET_FORBIDDEN`
+（值指向数据根之外、或注入型变量）、`PATH_ESCAPES_ROOT`、`REPARSE_POINT_REJECTED`、
+`UNC_NOT_ALLOWED`、`ROOT_NOT_RESOLVED`、`ENVIRONMENT_PERSIST_NOT_FOUND`
+（没有任何已记录的持久化环境可还原）、`SELF_VALIDATION_FAILED`
+（**这是实现缺陷**，不是用户错误；请如实报告并附 `evidence`）。
+搜索专属：`SEARCH_QUERY_INVALID`、`SEARCH_CURSOR_INVALID`。
+扩展专属：`EXTENSION_INPUT_INVALID`（调用方越过了实现上限）、`EXTENSION_OUTPUT_INVALID`
+（扩展返回的文档不符合 published schema：**输出**不合法，输入没问题）。
+
+## 9 — 能力未冻结 / 扩展不可用
+
+`CAPABILITY_NOT_DECLARED`（对象没有已冻结的能力：只报告，不接管；增长路径见
+`policy/capabilities.json` 的说明）、`EXTENSION_UNAVAILABLE`、`EXTENSION_NOT_FOUND`
+（没有任何扩展提供这个能力）、`EXTENSION_VERSION_UNSUPPORTED`、`EXTENSION_MANIFEST_INVALID`、
+`EXTENSION_OPERATION_UNKNOWN`（该扩展没声明这个操作）、`EXTENSION_PERMISSION_DENIED`、
+`EXTENSION_DEPENDENCY_MISSING`、`EXTENSION_SIDE_EFFECT_BLOCKED`（越过了声明的副作用上限）、
+`SEARCH_NOT_READY`、`SEARCH_BACKEND_UNAVAILABLE`。
+
+## 搜索的降级阶梯（`airoot search`）
+
+`search` 的答案有两种来源，**必须能分辨**：索引（快，但可能旧）与实时遍历（crawl，慢，但新鲜）。
+协议要求这两者不能返回同一种"确定正确"的语义：
+
+| reason_code | 含义 | 你要怎么说 |
+|---|---|---|
+| 无（`reason_code: null`） | 索引新鲜且完整覆盖 | "这是索引答案，新鲜度 `freshness`" |
+| `SEARCH_FALLBACK_USED` | 回答来自**实时遍历**（没有索引／索引不覆盖这些 root） | 说"这是实时遍历的结果，不是索引"；`data.fallback.kind=crawl` |
+| `SEARCH_RESULT_STALE` | 索引比 `--max-staleness-ms` 更旧 | 建议 `airoot search refresh` 或放宽约束；**不要说索引坏了** |
+| `SEARCH_INDEX_DEGRADED` | 索引读不出来或只覆盖了一部分 root | 已回落遍历；建议 refresh；`doctor` 的 D7 也会报 |
+| `SEARCH_NOT_READY` | 还没有索引（`search status` 的诚实回答） | 说"还没建索引"，不要假装有 |
+| `SEARCH_BACKEND_UNAVAILABLE` | 协议里的 native（USN）索引在这个 build 里建不出来 | 见 `search status --probe-native-index`；**不要**说 AIROOT 已具备 Everything 级性能 |
+| `SEARCH_TIMEOUT` | 遍历撞上 `max_duration_ms` | 缩小 root 或降低 `--limit` 后重试 |
+| `SEARCH_CURSOR_INVALID` | cursor 与当前查询／root／索引 generation 不匹配 | 重跑（去掉 `--cursor`）；**绝不**把旧 cursor 当第一页 |
+| `SEARCH_QUERY_INVALID` | 请求字段本身不合法（通配符、反向区间、枚举写错） | 按 `evidence` 改请求 |
+| `SEARCH_ROOT_UNAVAILABLE` | root 不存在／是 UNC／不是目录，或没有已注册的数据根 | 让用户注册数据根或显式给 `--search-root` |
+| `SEARCH_PERMISSION_FILTERED` | 部分结果因权限被过滤 | 只说被过滤了，**不要泄露**被过滤的路径 |
+| `SEARCH_JOURNAL_GAP` | USN journal 断档（**P2 的 native 索引才可能发射**） | 现在不会出现；出现即说明 native 索引已启用 |

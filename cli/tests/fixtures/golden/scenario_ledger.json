@@ -1,0 +1,1596 @@
+{
+  "entries": [
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_extension.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-001",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_extension.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-002",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_registry.py#test_only_one_active_binding_per_key_is_accepted",
+      "family": "C",
+      "id": "C-003",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_searchindex.py#index.db",
+      "family": "C",
+      "id": "C-004",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_transaction.py#REGISTERED",
+      "family": "C",
+      "id": "C-005",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_rebuild.py#audit",
+      "family": "C",
+      "id": "C-006",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-007",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-008",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-009",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#script",
+      "family": "C",
+      "id": "C-010",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-011",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_desired.py#plan_blocked_by",
+      "family": "C",
+      "id": "C-012",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_skill.py#SKILL.md",
+      "family": "C",
+      "id": "C-013",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry",
+      "family": "C",
+      "id": "C-014",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_desired.py#pin",
+      "family": "C",
+      "id": "C-015",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_discovery.py#unmanaged",
+      "family": "C",
+      "id": "C-016",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_planner.py#SCOPE_PROJECT",
+      "family": "C",
+      "id": "C-017",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_planner.py#SCOPE_DATA_ROOT",
+      "family": "C",
+      "id": "C-018",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_plan_routing.py#SIZE_ESTIMATE_UNAVAILABLE",
+      "family": "C",
+      "id": "C-019",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_plan_routing.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-020",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-021",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-022",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#test_env_list_reports_what_was_persisted",
+      "family": "C",
+      "id": "C-023",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#PERSISTENCE_TARGET_FORBIDDEN",
+      "family": "C",
+      "id": "C-024",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-025",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_exposure.py#template",
+      "family": "C",
+      "id": "C-026",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
+      "family": "C",
+      "id": "C-027",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
+      "family": "C",
+      "id": "C-028",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#PERSISTENCE_REQUIRES_APPROVAL",
+      "family": "C",
+      "id": "C-029",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_env.py#script",
+      "family": "C",
+      "id": "C-030",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_boundary.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-031",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_boundary.py",
+        "test_l1_discovery.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-032",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_boundary.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "C",
+      "id": "C-033",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-001",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-002",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_toolstate.py#PATH",
+      "family": "P",
+      "id": "P-003",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-004",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-005",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-006",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-007",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-008",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-009",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-010",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-011",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-012",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_doctor.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-013",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-014",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-015",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-016",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p2-protected-state",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "P",
+      "id": "P-017",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_registry.py#managed_tool_payload",
+      "family": "P",
+      "id": "P-018",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_discovery.py#unmanaged",
+      "family": "P",
+      "id": "P-019",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_toolstate.py#test_verify_refuses_an_unknown_instance",
+      "family": "P",
+      "id": "P-020",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_steward.py#test_data_root_on_another_volume_is_accepted",
+      "family": "P",
+      "id": "P-021",
+      "note": "\u8be5\u884c\u7684\u524d\u534a\uff08UNC / reparse point \u2192 \u62d2\u7edd\uff0c\u9000\u51fa\u7801 8\uff09\u4ecd\u6210\u7acb\uff0c\u7531 test_l0_protocol.py \u7684 UNC_NOT_ALLOWED / REPARSE_POINT_REJECTED \u8986\u76d6\uff1b\u540e\u534a\uff08'\u53e6\u4e00\u4e2a\u5377'\uff09\u5df2\u88ab ADR-0004 \u53d6\u4ee3\uff1acli.py \u660e\u786e\u5199\u7740\u6570\u636e\u6839\u7684\u5377\u8eab\u4efd\u4e0d\u5fc5\u4e0e CLI root \u76f8\u540c\uff0ctest_cli_steward.py \u76f4\u63a5\u65ad\u8a00\u8de8\u5377\u53ef\u63a5\u53d7\u3002",
+      "status": "uncited",
+      "superseded": "\u8de8\u5377\u6570\u636e\u6839\u5df2\u6539\u4e3a**\u5141\u8bb8**\uff08ADR-0004\uff09\uff0c\u53ea\u6709 UNC \u4e0e reparse point \u4ecd\u88ab\u62d2\u7edd"
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_desired.py#desired",
+      "family": "S",
+      "id": "S-001",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_doctor.py#broken",
+      "family": "S",
+      "id": "S-002",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_steward.py#discover never adopts",
+      "family": "S",
+      "id": "S-003",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_toolstate.py#MANIFEST_DIGEST_MISMATCH",
+      "family": "S",
+      "id": "S-004",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_where.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-005",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_where.py#effective",
+      "family": "S",
+      "id": "S-006",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_where.py#VERSION_UNSATISFIED",
+      "family": "S",
+      "id": "S-007",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_rebuild.py#unmanaged",
+      "family": "S",
+      "id": "S-008",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-009",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_plan_routing.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-010",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-011",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "unchecked-invariant",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-012",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_registry.py#payload",
+      "family": "S",
+      "id": "S-013",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_where.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md",
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-014",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": "S-010",
+      "evidence": null,
+      "family": "S",
+      "id": "S-015",
+      "note": "\u4e0e S-010 \u662f**\u540c\u4e00\u4e2a\u573a\u666f**\uff08\u91cd\u590d\u767b\u8bb0\uff09\uff1a\u540c\u4e3a'project manifest \u8bf7\u6c42 machine scope'\uff0c\u671f\u671b\u4e5f\u76f8\u540c\uff0c\u53ea\u662f\u63aa\u8f9e\u4e0d\u540c\u3002\u89c4\u8303\u65b9\u5411\u53d6'\u88ab\u6d4b\u8bd5\u5f15\u7528\u7684\u90a3\u4e2a'\uff0c\u5373 test_l1_plan_routing.py \u5f15\u7528\u7684 S-010\u3002",
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_sources.py#digest",
+      "family": "S",
+      "id": "S-016",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_doctor_steward.py#REFERENCE_STALE",
+      "family": "S",
+      "id": "S-017",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-018",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_where.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-019",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_where.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-020",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_where.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-021",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-022",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_lifecycle.py#retire",
+      "family": "S",
+      "id": "S-023",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_lifecycle.py#gc",
+      "family": "S",
+      "id": "S-024",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_toolstate.py#test_verify_detects_a_tampered_payload_and_does_not_repair",
+      "family": "S",
+      "id": "S-025",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_discovery.py#candidate",
+      "family": "S",
+      "id": "S-026",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-027",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_cli_steward.py#digest",
+      "family": "S",
+      "id": "S-028",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_cli_steward.py",
+        "test_l1_doctor_steward.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-029",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "none",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": "test_l1_doctor_steward.py#stale",
+      "family": "S",
+      "id": "S-030",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "undesigned",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-031",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_lifecycle.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-032",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_lifecycle.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-033",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_lifecycle.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-034",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_lifecycle.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-035",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_lifecycle.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "S",
+      "id": "S-036",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-001",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-002",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-003",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-004",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-005",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-006",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-007",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-008",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-009",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_registry.py",
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-010",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-011",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-012",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-013",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_registry.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-014",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_transaction.py"
+      ],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-015",
+      "note": null,
+      "status": "evidenced",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-016",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    },
+    {
+      "blocked_by": "p4-real-backend",
+      "cited_by": [],
+      "defined_in": [
+        "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
+      ],
+      "duplicate_of": null,
+      "evidence": null,
+      "family": "T",
+      "id": "T-017",
+      "note": null,
+      "status": "uncited",
+      "superseded": null
+    }
+  ],
+  "schema_version": 1,
+  "summary": {
+    "evidenced": 39,
+    "families": {
+      "C": 33,
+      "P": 21,
+      "S": 36,
+      "T": 17
+    },
+    "total": 107,
+    "uncited": 68
+  }
+}

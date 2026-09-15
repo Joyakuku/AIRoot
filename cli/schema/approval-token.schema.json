@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/approval-token-v1.json",
+  "title": "AIROOT Approval Token",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "approval_id", "plan_hash", "root_instance_id", "machine_id", "policy_revision", "approval_mode", "issuer", "approved_by_sid", "issued_at", "expires_at", "nonce", "signature"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "approval_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_hash": { "$ref": "common.schema.json#/$defs/digest" },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "machine_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+    "policy_revision": { "type": "integer", "minimum": 0 },
+    "approval_mode": { "type": "string", "enum": ["human", "policy"] },
+    "issuer": { "$ref": "common.schema.json#/$defs/id" },
+    "approved_by_sid": { "type": ["string", "null"], "pattern": "^S-1-[0-9-]+$" },
+    "issued_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": { "type": "string", "enum": ["ed25519", "test_hmac_sha256"] },
+        "key_id": { "$ref": "common.schema.json#/$defs/id" },
+        "value": { "type": "string", "pattern": "^base64:[A-Za-z0-9+/]+={0,2}$" }
+      }
+    },
+    "consumed_at": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "approval_mode": { "const": "human" } } },
+      "then": { "properties": { "approved_by_sid": { "type": "string" } } }
+    }
+  ]
+}

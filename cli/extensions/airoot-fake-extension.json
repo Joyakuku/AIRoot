@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "extension_id": "airoot-fake-extension",
+  "extension_version": "1.0.0",
+  "protocol_version": 1,
+  "capability_types": ["fake-echo"],
+  "implementation_id": "airoot-fake-deterministic",
+  "implementation_kind": "builtin",
+  "platforms": ["windows"],
+  "scopes": ["machine", "session", "project"],
+  "required_privilege": "user",
+  "network_access": false,
+  "executes_scripts": false,
+  "data_roots": ["AIROOT\\cli\\cache\\fixtures"],
+  "side_effects": ["none"],
+  "supports_cancel": false,
+  "supports_json": true,
+  "health_checks": ["probe", "version", "self_test"],
+  "operation_schemas": {
+    "probe": "schema://airoot/fake-probe-v1",
+    "status": "schema://airoot/fake-status-v1",
+    "invoke": "schema://airoot/fake-invoke-v1"
+  },
+  "operations": {
+    "probe": {
+      "operation_kind": "read",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    },
+    "status": {
+      "operation_kind": "read",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    },
+    "invoke": {
+      "operation_kind": "read",
+      "target_scope": "project",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/gc-plan-v1.json",
+  "title": "AIROOT Garbage Collection Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "root_instance_id", "registry_generation", "created_at", "items", "blocked_items", "requires_approval"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "registry_generation": { "type": "integer", "minimum": 0 },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instance_id", "kind", "store_path", "artifact_digest", "reason"],
+        "properties": {
+          "instance_id": { "$ref": "common.schema.json#/$defs/id" },
+          "kind": { "type": "string", "enum": ["managed_tool", "runtime"] },
+          "store_path": { "type": "string" },
+          "artifact_digest": { "$ref": "common.schema.json#/$defs/digest" },
+          "reason": { "const": "retired_and_unreferenced" }
+        }
+      }
+    },
+    "blocked_items": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["instance_id", "reason", "references"], "properties": { "instance_id": { "$ref": "common.schema.json#/$defs/id" }, "reason": { "type": "string" }, "references": { "type": "array", "items": { "type": "string" } } } } },
+    "requires_approval": { "const": true }
+  }
+}

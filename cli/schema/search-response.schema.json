@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/search-response-v1.json",
+  "title": "AIROOT Search Response Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "extension_id", "operation", "status", "started_at", "finished_at", "elapsed_ms", "data", "warnings", "evidence", "reason_code"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "extension_id": { "$ref": "common.schema.json#/$defs/id" },
+    "operation": { "const": "search" },
+    "status": { "type": "string", "enum": ["ok", "degraded", "error", "cancelled", "timed_out"] },
+    "started_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "finished_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "elapsed_ms": { "type": "integer", "minimum": 0 },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation_id", "query", "freshness", "results", "next_cursor", "stats", "fallback"],
+      "properties": {
+        "implementation_id": { "$ref": "common.schema.json#/$defs/id" },
+        "query": { "type": "string" },
+        "freshness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "last_indexed_at", "lag_ms", "coverage"],
+          "properties": {
+            "state": { "type": "string", "enum": ["current", "stale", "degraded", "rebuilding", "unknown"] },
+            "last_indexed_at": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+            "lag_ms": { "type": ["integer", "null"], "minimum": 0 },
+            "coverage": { "type": "string", "enum": ["complete_for_roots", "partial", "none"] }
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "name", "kind", "management", "accessible", "verification"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "kind": { "type": "string", "enum": ["file", "directory"] },
+              "size": { "type": ["integer", "null"], "minimum": 0 },
+              "modified_at": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+              "attributes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+              "management": { "$ref": "common.schema.json#/$defs/management" },
+              "capability_id": { "type": ["string", "null"] },
+              "accessible": { "type": "boolean" },
+              "verification": { "type": "string", "enum": ["indexed", "verified", "changed", "unverified"] }
+            }
+          }
+        },
+        "next_cursor": { "type": ["string", "null"] },
+        "stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["matched", "returned", "index_records_examined"],
+          "properties": {
+            "matched": { "type": "integer", "minimum": 0 },
+            "returned": { "type": "integer", "minimum": 0 },
+            "index_records_examined": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "fallback": { "type": ["object", "null"], "additionalProperties": false, "required": ["kind", "reason"], "properties": { "kind": { "const": "crawl" }, "reason": { "type": "string" } } }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } },
+    "reason_code": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }
+  }
+}

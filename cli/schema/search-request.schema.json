@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/search-request-v1.json",
+  "title": "AIROOT Search Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "query", "match", "target", "roots", "extensions", "include_directories", "accessible_only", "include_hidden", "allow_reparse_points", "min_size", "max_size", "modified_after", "limit", "max_duration_ms", "cursor", "consistency", "max_staleness_ms"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "query": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "match": { "type": "string", "enum": ["exact", "prefix", "contains"] },
+    "target": { "type": "string", "enum": ["name", "path", "name_and_path"] },
+    "roots": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 2048 }, "maxItems": 64 },
+    "extensions": { "type": "array", "items": { "type": "string", "pattern": "^\\.[A-Za-z0-9._-]{1,32}$" }, "uniqueItems": true, "maxItems": 128 },
+    "include_directories": { "type": "boolean" },
+    "accessible_only": { "type": "boolean" },
+    "include_hidden": { "type": "boolean" },
+    "allow_reparse_points": { "type": "boolean" },
+    "min_size": { "type": ["integer", "null"], "minimum": 0 },
+    "max_size": { "type": ["integer", "null"], "minimum": 0 },
+    "modified_after": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "max_duration_ms": { "type": "integer", "minimum": 1, "maximum": 120000 },
+    "cursor": { "type": ["string", "null"], "maxLength": 4096 },
+    "consistency": { "type": "string", "enum": ["best_effort", "bounded_staleness", "refresh_then_read", "physical_verify"] },
+    "max_staleness_ms": { "type": "integer", "minimum": 0, "maximum": 3600000 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "min_size": { "type": "integer" }, "max_size": { "type": "integer" } } },
+      "then": { "properties": { "max_size": { "minimum": 0 } } }
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/where-response-v1.json",
+  "title": "AIROOT Where Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "found", "capability_id", "instance_id", "executable", "version", "scope", "zone", "health", "management", "source", "selection_reason", "usable", "effective_now", "effective_new_process", "candidates", "evidence", "reason_code"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "found": { "type": "boolean" },
+    "capability_id": { "type": ["string", "null"] },
+    "instance_id": { "type": ["string", "null"] },
+    "executable": { "type": ["string", "null"] },
+    "version": { "type": ["string", "null"] },
+    "scope": { "anyOf": [{ "$ref": "common.schema.json#/$defs/scope" }, { "type": "null" }] },
+    "zone": { "anyOf": [{ "$ref": "common.schema.json#/$defs/zone" }, { "type": "null" }] },
+    "health": { "anyOf": [{ "$ref": "common.schema.json#/$defs/health" }, { "type": "null" }] },
+    "management": { "anyOf": [{ "$ref": "common.schema.json#/$defs/management" }, { "type": "null" }] },
+    "source": { "type": ["string", "null"], "enum": ["registry", "path", "project", "search", null] },
+    "selection_reason": { "type": ["string", "null"] },
+    "usable": { "type": "boolean" },
+    "effective_now": { "type": "boolean" },
+    "effective_new_process": { "type": "boolean" },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "management", "health", "usable", "source", "evidence"],
+        "properties": {
+          "path": { "type": "string" },
+          "management": { "$ref": "common.schema.json#/$defs/management" },
+          "health": { "$ref": "common.schema.json#/$defs/health" },
+          "usable": { "type": "boolean" },
+          "source": { "type": "string" },
+          "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } }
+        }
+      }
+    },
+    "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } },
+    "reason_code": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+    "security_mode": { "$ref": "common.schema.json#/$defs/securityMode" },
+    "enforcement": { "$ref": "common.schema.json#/$defs/enforcement" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "found": { "const": false } } },
+      "then": { "properties": { "instance_id": { "type": "null" }, "executable": { "type": "null" }, "version": { "type": "null" } } }
+    }
+  ]
+}

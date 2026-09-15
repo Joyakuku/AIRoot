@@ -1,0 +1,33 @@
+{
+  "bindings": [
+    {
+      "active": true,
+      "binding_key": "machine/fake-tool/windows/x64",
+      "exposure": "stable_launcher",
+      "generation": 1,
+      "scope": "machine",
+      "zone": "R"
+    }
+  ],
+  "data_roots": [],
+  "external_references": [],
+  "generated_at": "2024-01-01T00:00:02Z",
+  "generation": 1,
+  "instances": [
+    {
+      "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "capability_id": "fake-tool",
+      "collected_at": null,
+      "health": "healthy",
+      "instance_id": "fake-tool/fake-tool/1.0.0/win-x64",
+      "kind": "managed_tool",
+      "lifecycle_status": "active",
+      "store_path": "store/fake-tool/fake-tool/1.0.0/win-x64",
+      "version": "1.0.0"
+    }
+  ],
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "policy_revision": 1,
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1
+}

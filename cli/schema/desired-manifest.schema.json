@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/desired-manifest-v1.json",
+  "title": "AIROOT Desired Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_id", "manifest_revision", "platform", "architectures", "source", "capabilities", "policies"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "manifest_id": { "$ref": "common.schema.json#/$defs/id" },
+    "manifest_revision": { "type": "integer", "minimum": 1 },
+    "platform": { "$ref": "common.schema.json#/$defs/platform" },
+    "architectures": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/architecture" }, "uniqueItems": true },
+    "source": { "type": "object", "additionalProperties": false, "required": ["kind", "identity", "signer"], "properties": { "kind": { "type": "string", "enum": ["local_file", "remote_signed", "project"] }, "identity": { "$ref": "common.schema.json#/$defs/digest" }, "signer": { "type": ["string", "null"] }, "expires_at": { "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] } } },
+    "capabilities": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["id", "scope"], "properties": { "id": { "$ref": "common.schema.json#/$defs/id" }, "version": { "type": ["string", "null"] }, "scope": { "$ref": "common.schema.json#/$defs/scope" }, "artifact_digest": { "anyOf": [{ "$ref": "common.schema.json#/$defs/digest" }, { "type": "null" }] }, "implementation": { "type": ["string", "null"] } } } },
+    "policies": { "type": "object", "additionalProperties": false, "required": ["auto_approve"], "properties": { "auto_approve": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["capability", "operations", "scopes", "max_side_effect"], "properties": { "capability": { "$ref": "common.schema.json#/$defs/id" }, "operations": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "scopes": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/scope" } }, "max_side_effect": { "$ref": "common.schema.json#/$defs/sideEffect" } } } } } }
+  }
+}

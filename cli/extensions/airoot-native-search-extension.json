@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "extension_id": "airoot-native-search-extension",
+  "extension_version": "0.1.0",
+  "protocol_version": 1,
+  "capability_types": ["file_search"],
+  "implementation_id": "airoot-native-search-crawl",
+  "implementation_kind": "fallback",
+  "platforms": ["windows"],
+  "scopes": ["machine", "project", "session"],
+  "required_privilege": "user",
+  "network_access": false,
+  "executes_scripts": false,
+  "data_roots": [],
+  "side_effects": ["none", "derived_cache"],
+  "supports_cancel": false,
+  "supports_json": true,
+  "health_checks": ["probe", "permission", "index_integrity"],
+  "operation_schemas": {
+    "search": "schema://airoot/search-v1",
+    "status": "schema://airoot/search-status-v1",
+    "explain": "schema://airoot/search-explain-v1",
+    "refresh": "schema://airoot/search-refresh-v1"
+  },
+  "operations": {
+    "search": {
+      "operation_kind": "read",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    },
+    "status": {
+      "operation_kind": "read",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    },
+    "explain": {
+      "operation_kind": "read",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "deny",
+      "cancellation_semantics": "best_effort"
+    },
+    "refresh": {
+      "operation_kind": "write",
+      "target_scope": "machine",
+      "approval_required": false,
+      "overwrite_policy": "replace_same_instance",
+      "cancellation_semantics": "resume_or_rebuild"
+    }
+  }
+}

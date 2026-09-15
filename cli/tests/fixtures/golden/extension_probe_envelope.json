@@ -1,0 +1,42 @@
+{
+  "data": {
+    "available": true,
+    "capability_types": [
+      "fake-echo"
+    ],
+    "health_checks": [
+      "probe",
+      "version",
+      "self_test"
+    ],
+    "implementation_id": "airoot-fake-deterministic",
+    "implementation_kind": "builtin",
+    "platforms": [
+      "windows"
+    ],
+    "scopes": [
+      "machine",
+      "session",
+      "project"
+    ]
+  },
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "airoot-fake-extension loaded from the published schema",
+      "kind": "manifest"
+    }
+  ],
+  "extension_id": "airoot-fake-extension",
+  "operation": "probe",
+  "reason_code": null,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "status": "ok",
+  "timing": {
+    "elapsed_ms": 1000,
+    "finished_at": "2024-01-01T00:00:01Z",
+    "started_at": "2024-01-01T00:00:00Z"
+  },
+  "warnings": []
+}

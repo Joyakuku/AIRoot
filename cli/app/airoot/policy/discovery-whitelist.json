@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "revision": "wl-3",
+  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason.",
+  "scan": {
+    "max_depth": 4,
+    "max_relative_depth": 2,
+    "max_files_per_object": 400,
+    "max_objects": 200,
+    "max_versions_per_object": 8,
+    "max_active_markers": 16
+  },
+  "entries": [
+    {
+      "capability_id": "python",
+      "kind": "runtime",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["python.exe", "python3.exe"] },
+        { "type": "pe_static", "field": "product_name", "contains": "Python" }
+      ],
+      "entrypoints": ["python.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "node",
+      "kind": "runtime",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["node.exe"] },
+        { "type": "pe_static", "field": "product_name", "contains": "Node.js" }
+      ],
+      "entrypoints": ["node.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "java",
+      "kind": "runtime",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["java.exe", "javac.exe"] }
+      ],
+      "evidence_any": [
+        { "type": "pe_static", "field": "product_name", "contains": "Java" },
+        { "type": "pe_static", "field": "company_name", "contains": "Oracle" },
+        { "type": "pe_static", "field": "company_name", "contains": "Eclipse" },
+        { "type": "pe_static", "field": "company_name", "contains": "OpenJDK" }
+      ],
+      "entrypoints": ["java.exe"],
+      "version_source": "pe_static:file_version",
+      "environment": {
+        "variables": { "JAVA_HOME": "<entrypoint_dir_parent>" },
+        "value_kind": "REG_EXPAND_SZ"
+      }
+    },
+    {
+      "capability_id": "git",
+      "kind": "tool",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["git.exe"] },
+        { "type": "pe_static", "field": "product_name", "contains": "Git" }
+      ],
+      "entrypoints": ["git.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "archive",
+      "kind": "tool",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["7z.exe", "7za.exe", "7zr.exe"] },
+        { "type": "pe_static", "field": "product_name", "contains": "7-Zip" }
+      ],
+      "entrypoints": ["7z.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "media_probe",
+      "kind": "tool",
+      "weak_evidence": true,
+      "weak_reason": "verified on real binaries: the ffmpeg/ffprobe master-gpl-shared builds carry no RT_VERSION resource at all, so the executable name plus its sibling ffprobe/ffmpeg is the strongest static evidence available; the version is reported as unknown rather than guessed.",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["ffmpeg.exe", "ffprobe.exe"] },
+        { "type": "sibling_file", "any_of": ["ffprobe.exe", "ffmpeg.exe"] }
+      ],
+      "entrypoints": ["ffmpeg.exe", "ffprobe.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "build",
+      "kind": "tool",
+      "weak_evidence": true,
+      "weak_reason": "cmake ships builds whose version resource is not consistently populated; the executable name plus a PE image is the strongest available static evidence in P2 (capability itself is not yet frozen).",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["cmake.exe"] },
+        { "type": "pe_static", "field": "is_pe", "equals": true }
+      ],
+      "entrypoints": ["cmake.exe"],
+      "version_source": "pe_static:file_version"
+    }
+  ],
+  "exclusions": [
+    {
+      "type": "directory_name",
+      "reason": "GUI application or service; v0.3 §2.3 and §9.6:789 keep these out of the managed lifecycle",
+      "any_of": [
+        "texstudio", "texstudio-source", "WeMeet", "Pencil", "lceda-pro",
+        "Raspberry Pi Ltd", "Xshell", "Xftp", "Clash.for.Windows-0.20.16.4-ikuuu",
+        "FlClash", "nssm-2.24", "Huawei_SDK", "HuaweiDev_KeyStoreFile",
+        "hap_installer-Windows-3.1.0", "WorkBuddy", "llm-guard", "llama-swap",
+        "llamacpp-adaptive", "cc_switch"
+      ]
+    },
+    {
+      "type": "directory_name",
+      "reason": "Everything is a mechanism reference and performance baseline for the Native Search Extension, never a managed object (v0.3 §12, §21)",
+      "any_of": ["Everything"]
+    },
+    {
+      "type": "directory_name_suffix",
+      "reason": "package/download caches are Zone W derived data, not capability objects (v0.3 §7.1, §13.3); a cached python.exe is a build artifact, not a runtime",
+      "suffix_any_of": ["-cache", "cache", ".tmp", "-tmp"]
+    }
+  ]
+}

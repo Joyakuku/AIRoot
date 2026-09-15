@@ -1,0 +1,56 @@
+{
+  "canonicalization": "jcs-rfc8785-compatible",
+  "created_at": "2024-01-01T00:00:00Z",
+  "expires_at": "2024-01-01T00:15:00Z",
+  "exposure": {
+    "path_prepend": [
+      "D:\\env\\python"
+    ],
+    "scope": "user",
+    "value_kind": "REG_EXPAND_SZ",
+    "variables": {
+      "AIROOT_PYTHON_ROOT": "D:\\env\\python"
+    }
+  },
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "metadata": {
+    "path_entries": [
+      "D:\\env\\python"
+    ],
+    "value_kind": "REG_EXPAND_SZ"
+  },
+  "operation": "record_reference_exposure",
+  "operations": [
+    {
+      "description": "persist AIROOT_PYTHON_ROOT for python (scope=user)",
+      "kind": "expose",
+      "reversible": true,
+      "step_id": "step/expose/01",
+      "target_scope": "user"
+    },
+    {
+      "description": "persist PATH for python (scope=user)",
+      "kind": "expose",
+      "reversible": true,
+      "step_id": "step/expose/02",
+      "target_scope": "user"
+    }
+  ],
+  "plan_hash": "sha256:a27534f75d93f6e5a000a886c60a03b12f28631234cefe02d5beffcc93687218",
+  "plan_id": "plan/reference/python/golden-fixture",
+  "policy_revision": 1,
+  "requested_by": "golden-fixture",
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1,
+  "side_effects": [
+    "mutates_system",
+    "writes_registry",
+    "writes_path"
+  ],
+  "target": {
+    "capability_id": "python",
+    "external_id": "external/dr-env/python",
+    "management": "external_reference",
+    "path": "D:\\env\\python"
+  }
+}

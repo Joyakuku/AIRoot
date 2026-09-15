@@ -1,0 +1,33 @@
+{
+  "candidates": [],
+  "capability_id": "fake-tool",
+  "effective_new_process": false,
+  "effective_now": false,
+  "evidence": [
+    {
+      "detail": "capability=fake-tool version=* scope=*",
+      "kind": "query"
+    },
+    {
+      "detail": "selection precedence=steward (revision=sp-1, source=file)",
+      "kind": "policy"
+    },
+    {
+      "detail": "no satisfying active binding and no external reference",
+      "kind": "registry"
+    }
+  ],
+  "executable": null,
+  "found": false,
+  "health": null,
+  "instance_id": null,
+  "management": null,
+  "reason_code": "NOT_FOUND",
+  "schema_version": 1,
+  "scope": null,
+  "selection_reason": "NOT_FOUND",
+  "source": null,
+  "usable": false,
+  "version": null,
+  "zone": null
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "revision": "sp-1",
+  "precedence": "steward",
+  "notes": [
+    "precedence decides the order of the two machine-level candidate sources in `where`:",
+    "  steward -> reference (an object the user already had) beats an AIROOT-owned payload",
+    "  owned   -> an AIROOT-owned payload beats a reference",
+    "The default is `steward`, because the steward model is the project's premise: AIROOT is a",
+    "hired butler, not a warehouse owner (ADR-0004). It is a file rather than a constant so a",
+    "user who deliberately handed a capability to AIROOT can say so explicitly.",
+    "A missing or unreadable file falls back to `steward` - never to 'anything goes'.",
+    "Bump `revision` whenever this file's meaning changes; commands report it in evidence."
+  ]
+}

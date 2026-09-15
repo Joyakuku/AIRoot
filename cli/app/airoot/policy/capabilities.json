@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "revision": "cap-1",
+  "notes": [
+    "The frozen capability list (draft §15.2 condition 1). A capability exists here only after it",
+    "has been *frozen*: a name, the CLI entry it answers, the shape of its request/response, its",
+    "side-effect ceiling and its scope semantics. The whitelist then says how to *recognise* such an",
+    "object; this file says the capability is allowed to exist at all.",
+    "`kind` decides the routing default in `airoot scope decide` (draft §12.1): `tool` means a",
+    "single-file general-purpose CLI whose answer is always the same (never asks), `runtime` means",
+    "an interpreter environment where project-vs-data-root is a real choice (asks).",
+    "`side_effects` is a ceiling from the published sideEffect enum: a candidate object may not",
+    "require anything outside it.",
+    "Growth path (draft §15.4): propose -> freeze here -> add a whitelist evidence predicate -> only",
+    "then can discover/adopt see it. Never hard-code a directory name instead."
+  ],
+  "capabilities": [
+    {
+      "capability_id": "python",
+      "kind": "runtime",
+      "entry": "python.exe",
+      "side_effects": ["none"],
+      "scope": ["project", "machine", "session"],
+      "notes": "any CPython-compatible interpreter directory; a project venv is the project case"
+    },
+    {
+      "capability_id": "node",
+      "kind": "runtime",
+      "entry": "node.exe",
+      "side_effects": ["none"],
+      "scope": ["project", "machine", "session"],
+      "notes": "one object may host several versions (nvm); the active one is observed, not chosen"
+    },
+    {
+      "capability_id": "java",
+      "kind": "runtime",
+      "entry": "java.exe",
+      "side_effects": ["none"],
+      "scope": ["project", "machine", "session"],
+      "notes": "JDK or JRE; the home is derived from where the entrypoint was found"
+    },
+    {
+      "capability_id": "git",
+      "kind": "tool",
+      "entry": "git.exe",
+      "side_effects": ["none"],
+      "scope": ["machine", "session"],
+      "notes": "never a bundled mingit inside another object: the predicate requires depth <= 2 and shallowest wins"
+    },
+    {
+      "capability_id": "archive",
+      "kind": "tool",
+      "entry": "7z.exe",
+      "side_effects": ["none"],
+      "scope": ["machine", "session"],
+      "notes": "7-Zip command line (7z/7za/7zr)"
+    },
+    {
+      "capability_id": "media_probe",
+      "kind": "tool",
+      "entry": "ffprobe.exe",
+      "side_effects": ["none"],
+      "scope": ["machine", "session"],
+      "notes": "weak evidence by necessity: these builds carry no version resource, so the version is reported unknown"
+    },
+    {
+      "capability_id": "build",
+      "kind": "tool",
+      "entry": "cmake.exe",
+      "side_effects": ["none"],
+      "scope": ["machine", "session", "project"],
+      "notes": "a build tool is the classic machine-level generic CLI"
+    },
+    {
+      "capability_id": "fake-tool",
+      "kind": "tool",
+      "entry": "fake-tool.bin",
+      "side_effects": ["writes_store", "writes_registry", "derived_cache"],
+      "scope": ["machine", "session"],
+      "notes": "P1 simulation only: the payload is data and is never executed (docs/schema/README.md)"
+    }
+  ]
+}

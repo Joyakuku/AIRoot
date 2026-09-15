@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/plan-v1.json",
+  "title": "AIROOT Canonical Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "plan_hash", "operation", "root_instance_id", "machine_id", "policy_revision", "created_at", "expires_at", "requested_by", "target", "operations", "side_effects"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_hash": { "$ref": "common.schema.json#/$defs/digest" },
+    "operation": { "type": "string", "enum": ["install_tool", "install_runtime", "import_tool", "recreate_runtime", "retire_tool", "gc_apply", "root_relocate"] },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "machine_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+    "policy_revision": { "type": "integer", "minimum": 0 },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "requested_by": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,256}$" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "instance_id", "kind", "version", "platform", "architecture"],
+      "properties": {
+        "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+        "instance_id": { "$ref": "common.schema.json#/$defs/id" },
+        "kind": { "type": "string", "enum": ["managed_tool", "runtime"] },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "platform": { "$ref": "common.schema.json#/$defs/platform" },
+        "architecture": { "$ref": "common.schema.json#/$defs/architecture" },
+        "binding_key": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step_id", "kind", "description", "target_scope", "reversible"],
+        "properties": {
+          "step_id": { "$ref": "common.schema.json#/$defs/id" },
+          "kind": { "type": "string", "enum": ["fetch", "verify", "stage", "commit", "expose", "rollback", "delete"] },
+          "description": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "target_scope": { "$ref": "common.schema.json#/$defs/scope" },
+          "reversible": { "type": "boolean" },
+          "source_mutation": { "type": "string", "enum": ["none", "delete", "move", "overwrite"] },
+          "artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
+        }
+      }
+    },
+    "source": { "$ref": "common.schema.json#/$defs/source" },
+    "side_effects": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/sideEffect" }, "uniqueItems": true },
+    "canonicalization": { "type": "string", "const": "jcs-rfc8785-compatible" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}

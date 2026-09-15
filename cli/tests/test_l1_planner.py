@@ -1,0 +1,369 @@
+"""The dependency-routing decision layer (draft §12) and its CLI.
+
+The point of these tests is that the *decision* is deterministic and honest: the obvious
+cases are never asked about, the risky ones always are, and an unknown size stays unknown.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from airoot.caps.planner import (
+    CONFIRMATION_OPTIONS,
+    DEFAULT_SIZE_THRESHOLD_BYTES,
+    PROJECT_MANIFESTS,
+    SCOPE_DATA_ROOT,
+    SCOPE_PROJECT,
+    SCOPE_REFERENCE_ONLY,
+    SCOPE_UNSUPPORTED,
+    ScopeRequest,
+    TOOLING_MEMORY_RELATIVE,
+    decide_scope,
+    manifest_fingerprint,
+    manifest_paths,
+    read_tooling_memory,
+    tooling_memory_path,
+)
+from airoot.cli import main
+
+
+def run(capsys, *argv: str) -> tuple[int, dict]:
+    code = main(list(argv))
+    captured = capsys.readouterr()
+    document = json.loads(captured.out) if captured.out.strip() else {}
+    return code, document
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    root = tmp_path / "project"
+    root.mkdir()
+    return root
+
+
+def write_memory(project_root: Path, capability: str, scope: str) -> Path:
+    path = tooling_memory_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "manifest_fingerprint": manifest_fingerprint(project_root),
+                "choices": {capability: {"scope": scope, "decided_by": "human"}},
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# manifest detection
+# --------------------------------------------------------------------------- #
+
+
+def test_manifest_paths_only_reports_present_files(project: Path) -> None:
+    assert manifest_paths(project) == []
+    (project / "pyproject.toml").write_text('[project]\nname = "demo"\n', encoding="utf-8")
+    assert [path.name for path in manifest_paths(project)] == ["pyproject.toml"]
+
+
+def test_project_declaration_wins_and_is_never_asked(project: Path) -> None:
+    (project / "requirements.txt").write_text("nodeenv\npython-dotenv\n", encoding="utf-8")
+
+    decision = decide_scope(ScopeRequest(capability_id="python", project_root=project))
+
+    assert decision.scope == SCOPE_PROJECT
+    assert decision.confirmation_required is False
+    assert decision.origin == "project_manifest"
+    assert decision.reason_code == "SUCCESS"
+    assert decision.options == ()
+    assert "requirements.txt" in decision.evidence[1]["detail"]
+
+
+def test_a_manifest_without_the_capability_does_not_pull_it_into_the_project(project: Path) -> None:
+    (project / "package.json").write_text('{"dependencies": {"left-pad": "1.0.0"}}', encoding="utf-8")
+
+    decision = decide_scope(ScopeRequest(capability_id="python", project_root=project))
+
+    assert decision.scope != SCOPE_PROJECT
+    assert decision.manifest_hits == ()
+
+
+def test_manifest_fingerprint_changes_when_a_manifest_changes(project: Path) -> None:
+    (project / "pyproject.toml").write_text("a", encoding="utf-8")
+    first = manifest_fingerprint(project)
+    (project / "pyproject.toml").write_text("b", encoding="utf-8")
+    assert manifest_fingerprint(project) != first
+    assert manifest_fingerprint(project) is not None
+
+
+def test_no_manifests_means_no_fingerprint(project: Path) -> None:
+    assert manifest_fingerprint(project) is None
+
+
+def test_project_manifest_list_is_documented() -> None:
+    assert "pyproject.toml" in PROJECT_MANIFESTS
+    assert "package.json" in PROJECT_MANIFESTS
+    assert "poetry.lock" in PROJECT_MANIFESTS
+
+
+# --------------------------------------------------------------------------- #
+# routing rules
+# --------------------------------------------------------------------------- #
+
+
+def test_generic_tool_goes_to_the_data_root_without_asking() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="archive"))
+
+    assert decision.scope == SCOPE_DATA_ROOT
+    assert decision.confirmation_required is False
+    assert decision.origin == "generic_tool"
+
+
+def test_a_runtime_asks_because_it_creates_an_environment() -> None:
+    """A runtime is the "creates an environment" case, and project-vs-data-root is a real choice.
+
+    The closed must-confirm set (draft §12.1) is about packaging / environment creation /
+    size / CUDA. Installing a runtime establishes an interpreter environment AND is the one
+    case where "project-isolated" is a genuine alternative to the shared data root, so it
+    stays on the asking side. The noise the draft warns about comes from confirming
+    capabilities with only one sensible answer (`rule.kind == "tool"`) — not from this.
+    """
+
+    decision = decide_scope(ScopeRequest(capability_id="node"))
+
+    assert decision.scope == SCOPE_DATA_ROOT
+    assert decision.confirmation_required is True
+    assert decision.origin == "high_risk"
+    assert decision.reason_code == "SCOPE_CONFIRMATION_REQUIRED"
+    assert decision.options == CONFIRMATION_OPTIONS
+    assert "runtime" in " ".join(item["detail"] for item in decision.evidence)
+
+
+def test_a_runtime_that_builds_an_environment_still_asks() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="node", creates_environment=True))
+
+    assert decision.scope == SCOPE_DATA_ROOT
+    assert decision.confirmation_required is True
+    assert decision.origin == "high_risk"
+    assert decision.reason_code == "SCOPE_CONFIRMATION_REQUIRED"
+    assert decision.options == CONFIRMATION_OPTIONS
+
+
+def test_creating_an_environment_always_asks() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="archive", creates_environment=True))
+    assert decision.confirmation_required is True
+    assert "creates an environment" in " ".join(item["detail"] for item in decision.evidence)
+
+
+def test_cuda_or_native_binaries_always_ask() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="archive", requires_cuda_or_native=True))
+    assert decision.confirmation_required is True
+
+
+def test_size_over_the_threshold_asks_and_size_at_the_threshold_does_not() -> None:
+    over = decide_scope(
+        ScopeRequest(capability_id="archive", declared_size_bytes=DEFAULT_SIZE_THRESHOLD_BYTES + 1)
+    )
+    at = decide_scope(
+        ScopeRequest(capability_id="archive", declared_size_bytes=DEFAULT_SIZE_THRESHOLD_BYTES)
+    )
+    assert over.confirmation_required is True
+    assert at.confirmation_required is False
+
+
+def test_unknown_size_is_reported_as_unknown_and_never_guessed() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="node"))
+
+    assert decision.size_estimate_bytes is None
+    assert decision.size_source == "unknown"
+    assert decision.threshold_bytes == DEFAULT_SIZE_THRESHOLD_BYTES
+
+
+def test_unverifiable_source_is_reference_only_and_never_installed() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="node", source_verifiable=False))
+
+    assert decision.scope == SCOPE_REFERENCE_ONLY
+    assert decision.confirmation_required is False
+    assert decision.origin == "unverifiable_source"
+
+
+def test_missing_capability_cannot_be_routed() -> None:
+    decision = decide_scope(ScopeRequest(capability_id="not-a-capability"))
+
+    assert decision.scope == SCOPE_UNSUPPORTED
+    assert decision.reason_code == "CAPABILITY_NOT_DECLARED"
+    assert decision.confirmation_required is False
+
+
+def test_the_three_options_are_fixed() -> None:
+    assert CONFIRMATION_OPTIONS == ("project-isolated", "data-root", "cancel")
+    decision = decide_scope(ScopeRequest(capability_id="node"))
+    assert decision.options == CONFIRMATION_OPTIONS, "options may not be renamed or extended"
+
+
+def test_decisions_are_deterministic() -> None:
+    request = ScopeRequest(capability_id="node", creates_environment=True)
+    first = json.dumps(decide_scope(request).to_document(), sort_keys=True)
+    second = json.dumps(decide_scope(request).to_document(), sort_keys=True)
+    assert first == second
+
+
+# --------------------------------------------------------------------------- #
+# the recorded choice
+# --------------------------------------------------------------------------- #
+
+
+def test_recorded_choice_short_circuits_the_question(project: Path) -> None:
+    (project / "requirements.txt").write_text("nothing-relevant\n", encoding="utf-8")
+    write_memory(project, "node", SCOPE_DATA_ROOT)
+
+    decision = decide_scope(
+        ScopeRequest(capability_id="node", project_root=project),
+        memory=read_tooling_memory(project),
+    )
+
+    assert decision.origin == "memory"
+    assert decision.scope == SCOPE_DATA_ROOT
+    assert decision.confirmation_required is False
+    assert decision.memory is not None
+
+
+def test_a_stale_recorded_choice_is_ignored(project: Path) -> None:
+    """A stale answer is worse than no answer: the question is asked again."""
+
+    (project / "pyproject.toml").write_text("node\n", encoding="utf-8")
+    write_memory(project, "node", SCOPE_DATA_ROOT)
+    (project / "pyproject.toml").write_text("node and something new\n", encoding="utf-8")
+
+    decision = decide_scope(
+        ScopeRequest(capability_id="node", project_root=project),
+        memory=read_tooling_memory(project),
+    )
+
+    assert decision.origin != "memory"
+    assert decision.scope == SCOPE_PROJECT, "the fresh manifest now declares it"
+
+
+def test_unreadable_memory_degrades_to_no_memory(project: Path) -> None:
+    path = tooling_memory_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    assert read_tooling_memory(project) is None
+    decision = decide_scope(ScopeRequest(capability_id="node", project_root=project), memory=None)
+    assert decision.origin != "memory"
+
+
+def test_memory_file_location_is_project_local(project: Path) -> None:
+    assert TOOLING_MEMORY_RELATIVE == ".ai/tooling.json"
+    assert tooling_memory_path(project) == project / ".ai" / "tooling.json"
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+
+def test_cli_decides_project_isolation_and_exits_zero(capsys, registry, project: Path) -> None:
+    (project / "pyproject.toml").write_text('dependencies = ["python"]\n', encoding="utf-8")
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "decide", "python", "--project", str(project),
+    )
+
+    assert code == 0
+    assert document["scope"] == SCOPE_PROJECT
+    assert document["confirmation_required"] is False
+
+
+def test_cli_confirmation_required_exits_four(capsys, registry) -> None:
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent), "scope", "decide", "node"
+    )
+
+    assert code == 4
+    assert document["reason_code"] == "SCOPE_CONFIRMATION_REQUIRED"
+    assert document["confirmation_required"] is True
+    assert document["options"] == list(CONFIRMATION_OPTIONS)
+
+
+def test_cli_a_generic_tool_does_not_ask(capsys, registry) -> None:
+    """The other half of §12.1: the obvious case must not ask, or asking stops meaning anything."""
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent), "scope", "decide", "archive"
+    )
+
+    assert code == 0
+    assert document["scope"] == SCOPE_DATA_ROOT
+    assert document["confirmation_required"] is False
+    assert document["options"] == []
+
+
+def test_cli_unknown_capability_exits_nine(capsys, registry) -> None:
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "decide", "definitely-not-a-capability",
+    )
+
+    assert code == 9
+    assert document["reason_code"] == "CAPABILITY_NOT_DECLARED"
+
+
+def test_cli_reports_unknown_size_honestly(capsys, registry) -> None:
+    _code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent), "scope", "decide", "node"
+    )
+    assert document["size_estimate_bytes"] is None
+    assert document["size_source"] == "unknown"
+
+
+def test_cli_accepts_a_declared_size(capsys, registry) -> None:
+    _code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "decide", "archive", "--size-bytes", str(DEFAULT_SIZE_THRESHOLD_BYTES * 2),
+    )
+    assert document["size_estimate_bytes"] == DEFAULT_SIZE_THRESHOLD_BYTES * 2
+    assert document["size_source"] == "declared"
+    assert document["confirmation_required"] is True
+
+
+def test_cli_memory_is_read_only_and_reports_the_fingerprint(capsys, registry, project: Path) -> None:
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    write_memory(project, "node", SCOPE_DATA_ROOT)
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "memory", "--project", str(project),
+    )
+
+    assert code == 0
+    assert document["present"] is True
+    assert document["writable"] is False, "writing the memory belongs to the approval channel"
+    assert document["memory"]["choices"]["node"]["scope"] == SCOPE_DATA_ROOT
+
+
+def test_cli_memory_absent_is_not_an_error(capsys, registry, project: Path) -> None:
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "memory", "--project", str(project),
+    )
+    assert code == 0
+    assert document["present"] is False
+    assert document["manifest_fingerprint"] is None
+
+
+def test_cli_rejects_a_missing_project_directory(capsys, registry, tmp_path: Path) -> None:
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "scope", "decide", "node", "--project", str(tmp_path / "absent"),
+    )
+    assert code == 8
+    assert document["reason_code"] in {"INVALID_INPUT", "ROOT_NOT_RESOLVED"}

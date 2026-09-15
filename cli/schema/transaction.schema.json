@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/transaction-v1.json",
+  "title": "AIROOT Transaction Journal Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "transaction_id", "plan_id", "plan_hash", "state", "root_instance_id", "machine_id", "created_at", "updated_at", "journal_seq", "approval_nonce"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "transaction_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_hash": { "$ref": "common.schema.json#/$defs/digest" },
+    "state": { "type": "string", "enum": ["PROPOSED", "APPROVED", "FETCHED", "VERIFIED", "STAGED", "COMMITTED", "REGISTERED", "ACTIVE_BOUND", "EXPOSED", "VERIFIED_AGAIN", "FINALIZED", "FAILED", "ROLLBACK_PENDING", "ROLLED_BACK", "RECOVERY_REQUIRED", "EXPIRED"] },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "machine_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+    "instance_id": { "anyOf": [{ "$ref": "common.schema.json#/$defs/id" }, { "type": "null" }] },
+    "generation_before": { "type": ["integer", "null"], "minimum": 0 },
+    "generation_after": { "type": ["integer", "null"], "minimum": 0 },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "updated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "journal_seq": { "type": "integer", "minimum": 0 },
+    "approval_id": { "anyOf": [{ "$ref": "common.schema.json#/$defs/id" }, { "type": "null" }] },
+    "approval_nonce": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9:_-]{1,128}$" },
+    "failure": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "$ref": "common.schema.json#/$defs/errorCode" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "retryable": { "type": "boolean" },
+        "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } }
+      }
+    }
+  }
+}

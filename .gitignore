@@ -1,0 +1,19 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# pytest: the session fixture wipes cli/tests/.tmp between runs, so nothing in it is durable
+# (see AGENTS.md §6 — it is also the only place tests are allowed to create a root).
+.pytest_cache/
+cli/tests/.tmp/
+
+# Editors and OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# Scratch left behind by tooling
+*.bak
+*.orig

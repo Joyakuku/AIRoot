@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/common-v1.json",
+  "title": "AIROOT Common Schema Definitions",
+  "type": "object",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["windows"]
+    },
+    "architecture": {
+      "type": "string",
+      "enum": ["x64", "arm64", "x86"]
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["system", "machine", "session", "project"]
+    },
+    "zone": {
+      "type": "string",
+      "enum": ["R", "W", "P"]
+    },
+    "health": {
+      "type": "string",
+      "enum": ["healthy", "degraded", "broken", "stale", "drifted"]
+    },
+    "management": {
+      "type": "string",
+      "enum": ["managed", "external_reference", "unmanaged", "project_owned", "orphaned", "excluded", "quarantined"]
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": ["discovered", "external_reference", "unmanaged", "planned", "staged", "installed", "verified", "active", "retired", "garbage_collectable", "broken"]
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_key", "scope", "zone", "active", "generation", "exposure"],
+      "properties": {
+        "binding_key": { "$ref": "#/$defs/id" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "zone": { "$ref": "#/$defs/zone" },
+        "active": { "type": "boolean" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "exposure": { "type": "string", "enum": ["stable_launcher", "session_env", "project_binding", "none"] },
+        "project_id": { "type": ["string", "null"], "pattern": "^[a-zA-Z0-9._/-]{1,128}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "scope": { "const": "project" } } },
+          "then": { "required": ["project_id"] }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locator", "provenance", "integrity"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["local_file", "local_directory", "https", "registry", "generated_fixture"] },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_id"],
+          "properties": {
+            "source_id": { "$ref": "#/$defs/id" },
+            "publisher": { "type": ["string", "null"], "maxLength": 256 },
+            "retrieved_at": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
+          }
+        },
+        "integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact_digest"],
+          "properties": {
+            "artifact_digest": { "$ref": "#/$defs/digest" },
+            "file_manifest_digest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "signature": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["algorithm", "key_id", "value"],
+          "properties": {
+            "algorithm": { "type": "string", "enum": ["ed25519", "test_hmac_sha256"] },
+            "key_id": { "$ref": "#/$defs/id" },
+            "value": { "type": "string", "pattern": "^base64:[A-Za-z0-9+/]+={0,2}$" }
+          }
+        }
+      }
+    },
+    "fileManifestEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "digest", "mode"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^(?![\\\\/])[^\\\\/].*" },
+        "size": { "type": "integer", "minimum": 0 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "mode": { "type": "string", "enum": ["file", "directory"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "path": { "type": ["string", "null"], "maxLength": 2048 },
+        "digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] }
+      }
+    },
+    "sideEffect": {
+      "type": "string",
+      "enum": ["none", "derived_cache", "writes_store", "writes_registry", "writes_path", "executes_scripts", "mutates_system", "deletes_source", "moves_source"]
+    },
+    "errorCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    },
+    "securityMode": {
+      "type": "string",
+      "enum": ["protected_machine", "policy_only"]
+    },
+    "enforcement": {
+      "type": "string",
+      "enum": ["acl_enforced", "same_user_can_bypass"]
+    },
+    "dataRoot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data_root_id", "path", "role", "volume_serial", "added_at", "active"],
+      "properties": {
+        "data_root_id": { "$ref": "#/$defs/id" },
+        "path": { "type": "string", "minLength": 3, "maxLength": 2048 },
+        "role": { "type": "string", "enum": ["runtime", "tool", "mixed"] },
+        "volume_serial": { "type": "string", "pattern": "^[A-Fa-f0-9-]{1,128}$" },
+        "whitelist_revision": { "type": ["string", "null"], "maxLength": 64 },
+        "added_at": { "$ref": "#/$defs/timestamp" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "externalReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_id", "capability_id", "path", "management", "health", "observed_at"],
+      "properties": {
+        "external_id": { "$ref": "#/$defs/id" },
+        "capability_id": { "$ref": "#/$defs/id" },
+        "capability_kind": { "type": ["string", "null"], "enum": ["runtime", "tool", null] },
+        "data_root_id": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "path": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "management": { "type": "string", "enum": ["external_reference", "unmanaged", "project_owned", "quarantined"] },
+        "health": { "$ref": "#/$defs/health" },
+        "version": { "type": ["string", "null"], "maxLength": 64 },
+        "versions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "uniqueItems": true
+        },
+        "active_version": { "type": ["string", "null"], "maxLength": 64 },
+        "architecture": { "anyOf": [{ "$ref": "#/$defs/architecture" }, { "type": "null" }] },
+        "entrypoints": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "observed_digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "probe_level": { "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "null" }] },
+        "source_kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["declared", "pe_static", "public_locator", "extension_handler", "approved_execution"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+      }
+    }
+  }
+}

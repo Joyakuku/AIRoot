@@ -1,0 +1,53 @@
+{
+  "candidates": [
+    {
+      "evidence": [
+        {
+          "detail": "machine/fake-tool/windows/x64 active at generation 1",
+          "kind": "binding"
+        },
+        {
+          "detail": "lifecycle=active health=healthy",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "registry",
+          "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin"
+        }
+      ],
+      "health": "healthy",
+      "management": "managed",
+      "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin",
+      "source": "registry",
+      "usable": false
+    }
+  ],
+  "capability_id": "fake-tool",
+  "effective_new_process": false,
+  "effective_now": false,
+  "evidence": [
+    {
+      "detail": "capability=fake-tool version=>=2.0 scope=*",
+      "kind": "query"
+    },
+    {
+      "detail": "selection precedence=steward (revision=sp-1, source=file)",
+      "kind": "policy"
+    },
+    {
+      "detail": "no candidate satisfies >=2.0",
+      "kind": "registry"
+    }
+  ],
+  "executable": null,
+  "found": false,
+  "health": null,
+  "instance_id": null,
+  "management": null,
+  "reason_code": "VERSION_UNSATISFIED",
+  "schema_version": 1,
+  "scope": null,
+  "selection_reason": "VERSION_UNSATISFIED",
+  "source": null,
+  "usable": false,
+  "version": null,
+  "zone": null
+}

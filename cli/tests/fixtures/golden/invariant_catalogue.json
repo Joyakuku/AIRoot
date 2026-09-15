@@ -1,0 +1,55 @@
+{
+  "invariants": {
+    "D1": [
+      "ROOT_MARKER_MISSING",
+      "ROOT_MARKER_INVALID",
+      "VOLUME_IDENTITY_MISMATCH",
+      "DATA_ROOT_MISSING",
+      "DATA_ROOT_VOLUME_MISMATCH",
+      "DATA_ROOT_ACL_DRIFT"
+    ],
+    "D10": [
+      "AUDIT_PROJECTION_DRIFT"
+    ],
+    "D2": [
+      "REGISTRY_MISSING",
+      "REGISTRY_INTEGRITY_FAILED",
+      "SCHEMA_UNSUPPORTED"
+    ],
+    "D3": [
+      "PAYLOAD_MISSING",
+      "MANIFEST_DIGEST_MISMATCH",
+      "REFERENCE_STALE",
+      "REFERENCE_DRIFTED",
+      "REFERENCE_UNPROBED",
+      "WHITELIST_REVISION_STALE"
+    ],
+    "D4": [
+      "ORPHANED_STORE_INSTANCE",
+      "UNMANAGED_OBJECT_PRESENT"
+    ],
+    "D5": [
+      "BINDING_TARGET_MISSING",
+      "MULTIPLE_ACTIVE_BINDINGS",
+      "DESIRED_NOT_SATISFIED"
+    ],
+    "D6": [
+      "PENDING_TRANSACTION",
+      "RECOVERY_REQUIRED",
+      "JOURNAL_TRUNCATED"
+    ],
+    "D7": [
+      "REGISTRY_PROJECTION_STALE",
+      "SEARCH_INDEX_DEGRADED",
+      "SEARCH_RESULT_STALE"
+    ],
+    "D8": [
+      "EXTENSION_MANIFEST_INVALID",
+      "EXTENSION_VERSION_UNSUPPORTED"
+    ],
+    "D9": [
+      "POLICY_ONLY_MODE"
+    ]
+  },
+  "schema_version": 1
+}

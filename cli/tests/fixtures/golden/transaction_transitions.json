@@ -1,0 +1,91 @@
+{
+  "active_binding_commit_state": "ACTIVE_BOUND",
+  "happy_path": [
+    "PROPOSED",
+    "APPROVED",
+    "FETCHED",
+    "VERIFIED",
+    "STAGED",
+    "COMMITTED",
+    "REGISTERED",
+    "ACTIVE_BOUND",
+    "EXPOSED",
+    "VERIFIED_AGAIN",
+    "FINALIZED"
+  ],
+  "payload_states": [
+    "ACTIVE_BOUND",
+    "COMMITTED",
+    "EXPOSED",
+    "FINALIZED",
+    "REGISTERED",
+    "ROLLBACK_PENDING",
+    "VERIFIED_AGAIN"
+  ],
+  "schema_version": 1,
+  "terminal_states": [
+    "EXPIRED",
+    "FINALIZED"
+  ],
+  "transitions": {
+    "ACTIVE_BOUND": [
+      "EXPOSED",
+      "ROLLBACK_PENDING"
+    ],
+    "APPROVED": [
+      "FETCHED",
+      "FAILED",
+      "EXPIRED"
+    ],
+    "COMMITTED": [
+      "REGISTERED",
+      "ROLLBACK_PENDING"
+    ],
+    "EXPIRED": [],
+    "EXPOSED": [
+      "VERIFIED_AGAIN",
+      "ROLLBACK_PENDING"
+    ],
+    "FAILED": [
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
+    ],
+    "FETCHED": [
+      "VERIFIED",
+      "FAILED"
+    ],
+    "FINALIZED": [],
+    "PROPOSED": [
+      "APPROVED",
+      "FAILED"
+    ],
+    "RECOVERY_REQUIRED": [
+      "ROLLED_BACK",
+      "FINALIZED"
+    ],
+    "REGISTERED": [
+      "ACTIVE_BOUND",
+      "ROLLBACK_PENDING"
+    ],
+    "ROLLBACK_PENDING": [
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
+    ],
+    "ROLLED_BACK": [
+      "FINALIZED"
+    ],
+    "STAGED": [
+      "COMMITTED",
+      "ROLLBACK_PENDING",
+      "FAILED"
+    ],
+    "VERIFIED": [
+      "STAGED",
+      "FAILED"
+    ],
+    "VERIFIED_AGAIN": [
+      "FINALIZED",
+      "ROLLBACK_PENDING"
+    ]
+  }
+}

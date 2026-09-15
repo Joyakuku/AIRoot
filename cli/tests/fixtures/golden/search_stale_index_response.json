@@ -1,0 +1,64 @@
+{
+  "data": {
+    "fallback": null,
+    "freshness": {
+      "coverage": "complete_for_roots",
+      "lag_ms": 305000,
+      "last_indexed_at": "2024-01-01T00:00:03Z",
+      "state": "stale"
+    },
+    "implementation_id": "airoot-native-search-crawl",
+    "next_cursor": null,
+    "query": "python",
+    "results": [
+      {
+        "accessible": true,
+        "attributes": [
+          "archive"
+        ],
+        "capability_id": null,
+        "kind": "file",
+        "management": "unmanaged",
+        "modified_at": "<MODIFIED_AT>",
+        "name": "python.exe",
+        "path": "<BASE>\\search\\root\\python.exe",
+        "size": 10,
+        "verification": "indexed"
+      }
+    ],
+    "stats": {
+      "index_records_examined": 2,
+      "matched": 1,
+      "returned": 1
+    }
+  },
+  "elapsed_ms": 2000,
+  "evidence": [
+    {
+      "detail": "<BASE>\\search\\root",
+      "kind": "search_roots"
+    },
+    {
+      "detail": "srch-4 (source=file); consistency=bounded_staleness",
+      "kind": "search_policy"
+    },
+    {
+      "detail": "index (generation=crawl-index:2024-01-01T00:00:03Z:2)",
+      "kind": "search_source"
+    },
+    {
+      "detail": "built_at=2024-01-01T00:00:03Z records=2 coverage=complete_for_roots",
+      "kind": "search_index"
+    }
+  ],
+  "extension_id": "airoot-native-search-extension",
+  "finished_at": "2024-01-01T00:05:09Z",
+  "operation": "search",
+  "reason_code": "SEARCH_RESULT_STALE",
+  "schema_version": 1,
+  "started_at": "2024-01-01T00:05:07Z",
+  "status": "degraded",
+  "warnings": [
+    "the index is older than max_staleness_ms (305000 ms); run `airoot search refresh` or raise --max-staleness-ms"
+  ]
+}

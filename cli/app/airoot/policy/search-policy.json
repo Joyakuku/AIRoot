@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "revision": "srch-4",
+  "notes": [
+    "Search policy for the protocol surface (draft §31) and its durable index (draft §32). The",
+    "published schemas `search-request.schema.json` / `search-response.schema.json` are the contract;",
+    "this file holds the *implementation* bounds and defaults they deliberately leave open.",
+    "Upper bounds are data, not code (ADR-0017 decision 4): the protocol requires that a caller",
+    "cannot enlarge `limit` / `max_duration_ms` / `max_staleness_ms` without limit, and a silent",
+    "truncation would look like a complete answer. Exceeding a bound is `EXTENSION_INPUT_INVALID` (8).",
+    "`roots` empty means the policy roots — the registered data roots — and never 'every volume'",
+    "(protocol §6.3). An explicit `--search-root` outside the data roots is accepted because the",
+    "*caller* chose it; it is never guessed by AIROOT, and every result carries its `management` tag",
+    "so the difference stays visible.",
+    "`crawl.max_records` is this implementation's own bound, not a protocol field: a crawl that stops",
+    "at the cap must say so (warning + status=degraded) instead of returning a partial list as if it",
+    "were the whole answer.",
+    "`index.path` is root-relative (protocol §3.1 fixes the location). The index is built by a *crawl*,",
+    "so `freshness.current` means 'this listing is recent', never 'a USN cursor is caught up'",
+    "(ADR-0019, draft §32.2-1). Replacing it is an atomic whole-file replace; AIROOT never deletes a",
+    "user file, and `gc` remains the only path that removes an owned payload.",
+    "`index.max_age_ms` is the age at which `doctor` starts calling the index stale (draft §33.2-3):",
+    "`doctor` has no request context, so the yardstick has to be data rather than an argument.",
+    "`index.native_candidate` names the protocol's target implementation and what it needs. It is a",
+    "*candidate*, never a declared implementation: this build cannot build it, and the reason is",
+    "reported (SEARCH_BACKEND_UNAVAILABLE) rather than left to prose (ADR-0020)."
+  ],
+  "limits": {
+    "limit": 2000,
+    "max_duration_ms": 15000,
+    "max_staleness_ms": 300000
+  },
+  "defaults": {
+    "match": "contains",
+    "target": "name_and_path",
+    "consistency": "bounded_staleness",
+    "limit": 100,
+    "max_duration_ms": 5000,
+    "max_staleness_ms": 30000,
+    "include_directories": false,
+    "include_hidden": false,
+    "allow_reparse_points": false,
+    "accessible_only": true
+  },
+  "roots": {
+    "policy_roots_source": "registered_data_roots",
+    "allow_explicit_roots_outside_data_roots": true
+  },
+  "crawl": {
+    "max_depth": 12,
+    "max_records": 250000,
+    "follow_reparse_points": false,
+    "skip_directory_suffixes": [
+      "-cache",
+      "-packages",
+      ".git",
+      "node_modules",
+      "__pycache__"
+    ]
+  },
+  "index": {
+    "path": "cache/search/index.db",
+    "max_records": 250000,
+    "max_depth": 12,
+    "max_age_ms": 86400000,
+    "native_candidate": {
+      "implementation_id": "airoot-native-search-native-index",
+      "implementation_kind": "native",
+      "requires": [
+        "ntfs_metadata",
+        "usn_journal",
+        "privileged_volume_enumeration"
+      ]
+    }
+  },
+  "hidden_attribute_names": [
+    "hidden",
+    "system"
+  ]
+}
+

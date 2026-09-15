@@ -1,0 +1,109 @@
+{
+  "artifact_bounds": {
+    "https_artifact_default_max_bytes": 2147483648,
+    "portable_file_max_artifact_bytes": 8589934592
+  },
+  "confirmations": {
+    "options": [
+      "project-isolated",
+      "data-root",
+      "cancel"
+    ]
+  },
+  "crawl": {
+    "follow_reparse_points": false,
+    "max_depth": 12,
+    "max_records": 250000,
+    "skip_directory_suffixes": [
+      "-cache",
+      "-packages",
+      ".git",
+      "node_modules",
+      "__pycache__"
+    ]
+  },
+  "discovery_scan": {
+    "max_active_markers": 16,
+    "max_depth": 4,
+    "max_files_per_object": 400,
+    "max_objects": 200,
+    "max_relative_depth": 2,
+    "max_versions_per_object": 8
+  },
+  "index": {
+    "max_age_ms": 86400000,
+    "max_depth": 12,
+    "max_records": 250000,
+    "native_candidate": {
+      "implementation_id": "airoot-native-search-native-index",
+      "implementation_kind": "native",
+      "requires": [
+        "ntfs_metadata",
+        "usn_journal",
+        "privileged_volume_enumeration"
+      ]
+    },
+    "path": "cache/search/index.db"
+  },
+  "inspection_bounds": {
+    "probe_pe_header_bytes": 65536,
+    "probe_pe_resource_section_bytes": 8388608
+  },
+  "policy_revisions": {
+    "capabilities": "cap-1",
+    "discovery_whitelist": "wl-3",
+    "search": "srch-4",
+    "selection": "sp-1",
+    "sources": "src-1"
+  },
+  "provenance": {
+    "artifact_bounds": "caps/backends/{portable_file,https_artifact}.py",
+    "confirmations": "caps/planner.py (CONFIRMATION_OPTIONS)",
+    "crawl": "policy/search-policy.json `crawl` (code fallbacks are the same numbers in caps/search.py)",
+    "discovery_scan": "policy/discovery-whitelist.json `limits`",
+    "index": "policy/search-policy.json `index` + caps/searchindex.py (DEFAULT_INDEX_PATH)",
+    "inspection_bounds": "caps/probe_pe.py",
+    "policy_revisions": "the five policy files' `revision` fields",
+    "search_request": "policy/search-policy.json + caps/search.py (MAX_ROOTS, MAX_CURSOR_LENGTH, code fallbacks)",
+    "selection": "caps/selection.py (PRECEDENCES) + policy/selection-policy.json"
+  },
+  "schema_version": 1,
+  "search_request": {
+    "code_fallback_ceilings": {
+      "limit": 10000,
+      "max_duration_ms": 120000,
+      "max_staleness_ms": 3600000
+    },
+    "defaults": {
+      "accessible_only": true,
+      "allow_reparse_points": false,
+      "consistency": "bounded_staleness",
+      "include_directories": false,
+      "include_hidden": false,
+      "limit": 100,
+      "match": "contains",
+      "max_duration_ms": 5000,
+      "max_staleness_ms": 30000,
+      "target": "name_and_path"
+    },
+    "limits": {
+      "limit": 2000,
+      "max_duration_ms": 15000,
+      "max_staleness_ms": 300000
+    },
+    "max_cursor_length": 4096,
+    "max_roots": 64,
+    "schema_minimums": {
+      "limit": 1,
+      "max_duration_ms": 1,
+      "max_staleness_ms": 0
+    }
+  },
+  "selection": {
+    "precedences": [
+      "steward",
+      "owned"
+    ],
+    "shipped_precedence": "steward"
+  }
+}

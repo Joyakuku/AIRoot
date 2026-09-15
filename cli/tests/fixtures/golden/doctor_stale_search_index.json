@@ -1,0 +1,44 @@
+{
+  "checked_at": "2024-01-03T00:00:04Z",
+  "diagnostics": [
+    {
+      "capability": null,
+      "code": "REGISTRY_PROJECTION_STALE",
+      "evidence": [
+        "state/registry.json is missing or unreadable"
+      ],
+      "impact": "agents reading the projection see no declared state",
+      "remediation": "rebuild",
+      "severity": "warning"
+    },
+    {
+      "capability": null,
+      "code": "SEARCH_RESULT_STALE",
+      "evidence": [
+        "index built_at=2024-01-01T00:00:01Z",
+        "lag_ms=172801000 exceeds index.max_age_ms=86400000",
+        "records=1 coverage=complete_for_roots",
+        "rebuild it with: airoot search refresh"
+      ],
+      "impact": "indexed search answers describe an older listing than the policy allows",
+      "remediation": "rebuild",
+      "severity": "warning"
+    },
+    {
+      "capability": null,
+      "code": "POLICY_ONLY_MODE",
+      "evidence": [
+        "P1 has no ACL, broker or machine PATH exposure"
+      ],
+      "impact": "enforcement is convention and audit only; a same-user process can bypass it",
+      "remediation": "none",
+      "severity": "info"
+    }
+  ],
+  "enforcement": "same_user_can_bypass",
+  "registry_generation": 0,
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "status": "degraded"
+}

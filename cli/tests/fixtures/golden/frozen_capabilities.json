@@ -1,0 +1,108 @@
+{
+  "capabilities": [
+    {
+      "capability_id": "python",
+      "entry": "python.exe",
+      "kind": "runtime",
+      "scope": [
+        "project",
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "node",
+      "entry": "node.exe",
+      "kind": "runtime",
+      "scope": [
+        "project",
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "java",
+      "entry": "java.exe",
+      "kind": "runtime",
+      "scope": [
+        "project",
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "git",
+      "entry": "git.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "archive",
+      "entry": "7z.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "media_probe",
+      "entry": "ffprobe.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "build",
+      "entry": "cmake.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session",
+        "project"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
+      "capability_id": "fake-tool",
+      "entry": "fake-tool.bin",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "writes_store",
+        "writes_registry",
+        "derived_cache"
+      ]
+    }
+  ],
+  "revision": "cap-1",
+  "schema_version": 1
+}

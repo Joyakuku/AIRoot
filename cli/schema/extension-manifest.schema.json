@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/extension-manifest-v1.json",
+  "title": "AIROOT Capability Extension Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "extension_id", "extension_version", "protocol_version", "capability_types", "implementation_id", "implementation_kind", "platforms", "scopes", "required_privilege", "network_access", "executes_scripts", "data_roots", "side_effects", "supports_cancel", "supports_json", "operation_schemas", "operations"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "extension_id": { "$ref": "common.schema.json#/$defs/id" },
+    "extension_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "protocol_version": { "type": "integer", "const": 1 },
+    "capability_types": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "implementation_id": { "$ref": "common.schema.json#/$defs/id" },
+    "implementation_kind": { "type": "string", "enum": ["builtin", "native", "adapter", "fallback"] },
+    "platforms": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/platform" }, "uniqueItems": true },
+    "scopes": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/scope" }, "uniqueItems": true },
+    "required_privilege": { "type": "string", "enum": ["user", "broker", "user_or_broker"] },
+    "network_access": { "type": "boolean" },
+    "executes_scripts": { "type": "boolean" },
+    "data_roots": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "side_effects": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/sideEffect" }, "uniqueItems": true },
+    "supports_cancel": { "type": "boolean" },
+    "supports_json": { "type": "boolean" },
+    "health_checks": { "type": "array", "items": { "type": "string", "enum": ["probe", "version", "self_test", "index_integrity", "permission"] }, "uniqueItems": true },
+    "operation_schemas": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "pattern": "^schema://[a-z0-9._/-]+$" } },
+    "operations": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation_kind", "target_scope", "approval_required", "overwrite_policy", "cancellation_semantics"],
+        "properties": {
+          "operation_kind": { "type": "string", "enum": ["read", "write", "execute", "mutate_system"] },
+          "target_scope": { "$ref": "common.schema.json#/$defs/scope" },
+          "approval_required": { "type": "boolean" },
+          "overwrite_policy": { "type": "string", "enum": ["deny", "replace_same_instance", "explicit_generation"] },
+          "cancellation_semantics": { "type": "string", "enum": ["best_effort", "stop_before_commit", "resume_or_rebuild"] }
+        }
+      }
+    }
+  }
+}

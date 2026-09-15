@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/runtime-instance-v1.json",
+  "title": "AIROOT Managed Runtime Instance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "runtime_id", "instance_id", "kind", "capability_id", "runtime_family", "version", "platform", "architecture", "artifact_digest", "install_backend_id", "store_path", "lifecycle_status", "health", "bindings", "source"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "runtime_id": { "$ref": "common.schema.json#/$defs/id" },
+    "instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "kind": { "const": "runtime" },
+    "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+    "runtime_family": { "type": "string", "enum": ["python", "node", "java", "dotnet", "custom"] },
+    "version": { "type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$" },
+    "platform": { "$ref": "common.schema.json#/$defs/platform" },
+    "architecture": { "$ref": "common.schema.json#/$defs/architecture" },
+    "artifact_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "install_backend_id": { "$ref": "common.schema.json#/$defs/id" },
+    "store_path": { "type": "string", "pattern": "^store(?:\\\\|/)[^\\0]+$" },
+    "lifecycle_status": { "$ref": "common.schema.json#/$defs/lifecycle" },
+    "health": { "$ref": "common.schema.json#/$defs/health" },
+    "bindings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/binding" }, "uniqueItems": true },
+    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[^\\\\/]+$" }, "uniqueItems": true },
+    "source": { "$ref": "common.schema.json#/$defs/source" },
+    "environment_generation": { "type": "integer", "minimum": 0 },
+    "file_manifest_digest": { "$ref": "common.schema.json#/$defs/digest" }
+  }
+}

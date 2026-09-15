@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/broker-response-v1.json",
+  "title": "AIROOT Protected Broker Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "status", "security_mode", "enforcement", "transaction_id", "state", "reason_code", "evidence"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "request_id": { "$ref": "common.schema.json#/$defs/id" },
+    "status": { "type": "string", "enum": ["ok", "rejected", "failed", "recovery_required"] },
+    "security_mode": { "type": "string", "enum": ["protected_machine", "policy_only"] },
+    "enforcement": { "type": "string", "enum": ["acl_and_broker", "same_user_can_bypass"] },
+    "transaction_id": { "type": ["string", "null"] },
+    "state": { "type": ["string", "null"] },
+    "reason_code": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+    "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } },
+    "retryable": { "type": "boolean" }
+  }
+}

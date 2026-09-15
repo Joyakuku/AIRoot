@@ -1,0 +1,13 @@
+# Preserve bytes exactly.
+#
+# Two contracts in this repository depend on the bytes on disk, not on the text:
+#
+#   * `cli/tests/fixtures/golden/` is the byte-for-byte acceptance face for the Rust port
+#     (`test_golden.py` compares generated documents to the committed files), and those files are
+#     written in text mode, so on Windows they are CRLF;
+#   * `cli/bin/airoot.cmd` must stay CRLF, or `cmd.exe` splits its `rem` lines into commands.
+#
+# The tree already mixes CRLF and LF, so `text=auto` would rewrite half of it on the first commit and
+# make a fresh clone differ from the working tree. Disabling conversion for everything is the only
+# policy under which "the corpus reproduces exactly" is true for every clone.
+* -text

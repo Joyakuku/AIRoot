@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/extension-envelope-v1.json",
+  "title": "AIROOT Capability Extension Response Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "extension_id", "operation", "status", "timing", "data", "warnings", "evidence", "reason_code"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "extension_id": { "$ref": "common.schema.json#/$defs/id" },
+    "operation": { "type": "string", "pattern": "^[a-z][a-z0-9._/-]{1,127}$" },
+    "status": { "type": "string", "enum": ["ok", "degraded", "error", "cancelled", "timed_out"] },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "finished_at", "elapsed_ms"],
+      "properties": {
+        "started_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "finished_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "data": { "type": ["object", "array", "null"] },
+    "warnings": { "type": "array", "items": { "type": "string", "maxLength": 2048 } },
+    "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } },
+    "reason_code": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+    "security_mode": { "$ref": "common.schema.json#/$defs/securityMode" },
+    "enforcement": { "$ref": "common.schema.json#/$defs/enforcement" }
+  }
+}

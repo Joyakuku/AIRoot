@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "name": "airoot",
+  "skill_entry": "SKILL.md",
+  "cli": "cli/bin/airoot.cmd",
+  "protocol_version": 1,
+  "invocation": [
+    {
+      "question": "root / protocol / recovery status",
+      "command": ["root", "status"],
+      "always_first": true,
+      "read": ["root_instance_id", "reason_code"]
+    },
+    {
+      "question": "is anything wrong (D1-D10, data roots, references)",
+      "command": ["doctor"],
+      "always_first": true,
+      "read": ["status", "diagnostics[].code", "diagnostics[].severity", "diagnostics[].impact", "security_mode"]
+    },
+    {
+      "question": "where is this capability, and why that one",
+      "command": ["where", "<capability>"],
+      "read": ["found", "executable", "management", "selection_reason", "reason_code", "evidence"]
+    },
+    {
+      "question": "does a version-constrained capability exist",
+      "command": ["where", "<capability>", "--version", "<constraint>"],
+      "read": ["found", "version", "selection_reason", "evidence"]
+    },
+    {
+      "question": "what is declared on this machine",
+      "command": ["inventory", "--class", "<managed_tool|runtime|external_reference|unmanaged>"],
+      "read": ["instances", "external_references"]
+    },
+    {
+      "question": "what is actually inside the data roots (read-only scan)",
+      "command": ["discover"],
+      "read": ["reports[].candidates", "reports[].counts", "whitelist_revision"]
+    },
+    {
+      "question": "may AIROOT manage this object at all",
+      "command": ["capability", "check", "<path>"],
+      "read": ["verdict", "conditions", "remediation"]
+    },
+    {
+      "question": "which capabilities are frozen",
+      "command": ["capability", "list"],
+      "read": ["revision", "capabilities"]
+    },
+    {
+      "question": "record an existing object without taking ownership",
+      "command": ["adopt", "<path>", "--mode", "reference"],
+      "read": ["reference", "ownership", "files_touched"],
+      "notes": "path must be a direct child of a registered data root"
+    },
+    {
+      "question": "drop AIROOT's record of a reference (files untouched)",
+      "command": ["forget", "<external-id>"],
+      "read": ["files_touched", "source_unchanged"]
+    },
+    {
+      "question": "where should an install go, and must a human confirm",
+      "command": ["scope", "decide", "<capability>"],
+      "read": ["scope", "confirmation_required", "options", "origin", "size_estimate_bytes", "reason_code"]
+    },
+    {
+      "question": "route and plan an install (dry run first)",
+      "command": ["plan", "<capability>", "--scope", "<project|data-root>", "--target", "<dir|data-root:id>", "--dry-run"],
+      "read": ["routing", "confirmation_required", "required_approval", "size_estimate_bytes", "size_note"]
+    },
+    {
+      "question": "make a capability usable in this session only",
+      "command": ["env", "activate", "<external-id>", "--shell", "<powershell|cmd>"],
+      "read": ["variables", "path_prepend", "persisted"]
+    },
+    {
+      "question": "where does an installable artifact come from, and which hosts are trusted",
+      "command": ["source", "list"],
+      "read": ["revision", "allowed_hosts", "sources", "signature_verification"]
+    },
+    {
+      "question": "what is the published digest for this capability and version",
+      "command": ["source", "resolve", "<capability>", "--version", "<v>"],
+      "read": ["expected_digest", "artifact_url", "checksum_url", "provenance", "integrity", "offline"],
+      "notes": "the digest comes from the publisher's checksum file; --source-out writes a document that `plan --source-json` accepts"
+    },
+    {
+      "question": "undo a session activation and restore the previous values",
+      "command": ["env", "deactivate", "--session", "<id>"],
+      "read": ["deactivated", "restored", "stack_depth", "script"],
+      "notes": "restores old values instead of deleting; refuses with SESSION_STATE_STALE when the generation moved"
+    },
+    {
+      "question": "run one command with a capability's environment",
+      "command": ["exec", "<external-id>", "--", "<command>"],
+      "read": ["exit_status", "stdout", "persisted"],
+      "notes": "`exec --env <external-id> -- <command>` (planning §15.1) is the same command; everything after `--` goes to the child, options before it belong to AIROOT"
+    },
+    {
+      "question": "persist environment variables (needs approval)",
+      "command": ["env", "persist", "<external-id>"],
+      "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
+      "notes": "without --token-file this stops at exit 4 and writes nothing"
+    },
+    {
+      "question": "undo what AIROOT persisted",
+      "command": ["env", "forget", "<external-id>"],
+      "read": ["restored", "removed", "drifted"],
+      "notes": "--dry-run reports without changing anything and without consuming the record"
+    },
+    {
+      "question": "which persisted variables exist",
+      "command": ["env", "list"],
+      "read": ["environment_persist"]
+    },
+    {
+      "question": "what does AIROOT own on this machine",
+      "command": ["tool", "list"],
+      "read": ["instances[].capability_id", "instances[].version", "instances[].lifecycle_status", "instances[].active_binding", "instances[].source"]
+    },
+    {
+      "question": "what is the state of this one instance",
+      "command": ["tool", "status", "<instance-id>"],
+      "read": ["instance", "payload_present", "entrypoints_missing", "findings", "reason_code"],
+      "notes": "read-only; never switches the active binding"
+    },
+    {
+      "question": "is this payload still intact",
+      "command": ["tool", "verify", "<instance-id>"],
+      "read": ["verified", "expected_digest", "actual_digest", "problems"],
+      "notes": "digest and entrypoint existence only; never adopts or repairs"
+    },
+    {
+      "question": "is PATH still following the one-entry rule",
+      "command": ["path", "verify"],
+      "read": ["entries", "findings[].severity", "violations", "launcher_present"],
+      "notes": "read-only; writing machine PATH belongs to the P2 broker"
+    },
+    {
+      "question": "pin a capability to a version constraint",
+      "command": ["tool", "pin", "<capability>"],
+      "read": ["sync", "in_sync", "plan", "manifest_revision", "active_binding_changed"],
+      "notes": "writes desired state only; it offers a plan and never changes the active binding"
+    },
+    {
+      "question": "retire an owned payload (binding only)",
+      "command": ["tool", "retire", "<instance-id>"],
+      "read": ["payload_removed", "lifecycle_status"]
+    },
+    {
+      "question": "what may be collected, and collect it",
+      "command": ["tool", "gc", "--plan"],
+      "read": ["candidates[].blockers", "plans[].plan_hash"],
+      "notes": "--apply needs an approval token bound to the plan hash"
+    },
+    {
+      "question": "remove an AIROOT-owned payload",
+      "command": ["uninstall", "<instance-id>"],
+      "read": ["retire", "plan", "required_action", "reason_code"],
+      "notes": "retire then gc; never one step; never for a reference"
+    },
+    {
+      "question": "regenerate derived state (projection, audit) from the registry",
+      "command": ["rebuild"],
+      "read": ["rebuilt", "archived_to", "findings", "database_touched", "files_deleted"],
+      "notes": "--plan reports only; the registry database is never rebuilt from its own projection"
+    },
+    {
+      "question": "where is a file, and what is it called (search, not capability resolution)",
+      "command": ["search", "<query>"],
+      "read": [
+        "status",
+        "reason_code",
+        "data.results[].path",
+        "data.results[].management",
+        "data.results[].capability_id",
+        "data.freshness",
+        "data.fallback",
+        "data.next_cursor"
+      ],
+      "notes": "bounded crawl, not an index: status=degraded + SEARCH_FALLBACK_USED(2) + data.fallback.kind=crawl + freshness=unknown/none mean 'this is a live walk, not a healthy index'. `search --query status` searches for a file literally named status; `search status|explain|implementations` are the reserved subcommands. Never present search as capability resolution — that is `where`."
+    },
+    {
+      "question": "recover an interrupted change",
+      "command": ["repair"],
+      "read": ["repaired[].action", "repaired[].state"]
+    }
+  ],
+  "confirmation_options": ["project-isolated", "data-root", "cancel"],
+  "exit_codes": {
+    "0": "success (degradation and info-level conclusions included)",
+    "1": "not found",
+    "2": "degraded or drift (the answer is usable; the state is not perfect)",
+    "3": "broken",
+    "4": "approval required or expired",
+    "5": "privilege required",
+    "6": "recovery required",
+    "7": "invalid plan or provenance (includes OWNERSHIP_REQUIRED)",
+    "8": "invalid input or schema",
+    "9": "capability not frozen / extension unavailable"
+  },
+  "never": [
+    {
+      "id": "write_system_state_directly",
+      "skill_item": 1,
+      "statement": "write PATH, the registry, an ACL, store/ or the registry database directly"
+    },
+    {
+      "id": "implement_install_logic",
+      "skill_item": 2,
+      "statement": "implement install logic or drive a vendor's private installer arguments"
+    },
+    {
+      "id": "treat_approve_as_human_approval",
+      "skill_item": 3,
+      "statement": "treat an `approve` call as human approval"
+    },
+    {
+      "id": "shell_search_instead_of_where",
+      "skill_item": 4,
+      "statement": "replace `where`/`discover`/`inventory` with recursive shell search"
+    },
+    {
+      "id": "simulate_install_while_unavailable",
+      "skill_item": 5,
+      "statement": "simulate an install when the CLI is unavailable, schema-incompatible or recovery is pending"
+    },
+    {
+      "id": "fabricate_certainty",
+      "skill_item": 6,
+      "statement": "fabricate certainty: when unsure say so; reason_code distinguishes 'unknown' from 'absent'"
+    },
+    {
+      "id": "delete_inside_a_data_root",
+      "skill_item": 7,
+      "statement": "delete anything inside a data root; forget drops the record and uninstall only ever applies to owned payloads"
+    },
+    {
+      "id": "claim_implemented_or_everything_class",
+      "skill_item": 8,
+      "statement": "claim AIROOT is implemented, available or Everything-class; the allowed wording is AGENTS.md §8"
+    },
+    {
+      "id": "describe_policy_only_as_protected",
+      "skill_item": null,
+      "stated_in": "第一步永远是确认状态",
+      "statement": "describe security_mode=policy_only as protected"
+    },
+    {
+      "id": "call_an_unimplemented_command",
+      "skill_item": null,
+      "stated_in": "未实现的命令（不要调用）",
+      "statement": "call an unimplemented command"
+    }
+  ],
+  "not_implemented": [
+    "bootstrap",
+    "reconcile",
+    "path backup",
+    "path restore",
+    "root adopt",
+    "root relocate"
+  ],
+  "honesty": {
+    "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
+    "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",
+    "signature_note": "v1 verifies published digests only. A digest is not a signature; never imply the artifact was signed.",
+    "allowed_claims": "See AGENTS.md §8. Never claim AIROOT is implemented, available, or Everything-class."
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "candidates": [
+    {
+      "active_version": null,
+      "architecture": "x64",
+      "capability_id": "python",
+      "capability_kind": "runtime",
+      "data_root_id": "dr-env",
+      "directory_name": "python",
+      "entrypoints": [
+        "python.exe"
+      ],
+      "evidence": [
+        {
+          "detail": "architecture=x64; is_dll=False; product_name=Python; company_name=Python Software Foundation; file_description=Python; original_filename=python.exe; file_version=3.11.11150.1013; product_version=3.11.11150.1013",
+          "kind": "pe_static",
+          "path": "<BASE>\\discover\\env\\python\\python.exe"
+        },
+        {
+          "detail": "entrypoint depth 0 below the object root",
+          "kind": "discovery",
+          "path": "<BASE>\\discover\\env\\python\\python.exe"
+        }
+      ],
+      "executable": "<BASE>\\discover\\env\\python\\python.exe",
+      "external_id": "external/dr-env/python",
+      "management": "external_reference",
+      "notes": [],
+      "path": "<BASE>\\discover\\env\\python",
+      "probe_level": 2,
+      "source_kind": "pe_static",
+      "version": "<VERSION>",
+      "versions": [
+        "<VERSION>"
+      ]
+    }
+  ],
+  "counts": {
+    "external_reference": 1
+  },
+  "data_root_id": "dr-env",
+  "data_root_path": "<BASE>\\discover\\env",
+  "files_inspected": 1,
+  "scanned_objects": 1,
+  "schema_version": 1,
+  "truncated": false,
+  "whitelist_revision": "wl-3"
+}

@@ -1,0 +1,243 @@
+# AIROOT v0.3 规范审查报告
+
+## 审查范围
+
+本报告审查以下方案文件的内部一致性、可实现性边界、Skill/CLI 规范性和测试可验证性：
+
+- `AIROOT-总体方案规划-v0.3.md`
+- `AIROOT-v0.3-三大核心契约方案.md`
+- `AIROOT-搜索能力与工具集成协议方案.md`
+- `AIROOT-v0.3-验证与测试方案.md`
+
+审查基准是用户已经确认的产品边界：AIROOT 本身是 Skill 根目录，正式入口是 AIROOT/SKILL.md；AIROOT/cli 是 CLI、能力扩展和运行数据根；Capability Extension 代表能力协议模块，Managed Tool/Runtime Instance 代表 AIROOT 实际维护的具体 payload/运行时；手工脱离 Skill 安装的对象默认只发现、不自动迁移；同一能力 binding key 只有一个 active implementation。
+
+附件 `AIROOT-PLAN-v0.2.md` 被作为历史设计材料和约束来源进行比对；其中的说明不会覆盖本轮用户明确确认的目录、Skill、能力扩展和“不自动迁移”边界。
+
+本阶段没有创建生产 CLI、没有创建系统 PATH、没有注册表写入、没有 ACL 变更，也没有把 Everything 或其他外部软件放入 Skill。
+
+## 结论
+
+方案的产品边界和总体架构是合理的，已经可以作为实现前评审基线，但还不能称为“实现契约完全冻结”。当前状态应标记为：
+
+```text
+架构方向：通过
+目录/对象边界：通过
+跨文档核心状态机：通过
+Extension/Install Backend 分离：通过
+Managed Tool/Runtime 生命周期：通过
+搜索 profile：通过，正式 JSON Schema 已生成并完成 meta-schema 校验
+权限强制性：有条件通过，依赖受保护 broker 和签名应用层
+生产实现就绪：未通过，需完成实现前门槛
+```
+
+最关键的判断是：AIROOT 可以做成 Skill，也可以做成 CLI；Skill 适合自然语言适配和行为约束，CLI/Core 才是状态、权限、索引、事务和恢复的可信执行面。只有 `AIROOT\SKILL.md` 位于根目录并调用稳定 CLI 协议时，才符合这个边界。
+
+## 已解决的 P0 问题
+
+| 问题 | 修正后的规范 | 状态 |
+|---|---|---|
+| Extension、Provider、Install Backend 混用 | `extension_id` 是能力模块，`implementation_id` 是 active 实现，`install_backend_id` 是安装后端；`provider` 不再作为新协议泛称 | 已解决 |
+| 通用 Envelope 与搜索响应不一致 | 所有 Extension 使用 `schema_version/extension_id/operation/status/timing/data/warnings/evidence/reason_code`；Search 的结果放在 `data` | 已解决 |
+| 事务顺序冲突 | `COMMITTED -> REGISTERED(inactive) -> ACTIVE_BOUND -> EXPOSED -> VERIFIED_AGAIN -> FINALIZED` | 已解决 |
+| 搜索索引位置和 ACL 冲突 | 索引、卷游标和派生数据放在 `AIROOT\cli\cache\search`；SQLite registry 在 `state\registry.db` | 已解决 |
+| Skill 根和 CLI 根含义不清 | `AIROOT\SKILL.md` 是入口，`AIROOT\cli` 是运行根；应用层和持久数据层分离 | 已解决 |
+| 同一类型多个默认工具 | active 唯一性按完整 binding key 强制；fallback 是执行模式，不是第二个 active 实现 | 已解决 |
+| 外部对象自动迁移风险 | `discover -> classify -> report -> explicit reference/import/recreate`；默认不移动、不接管、不改 PATH | 已解决 |
+| `tools`/`env` 与 payload 关系不清 | `store` 是唯一 payload；`tools`/`env` 是 binding/view；`exposure` 由 registry active binding 解析 | 已解决 |
+| “工具”被收窄为 Extension，遗漏实际受控 tools | Managed Tool/Runtime Instance 单独建模；通过 registry + store + binding/view + exposure 管理；External Reference 不自动升级 | 已解决 |
+
+## 已补足的边界行为
+
+### Managed Tool 与 Capability Extension 的边界
+
+此前方案把“工具”单独解释为 Capability Extension，容易让读者误解为 AIROOT 不维护 jq.exe、ffmpeg.exe、Python、Node 等受控对象。现已固定以下关系：
+
+    Capability Extension  -> 定义能力协议和 invoke/query 行为
+    Managed Tool Instance -> 保存 AIROOT 实际维护的 payload、manifest、健康、binding 和版本
+    Managed Runtime       -> 保存 Python/Node 等 runtime/environment 实例
+    External Reference    -> 只记录外部对象，不拥有生命周期
+    Install Backend       -> 获取、验证、stage、commit、rollback
+
+Managed Tool 的更新使用新 instance + 新 generation；旧 active 在新版本通过验证前不得删除。retire 和 gc 分离，doctor 不自动删除；搜索发现的外部可执行文件不自动进入 managed tools。
+生命周期图中的 `planned` 只由显式 `import`、`recreate` 或 `adopt --mode import` 计划产生；`discover`、`where`、`doctor` 和 `rebuild` 不会自动推进外部对象。`env\\runtimes` 只保存 Runtime Instance 的 binding/view 和 launcher metadata，runtime payload 仍统一存放在 `store`。
+
+### 外部发现和迁移
+
+- source 在 plan 后 hash、版本、架构、路径或权限改变：重新 probe，digest 不一致即失败，source 和旧 binding 保持不变。
+- source 没有可靠 digest、来源或静态 manifest：可以 reference 和报告，但 import/recreate 只能生成待审批 plan，不能直接写入受保护区。
+- 目标 instance 已存在且 digest 相同：幂等返回；digest 不同：拒绝覆盖，要求新的 instance identity。
+- 目标 binding key 已占用：默认拒绝；替换必须有显式 policy、new generation 和批准记录。
+- import/recreate 取消、超时或失败：清理 AIROOT stage，保留原 external reference 和 source。
+- `unadopt` 只删除 AIROOT 引用，不删除 source；仍被项目声明使用时拒绝解除。
+- AIROOT 根内无 registry 的对象：先标记 `orphaned/recovery_required`，不能用普通 import 覆盖。
+- source 消失、权限改变或 hash 漂移：变为 `stale`/`drifted`，不自动修复、下载替换或删除。
+
+### Active binding 和事务
+
+- `REGISTERED` 明确表示 inactive，launcher 不能选择。
+- 只有 `ACTIVE_BOUND` 事务点可以改变 active binding；generation、journal、event table 必须一起记录。
+- `EXPOSED` 是 launcher/where 观察到新 binding，不是第二个权威状态。
+- 验证失败只切换回旧 binding，新 instance 保留为 `broken`/`retired` 以便调查。
+- 跨卷移动不假设文件系统原子性，使用 copy + verify + switch，旧 root 在新 root 验证前只读保留。
+
+### 审批和副作用
+
+- `airoot approve` 只消费受保护 issuer 签发的 token，不生成“人工批准”。
+- token 绑定 `plan_hash`、root、machine、policy revision、issuer、签名、有效期和一次性 nonce。
+- 重放、撤销、过期、签名无效、policy revision 改变或 plan 内容改变：拒绝提交并写审计事件。
+- operation 必须声明 `operation_kind`、`target_scope`、`approval_required`、`overwrite_policy` 和 `cancellation_semantics`。
+- source 的 delete/move/overwrite 不能隐藏在 Install Backend 的 commit 里，必须出现在 plan 和批准范围内。
+
+### 搜索
+
+- 搜索结果默认是调用者重新做 ACL 过滤后的结果；机器级 indexer 不等于跨用户可见。
+- `roots` 为空不扫描整机；root 越界、UNC、未允许 reparse point 直接失败。
+- cursor 绑定 query、root、scope、implementation generation 和 index generation，任一变化返回 `SEARCH_CURSOR_INVALID`。
+- journal gap、卷卸载、权限变化和索引损坏进入 degraded/rebuild，不继续使用无法证明连续性的 cursor。
+- crawl fallback 仍保留 Native Search active implementation，并明确 `status=degraded`、`fallback` 和 freshness。
+- `physical_verify` 期间对象消失或重命名时，返回变化证据，不伪装为当前稳定事实。
+
+### Shell 和 Skill
+
+- `env activate` 不能修改已经存在的父 PowerShell/cmd 进程；只能输出 shell script/JSON，或由 `airoot exec` 创建带环境的子进程。
+- session 记录 session ID、environment generation 和原始变量；generation 过期或 root identity 改变时激活失败。
+- Skill 不直接写 PATH、registry、ACL、R 区或外部软件私有参数。
+
+## 已生成的实现前基线
+
+本轮已生成三项可审查基线：
+
+1. `AIROOT\\cli\\schema\\`：18 个 JSON Schema（**审查时的数字；现为 19 个**，`reference-plan` 是第 19 个，见文末状态节），覆盖 registry projection、root marker、managed tool/runtime、desired manifest、plan、approval、Broker IPC、transaction、Extension manifest/envelope、Search、where、doctor 和 GC；
+2. `AIROOT\\cli\\broker\\AIROOT-受保护Broker方案-v1.md`：Protected machine mode 的信任边界、IPC、批准 token、ACL、提交算法、恢复和审计契约（实际位置为 `docs\\broker\\`）；
+3. `AIROOT\\cli\\fake_vertical_slice\\`：固定 fake artifact、SQLite WAL simulation、fault injection、digest drift、approval replay 和 recovery runner。
+
+Schema runner 已通过全部 18 个 Schema 的 meta-schema 检查（**审查时的数字；现为 19 个**），并验证 plan/approval fixture；fake vertical slice 已通过完整事务和负向测试。该 slice 使用 `test_hmac_sha256`，只代表测试 issuer，不代表生产签名实现。
+
+## 仍需在实现前冻结的 P1 项
+
+这些不是方向性缺陷，但不冻结就不应进入生产实现：
+
+1. Schema 的正式迁移工具、registry/event 表结构、event 保留期限，以及 `logs\audit` 重建和导出协议。
+2. 当前 Skill scaffold 目录还没有根级 `SKILL.md`；在创建它之前只能称为方案文档，不能称为可安装 Skill。
+3. `state/events` SQLite 表结构、event 保留期限，以及 `logs\audit` 重建和导出协议。
+4. Protected machine mode 的 bootstrap：broker 二进制、应用 manifest、签名/哈希来源、ACL 初始化和降级条件。
+5. human approval 的具体 UI/IPC 通道；必须能证明 issuer、approved_by_sid 和一次性 token 消费。
+6. Native Search 的进程模型：用户级 indexer、受限 broker 操作、跨用户索引隔离、USN Journal 读取权限。
+7. `machine_id`、`session_id`、`project_id` 和 project root canonicalization 的生成算法。
+8. v1 capability 清单，以及 `file_search` 是否只提供 Native Index 或允许显式 Everything adapter。
+9. Windows 不支持 NTFS、卷卸载、journal reset、杀毒软件锁定和长路径的 fallback 策略。
+10. 真实 Windows runner、ACL/UAC/named-pipe fault injector 和每个事务状态的系统级崩溃恢复 fixture；fake slice 已覆盖无特权的协议级验证。
+
+## 规范性检查结果
+
+已对方案文本执行跨文档关键词和状态扫描，当前确认：
+
+- 方案正文没有旧盘符根目录、旧 skill-dir 或错误的 `cli\SKILL.md` 规范路径残留；
+- 方案正文没有把搜索索引继续定义在旧的 state 搜索目录；
+- 方案正文没有把旧 provider 标识作为新协议字段；
+- 四份文档都使用 `ACTIVE_BOUND` 和同一事务顺序；
+- 退出码已统一为 0-9，并要求 Search reason code 映射到通用退出码；
+- Search 和通用 Extension 都使用 `data` 包裹 profile 结果；
+- `where` 已包含 `management`、`usable`、`selection_reason`、`source`、`candidates`、`evidence` 和 `found=false` 语义；
+- 测试方案已覆盖 active 唯一性、approval token、cache ACL、Skill 更新、root relocate、外部 source 变化和安全 probe。
+- 测试方案已覆盖 Extension 与 Managed Tool 分离、多版本共存、旧 active 回滚、retire/GC 引用保护和搜索发现不自动 adopt；fake vertical slice 已执行其中的协议级子集。
+
+`provider` 在少量地方仅作为 Terraform 等开源项目的原始术语、兼容字段负面测试或旧文档迁移说明出现，不属于 AIROOT 新 API 的泛称。
+
+## 测试就绪判定
+
+方案阶段可以称为“测试备齐”的最低条件是：
+
+1. L0 能验证 canonical path、schema、plan hash、状态转移、退出码和 policy；
+2. L1 能验证 SQLite WAL、generation CAS、store/cache 分离、幂等和故障注入；
+3. L2 能验证 Windows ACL、machine PATH、UAC、PowerShell/cmd session 行为；
+4. L3 能在 `ACTIVE_BOUND`、`EXPOSED`、registry 写入、验证失败等边界终止进程，并证明 repair 结果；
+5. 每个 JSON fixture 都能区分 not found、degraded、broken、approval、privilege、recovery 和 extension unavailable；
+6. 测试不修改开发机 PATH、注册表、ACL 或真实 AIROOT root。
+
+在这些门槛完成前，不能声称“已经实现 AIROOT”或“已经具备 Everything 级性能”；可以声称“方案契约和验证计划已具备，生产实现仍待评审门槛通过”。
+
+## 审查结论
+
+AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、索引和恢复，也维护明确纳入范围的 Managed Tool/Runtime Instance；它不接管所有外部软件。Skill 是适配层，CLI/Core 是执行层；外部手工安装对象默认被发现和分类，只有显式 reference、import、recreate 或安装计划成功后才进入相应生命周期。下一阶段可以进入受控实现评审：先完成真实 Windows Broker 的签名、ACL、named-pipe 和 UAC 方案，再把 fake vertical slice 的状态机替换为受保护执行面。当前交付仍不是可安装 Skill，也不是生产 CLI。
+
+---
+
+## P1 实现状态（实现后追加）
+
+本节记录规划 §19 的实现结果，是本报告的后续状态，不改变前文的审查结论。
+**本节随实现推进而更新：它描述的是当前状态，不是写入时的快照。** 前文（§「已生成的实现前基线」及以上）
+是审查当时的记录，其中的计数按当时为准。
+
+**当前规模**：`cli/schema/` **19** 个 JSON Schema；`pytest cli/tests` **737 项**（含 **62** 项常驻跨工件
+一致性审计 `cli/tests/test_l0_consistency.py`）；golden 语料 **27** 个 fixture
+（`cli/tests/fixtures/golden/`，Rust 版逐字节验收面）；两份契约文档合计定义 **107 个场景编号**，
+台账见 `cli/tests/fixtures/golden/scenario_ledger.json`；决定拒绝的每个数值（搜索上限三件套、
+`MAX_ROOTS`、爬取与索引边界、白名单扫描边界、三选一、优先级、artifact 与 PE 检查字节上限）
+见 `cli/tests/fixtures/golden/execution_bounds.json`。
+
+**已交付**（Python 3.11，唯一第三方运行时依赖 `jsonschema`）：
+
+| 交付项 | 位置 |
+|---|---|
+| root 解析、路径规范化（含 `\\?\` 扩展长度共享原语）、卷身份守卫 | `cli\app\airoot\{root,paths,canon,exits,clock,schema_io}.py` |
+| SQLite registry、WAL、migration（至 v5）、generation CAS、JSON 投影 | `cli\app\airoot\registry\` |
+| 事务状态机、journal、审批校验、模拟事务、repair | `cli\app\airoot\tx\` |
+| `where`（**steward-first**）确定性选择、版本约束、effective state、`doctor` D1–D10、`inventory` | `cli\app\airoot\caps\` |
+| Capability Extension 协议与假扩展 | `cli\app\airoot\ext\`、`cli\extensions\airoot-fake-extension.json` |
+| CLI 与开发期 launcher | `cli\app\airoot\cli.py`、`cli\bin\airoot.cmd` |
+| **管家域步骤 1–9、11–12**：数据根注册（可跨卷）、只读 PE 静态探测、能力白名单发现、`adopt --mode reference`、依赖分流与确认、会话级环境激活、**user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、删除语义分级、能力边界、`rebuild`、来源清单、`desired` 层与 `tool pin`、只读观察面、session 快照栈 | `cli\app\airoot\caps\`、`policy\{discovery-whitelist,sources,selection-policy,capabilities}.json` |
+| **`search` 协议面与 crawl 建的持久索引**（**不是** USN 索引）：请求/实现上限/root 规则/cursor 绑定索引 generation、有界 crawl、`cache\search\index.db` 整文件原子替换、索引状态接进 D7、**只读** USN 能力探测 | `cli\app\airoot\caps\{search,searchindex,usn}.py`、`policy\search-policy.json` |
+| **Skill 适配层**：`SKILL.md` 是仓库根的唯一 Skill 入口，另有机器可读调用元数据与按需参考 | `SKILL.md`、`agents\airoot.json`、`references\` |
+| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**737 项**）、`cli\tests\fixtures\golden\`（**27 个 fixture**）、`cli\tests\scenario_ledger.py`（**107 个场景编号**的解析器与处置表）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明） |
+
+**P1 退出条件已验证**：
+
+1. 不接真实外部软件也能跑通状态和协议——`test_p1_exit_condition_one_*` 通过 CLI 完成
+   plan → approve → install → where → doctor，并断言 payload 从未被执行；
+2. registry 损坏与 generation 冲突有明确结果——损坏报 `REGISTRY_INTEGRITY_FAILED` 且
+   **不重写证据**；过期 generation 报 `STALE_GENERATION`（退出码 2），旧状态不被覆盖。
+
+**已修复的规范缺陷**（详见 `AIROOT-v0.3-实现决策记录.md`）：
+
+- `transaction.schema.json` 补齐 `ROLLED_BACK`——原文无法表达 §14.1 的合法状态；
+- 成功 reason code 由 `OK` 改为 `SUCCESS`——`OK` 只有 2 字符，无法满足所有 Schema 的
+  `reason_code` 模式；
+- Extension manifest 以 `operations` 为准（文档示例的 `operation_policies` 与
+  `replace_derived_cache` 会被 Schema 拒绝）；
+- `where-response`/`doctor-response`/`extension-envelope` 增加**可选**的
+  `security_mode`/`enforcement`，使 P1 能诚实声明 `policy_only`（验证方案 P-013）；
+- 搜索面另有三处「文档与 Schema 冲突」由 ADR-0017/ADR-0018 记录，派生缓存可替换的边界由
+  ADR-0019 记录，USN 索引器的时机由 ADR-0020 记录。
+
+**仍缺的项（当前状态）**：
+
+- registry migration **工具**（列出/回滚）、event 保留期、`logs\audit` 导出协议——迁移本身已到 v5，
+  缺的是这些外围；P1 只有 `migrations` 骨架与可重建的 audit 投影；
+- **根级 `SKILL.md` 已于步骤 9b 交付**（本报告此前把它列为缺失，那条陈述已经过时）：`SKILL.md`
+  现在是仓库根的 Skill 入口，并带 13 项漂移守卫；
+- broker bootstrap、human approval 通道仍缺（属 P2）：目前只有测试用 `test_hmac_sha256` issuer，
+  `ed25519` 校验显式未实现；
+- 第 7 条（`machine_id`/`session_id`/`project_id` 生成算法）**刻意未发明**：只接受夹具注入或显式入参；
+- **machine 级**环境变量持久化、ACL 基线（`DATA_ROOT_ACL_DRIFT` 的发射）、machine PATH 写入、
+  `exposure\bin` launcher：均属 P2；
+- **真实 artifact 的下载与验证**：机制（`https_artifact` + 上游校验和）已通，尚未对真实上游执行过；
+- `file_search` 的 **USN 常驻索引器**：属 P2（初始全量枚举需要 broker）；协议面与受控 crawl 已可用；
+- `reconcile`、`path backup|restore`、`root adopt|relocate`：已按命令路径登记为未实现；
+- `.ai/tooling.json` 的写入。
+- **107 个场景编号里有 68 个没有任何测试点名**（台账 `scenario_ledger.json` 逐条给出结构性理由：
+  10 个需要 P2 受保护状态、7 个需要 P4 真实 artifact、8 个依赖尚未设计的能力、1 个是只在文字里的
+  不变量、41 个由某个测试覆盖但那个测试没有引用编号、1 个是重复登记）。**"没有被点名"不等于
+  "没有被测"**，台账记录的是**证据指针**而不是覆盖判定；`S-010`/`S-015` 是同一个场景登记了两次，
+  `S-014` 在两份文档里各定义一次（两处必须同时更新），`P-021` 的"另一个卷→拒绝"一句**已取代**。
+- 本报告与验证方案里写作 `AIROOT\cli\broker\...` 的路径已更正为实际位置 `docs\broker\`。
+
+**测试就绪判定的变化**：L0（协议、canonical path、状态转移、退出码）与 L1（隔离文件系统、
+SQLite WAL、generation CAS、故障注入、恢复）**已落地并通过**；L2（Windows ACL、machine
+PATH、UAC、PowerShell session）与 L3（系统级崩溃恢复夹具）**仍缺**，属 P2 范围。
+
+**口径**：现在可以说"协议级 Core 已通过 P1 验收，fake vertical slice 的状态机已被受控
+Core 取代"；仍**不可**说"AIROOT 已实现"或"已具备 Everything 级性能"。`search` 尤其**不能**被说成
+Everything 级性能：它的索引由一次目录遍历建立，`freshness.current` 只表示"这份清单是最近一次
+遍历建立的"，与 USN journal 的"游标没断档"不是一回事。
+

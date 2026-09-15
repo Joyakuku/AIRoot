@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/registry-projection-v1.json",
+  "title": "AIROOT Registry JSON Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "root_instance_id", "machine_id", "generation", "policy_revision", "instances", "bindings", "external_references", "generated_at"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "machine_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+    "generation": { "type": "integer", "minimum": 0 },
+    "policy_revision": { "type": "integer", "minimum": 0 },
+    "instances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instance_id", "kind", "capability_id", "version", "lifecycle_status", "health", "artifact_digest", "store_path"],
+        "properties": {
+          "instance_id": { "$ref": "common.schema.json#/$defs/id" },
+          "kind": { "type": "string", "enum": ["managed_tool", "runtime"] },
+          "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+          "version": { "type": "string", "minLength": 1 },
+          "lifecycle_status": { "$ref": "common.schema.json#/$defs/lifecycle" },
+          "health": { "$ref": "common.schema.json#/$defs/health" },
+          "artifact_digest": { "$ref": "common.schema.json#/$defs/digest" },
+          "store_path": { "type": "string" },
+          "collected_at": {
+            "description": "Set once `gc --apply` removed this instance's payload. The row is kept because historical bindings reference it, so a consumer needs this field to tell a deliberate collection apart from a payload that vanished (PAYLOAD_MISSING).",
+            "anyOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }]
+          }
+        }
+      }
+    },
+    "bindings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/binding" } },
+    "external_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["external_id", "capability_id", "path", "management", "health", "observed_at"],
+        "properties": {
+          "external_id": { "$ref": "common.schema.json#/$defs/id" },
+          "capability_id": { "$ref": "common.schema.json#/$defs/id" },
+          "path": { "type": "string", "minLength": 1 },
+          "management": { "enum": ["external_reference", "unmanaged", "project_owned", "quarantined"] },
+          "health": { "$ref": "common.schema.json#/$defs/health" },
+          "observed_digest": { "anyOf": [{ "$ref": "common.schema.json#/$defs/digest" }, { "type": "null" }] },
+          "observed_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+          "capability_kind": { "type": ["string", "null"], "enum": ["runtime", "tool", null] },
+          "data_root_id": { "anyOf": [{ "$ref": "common.schema.json#/$defs/id" }, { "type": "null" }] },
+          "version": { "type": ["string", "null"], "maxLength": 64 },
+          "versions": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "uniqueItems": true
+          },
+          "active_version": { "type": ["string", "null"], "maxLength": 64 },
+          "architecture": { "anyOf": [{ "$ref": "common.schema.json#/$defs/architecture" }, { "type": "null" }] },
+          "entrypoints": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "probe_level": { "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "null" }] },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["declared", "pe_static", "public_locator", "extension_handler", "approved_execution"]
+              },
+              { "type": "null" }
+            ]
+          },
+          "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } }
+        }
+      }
+    },
+    "generated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "data_roots": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/dataRoot" }
+    }
+  }
+}

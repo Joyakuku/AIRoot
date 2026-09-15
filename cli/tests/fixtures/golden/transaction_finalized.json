@@ -1,0 +1,18 @@
+{
+  "approval_id": "approval/golden-fixture",
+  "approval_nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "created_at": "2024-01-01T00:00:04Z",
+  "failure": null,
+  "generation_after": 1,
+  "generation_before": 0,
+  "instance_id": "fake-tool/fake-tool/1.0.0/win-x64",
+  "journal_seq": 10,
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "plan_hash": "sha256:b11d9abb954661624ae0a0e103af0e21011b0996a904a9e5dba34ade0555879b",
+  "plan_id": "plan/fake-tool/1.0.0/golden-fixture",
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1,
+  "state": "FINALIZED",
+  "transaction_id": "tx/fake-tool/ff63a80d93f0",
+  "updated_at": "2024-01-01T00:00:28Z"
+}

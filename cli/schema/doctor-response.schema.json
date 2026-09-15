@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/doctor-response-v1.json",
+  "title": "AIROOT Doctor Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "root_instance_id", "registry_generation", "diagnostics", "checked_at"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "status": { "type": "string", "enum": ["healthy", "degraded", "broken", "recovery_required"] },
+    "root_instance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "registry_generation": { "type": "integer", "minimum": 0 },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "evidence", "impact", "remediation"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["info", "warning", "error", "critical"] },
+          "code": { "$ref": "common.schema.json#/$defs/errorCode" },
+          "capability": { "type": ["string", "null"] },
+          "evidence": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "impact": { "type": "string", "minLength": 1 },
+          "remediation": { "type": "string", "enum": ["none", "inspect", "repair", "rebuild", "reapprove", "recover"] }
+        }
+      }
+    },
+    "checked_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "security_mode": { "$ref": "common.schema.json#/$defs/securityMode" },
+    "enforcement": { "$ref": "common.schema.json#/$defs/enforcement" }
+  }
+}
