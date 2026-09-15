@@ -108,8 +108,8 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `approval_mode` | `human` / `policy`† | 这次批准是人给的还是策略自动给的。**这一版没有生产签发方**（ADR-0024 已由 ADR-0025 的 D1 裁决为"维持现状，等 P2 的受保护 broker"），所以 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 在真机上走到 `--token-file` 都会 `PROVENANCE_FAILED`(7)；唯一能签出 token 的是 `cli/tests/fake_issuer.py`，它签的是 `human` | `tx/approval.py` |
-| `signature.algorithm` | `ed25519` / `test_hmac_sha256` | 签名算法。`test_hmac_sha256` **只允许出现在测试与模拟路径**；核心只做校验，`airoot approve` 永不凭空造批准 | `tx/approval.py` |
+| `approval_mode` | `human`† / `policy`† | 这次批准是人给的还是策略自动给的。**这一版没有生产签发方**（ADR-0024 已由 ADR-0025 的 D1 裁决为"维持现状，等 P2 的受保护 broker"），所以 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 在真机上走到 `--token-file` 都会 `PROVENANCE_FAILED`(7)；唯一能签出 token 的是 `cli/tests/fake_issuer.py`，它签的是 `human`。**两个值都打 †，因为这一版没有任何代码构造出一份 token**（§93：`tx/approval.py` 只**接受与校验**它——原先这一栏把它记成写者，与同一行左边那句"没有生产签发方"自相矛盾） | （没有写者） |
+| `signature.algorithm` | `ed25519`† / `test_hmac_sha256`† | 签名算法。`test_hmac_sha256` **只允许出现在测试与模拟路径**；核心只做校验，`airoot approve` 永不凭空造批准。**两个值都打 †**：`tx/approval.py` 里的那两次出现是校验器**接受**的两个常量（`PRODUCTION_ALGORITHM` / `TEST_ALGORITHM`），不是往 token 里写的值——一份 token 里的算法长得像 `"algorithm": "..."`，而这个 build 里没有那样一处（§93） | （没有写者） |
 
 ## `desired-manifest.schema.json`
 
@@ -144,7 +144,7 @@
 | `$defs.lifecycle` | `installed` / `active` / `retired` / `broken`（这四个是本版会写的）；`discovered`† / `external_reference`† / `unmanaged`† / `planned`† / `staged`† / `verified`† / `garbage_collectable`† | 生命周期：`installed` 已提交进 store / `active` 有 active binding / `retired` 已退役（**payload 还在**）/ `broken` 坏掉但留作证据。其余七个这一版不写：登记进 store 就直接是 `installed`/`active`，没有中间态；"可回收"是 `tool gc --plan` **算出来的**判据，不是行上的状态 | `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py` |
 | `$defs.binding.exposure` | `stable_launcher` / `session_env`† / `project_binding`† / `none`† | 绑定是怎么暴露的：`stable_launcher` 是这一版**唯一**写出的（机器级绑定指向 shim）。`session_env`/`project_binding`/`none` 这一版都没有写者——会话激活**不建 binding**，它写的是会话快照栈；而不暴露的实例在这版里根本不建绑定行 | `tx/artifact.py`, `tx/simulate.py` |
 | `$defs.source.kind` | `local_file` / `local_directory`† / `https` / `registry`† / `generated_fixture` | 计划里的来源种类：本地文件 / 本地目录（没用上）/ HTTPS（`https_artifact` 后端）/ 注册表（没用上）/ 测试生成的 fixture | `caps/sources.py`, `tx/artifact.py`, `tx/simulate.py` |
-| `$defs.source.signature.algorithm` | `ed25519` / `test_hmac_sha256` | 来源证明的算法（与 `approval-token` 同词汇）。`ed25519` 这一版会显式报 `PROVENANCE_FAILED`(7)（ADR-0025 的 D1 维持现状：真实签名等 P2 的受保护存储） | `tx/approval.py` |
+| `$defs.source.signature.algorithm` | `ed25519`† / `test_hmac_sha256`† | 来源证明的算法（与 `approval-token` 同词汇）。`ed25519` 这一版会显式报 `PROVENANCE_FAILED`(7)（ADR-0025 的 D1 维持现状：真实签名等 P2 的受保护存储）。**两个值都打 †**：这一版没有任何代码构造带签名的来源声明，`tx/approval.py` 只是**校验器**（§93） | （没有写者） |
 | `$defs.fileManifestEntry.mode` | `file` / `directory`† | 文件清单条目是文件还是目录。`caps/canon.py` **只产文件条目**（目录不进摘要），所以 `directory` 没有写者 | `canon.py` |
 | `$defs.sideEffect` | `none` / `derived_cache` / `writes_store` / `writes_registry` / `writes_path` / `executes_scripts` / `mutates_system` / `deletes_source` / `moves_source` | 副作用的**最坏情况词汇**。这个 build 里九个值都有声明者（能力清单与两个扩展 manifest）。`caps/boundary.py` 的准入判据是"按最坏的一个算"：声明里出现 `executes_scripts`/`mutates_system`/`deletes_source`/`moves_source`/`writes_path` 里的任何一个，就不是低风险 | `policy/capabilities.json`, `cli/extensions`, `caps/boundary.py` |
 | `$defs.securityMode` | `protected_machine` / `policy_only` | 安全模式。P1 是 `policy_only`：没有 ACL、broker、machine PATH，**同用户进程可以绕过** | `caps/doctor.py`, `ext/envelope.py`, `cli.py` |

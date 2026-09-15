@@ -16,6 +16,7 @@ Three independent claims are checked, and each of them is checked in a direction
 
 from __future__ import annotations
 
+import ast
 import json
 import pathlib
 import re
@@ -338,6 +339,106 @@ def test_each_daggered_value_has_no_writer_in_its_own_field() -> None:
             if value not in row.daggers and value not in written:
                 problems.append("%s: %s is not daggered but nothing in %s writes it" % (row.key, value, row.producers))
     assert not problems, "the daggers no longer match the code:\n" + "\n".join(problems)
+
+
+# --------------------------------------------------------------------------------------------
+# claim 4: "who writes it in this version" needs the document to be *produced* at all
+# --------------------------------------------------------------------------------------------
+#
+# §92 found the first casualty of the file-scoped check: `gc-plan` credited to three modules that write
+# a **plan**, because `plan.target.kind` reuses the same two words. §93 asked the same question one level
+# up: which published schemas does this build *build* at all? The answer is syntax, not text -- a
+# document is produced when one function's own keys (dict literals plus subscript assignments) cover
+# every property the schema requires. That is what building one looks like, and it is how the twelve
+# produced schemas are produced.
+#
+# `approval-token` is not among them: nothing in the app builds a token (ADR-0025's D1 leaves the
+# production issuer to P2). Its row nevertheless named `tx/approval.py` as the writer of two fields,
+# while the cell next to it said "这一版没有生产签发方" -- the two occurrences are the constants a
+# **verifier accepts**, `PRODUCTION_ALGORITHM = "ed25519"` and `TEST_ALGORITHM = "test_hmac_sha256"`.
+#
+# Two derived exemptions, neither a hand list:
+#   * a schema with no `required` properties is a fragment (`common`), not a document;
+#   * a row that names a producer resolving to a **data** file is authored as data (the extension
+#     manifests under `cli/extensions/`), not built by code.
+
+REQUIRED_KEYS = "required"
+
+
+def _produced_schemas() -> dict[str, list[str]]:
+    """Schemas some function builds: its own keys cover every required property."""
+
+    produced: dict[str, list[str]] = {}
+    for path in sorted(SCHEMA_DIR.glob("*.schema.json")):
+        required = set(json.loads(path.read_text(encoding="utf-8")).get(REQUIRED_KEYS, []))
+        if not required:
+            continue
+        for module in sorted(APP.rglob("*.py")):
+            tree = ast.parse(module.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                keys: set[str] = set()
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Dict):
+                        keys |= {
+                            key.value
+                            for key in child.keys
+                            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                        }
+                    if isinstance(child, ast.Assign):
+                        for target in child.targets:
+                            if isinstance(target, ast.Subscript):
+                                slice_ = target.slice
+                                if isinstance(slice_, ast.Constant) and isinstance(slice_.value, str):
+                                    keys.add(slice_.value)
+                if required <= keys:
+                    produced.setdefault(path.name[: -len(".schema.json")], []).append(
+                        "%s:%d:%s" % (module.name, node.lineno, node.name)
+                    )
+    return produced
+
+
+def _data_authored(row: Row) -> bool:
+    """A row that names a data file is authored as data: the manifest JSON *is* the document."""
+
+    for spec in row.producers:
+        for item in producer_files(spec):
+            if item.suffix != ".py":
+                return True
+    return False
+
+
+def _unproduced_schema_problems(produced: set[str]) -> list[str]:
+    return [
+        "%s: no function builds any %s document, so the writer column cannot name code"
+        % (row.key, row.schema)
+        for row in ROWS
+        if row.producers
+        and not _data_authored(row)
+        and row.schema not in produced
+        and json.loads((SCHEMA_DIR / (row.schema + ".schema.json")).read_text(encoding="utf-8")).get(
+            REQUIRED_KEYS
+        )
+    ]
+
+
+def test_no_row_claims_a_writer_for_a_document_this_build_never_builds() -> None:
+    produced = _produced_schemas()
+    every = {path.name[: -len(".schema.json")] for path in SCHEMA_DIR.glob("*.schema.json")}
+
+    assert len(produced) >= 8, "only %d schemas look produced; the construction walk is broken" % len(
+        produced
+    )
+    assert len(every - set(produced)) >= 3, "nothing is unproduced; this rule would be about nothing"
+
+    problems = _unproduced_schema_problems(set(produced))
+    assert not problems, "the writer column credits code that only validates:\n" + "\n".join(problems)
+
+    # Non-vacuity: the defect §93 found, restored, and a produced schema made to look unproduced.
+    assert _unproduced_schema_problems(set(produced) - {"search-request"}) != [], (
+        "a documented document with no producer must be reported"
+    )
 
 
 def test_a_daggered_value_that_could_mean_only_one_thing_is_written_nowhere() -> None:
