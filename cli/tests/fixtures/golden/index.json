@@ -17,6 +17,7 @@
   "search_index_response": 0,
   "search_response": 2,
   "search_stale_index_response": 2,
+  "search_timeout_response": 2,
   "transaction_finalized": 0,
   "transaction_transitions": 0,
   "where_broken": 3,

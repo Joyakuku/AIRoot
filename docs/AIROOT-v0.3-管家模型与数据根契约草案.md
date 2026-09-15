@@ -7365,3 +7365,87 @@ P1 有**两份**"还没决定"的清单，读者会各按各的找答案：
 5. 量一遍全语料，把规则范围从"两个前缀"扩成"文档自己有没有交代结果"（多覆盖 2 条，**少一条手写列表**）；
 6. 5 个变异逐个验红；解析器踩一次（`selection_reason`）并修掉；
 7. 在验收方案 §14 补指针；回写计数；跑全量 + 旧切片 + 真机验收；提交。
+## 89. 第 89 阶段：`search` 的三个状态里，一个可产生却没有语料，两个没有写者
+
+### 89.1 这一阶段要解决什么
+
+§88 的边界里留了一条明确的未做项：「`search` 的 `status` 枚举里有四个取值没有任何 fixture——§14 那句话只点了 `where`/`doctor`，给 search 加覆盖是一次新的工作量承诺。」
+
+这一轮兑现它。`search-response.schema.json` 的 `status` 枚举是五个值：`ok` / `degraded` / `error` / `cancelled` / `timed_out`，而语料只覆盖两个（`ok`、`degraded`）。**"没覆盖"有两种完全不同的原因**，分开量：
+
+| 取值 | 谁写它 | 语料 |
+|---|---|---|
+| `ok` | `caps/search.py`（索引答的且完整） | 有（`search_index_response`） |
+| `degraded` | `caps/search.py`（索引旧了/覆盖不足/回落 crawl） | 有（两条） |
+| `timed_out` | **`caps/search.py`**（crawl 撞上 `max_duration_ms`，`reason_code=SEARCH_TIMEOUT`，退出码 2） | **没有** |
+| `error` | **没有任何写者** | 没有（`field-values.md` 已打 †） |
+| `cancelled` | **没有任何写者** | 没有（同上） |
+
+所以真正缺的只有 `timed_out` 一个——**而且它是个真结果**：退出码 2、`reason_code=SEARCH_TIMEOUT`、答案是部分且**没有 cursor**（`search.py:947`）。另外两个是"这一版发不出来"，`references/field-values.md` 早就打了 †，`test_l1_field_values.py` 还在两个方向上守着那个标记（打了 † 的必须没人写、没打 † 的必须有写者）。
+
+**这就是"覆盖率"该有的形状：缺的那一个要补，另外两个要有据可查，而不是三者一起被忽略。**
+
+### 89.2 实测：`timed_out` 可以确定性地做出来
+
+第一反应是"超时是不可复现的，所以做不了 fixture"——**量了一下，不是**。`crawl` 的签名是：
+
+```python
+def crawl(..., time_source: Callable[[], float] = time.monotonic) -> CrawlOutcome:
+    deadline = time_source() + (int(request["max_duration_ms"]) / 1000.0)
+```
+
+**时间源是注入的**。于是"第一次调用定下截止时刻、之后每次调用都已经过了它"就能让循环在第一轮就停下——**不是赛跑，是构造**：
+
+```python
+ticks = iter([0.0] + [10_000.0] * 64)
+... time_source=lambda: next(ticks, 10_000.0)
+```
+
+产出的 fixture 正好是契约描述的那种结果：`status=timed_out`、`reason_code=SEARCH_TIMEOUT`、`next_cursor=null`、`coverage=none`、0 条命中、`index.json` 记 **2**。
+
+**而它放在最后是有意的，这一条本身是个教训。** 第一版把它插在 `search_response` 之后，重新生成后发现**另外两条 `search_*` fixture 也变了**——它们的 `started_at`/`finished_at`/`last_indexed_at` **整体后移 2 秒**。原因：`execute_search` 会读共享的 `FakeClock` 两次，多插一次调用就把它后面每一次调用都推后。把新 fixture 挪到最后，diff 就只剩 `index.json` 加新文件。**"加一条 fixture"不该改动别的 fixture 的字节**——即使改动只是时间戳，它也会让"这次重生是外科式的"这句话变成假的。（§87 也记过同一类：`index.json` 变、26 个文档不变，那条是**可以解释的**；这一条如果不挪位置就是**不可解释的**。）
+
+### 89.3 做了什么
+
+1. **补 `search_timeout_response` fixture**（语料 29 → 30），并在 `SCHEMA_FOR_FIXTURE` 里注册为 `search-response`。
+2. **新增守卫第三十一组**：`search-response.status` 的每个取值都必须**有 fixture**，**除非它在那张字段取值表里带 †**。**例外从被检查的文档里读，不在测试里再抄一份**——这正是 §85/§86/§82 反复得到的形状：硬编码的例外名单是守卫开始说谎的地方，而这张表本来就由另一个守卫（`test_l1_field_values.py`）双方向钉住。
+3. **验收方案 §14 那句话跟着升级**：从 `where`/`doctor` 扩到 `where`/`doctor`/`search`，并写明第二十九/三十/三十一组各管哪一半。**是文档追上保证，不是把保证降到文档。**
+4. **回写计数**：测试 837 → **838**；审计检查 90 → **91**；fixture 29 → **30**。
+
+### 89.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 给枚举加一个没有任何 fixture 的状态（`wat`） | 红 | ✅ 红 |
+| **把 † 例外全部去掉**（让 `error`/`cancelled` 也要求 fixture） | 红 | ✅ 红 |
+
+第二个变异是这条守卫的关键：**它证明那张例外表是承重的**。如果去掉 † 之后守卫仍然是绿的，说明它其实什么都没管——那时它守的是"三个值"而不是"五个值减去两个有据可查的例外"。
+
+（这一组还自动继承了第三十组：新 fixture 带 `reason_code`，于是"记录的退出码必须等于它自己文档推出的那个"当场覆盖了它——`SEARCH_TIMEOUT` → 2。**上一轮写的规则这一轮不用改就管住了新东西**，这是判断一条规则写得好不好的实际标准。）
+
+### 89.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **837 → 838**（新增 1 条） |
+| 审计检查（`test_l0_consistency.py`） | **90 → 91** |
+| golden fixture | **29 → 30**（`search_timeout_response`） |
+| 语料重生 | 是；**既有 28 个文档 fixture 逐字节不变，只有 `index.json` 变**（新 fixture 挪到最后之后） |
+| schema / 台账 / 边界 | 19 / 108 / 均不变 |
+
+### 89.6 如实记录的边界
+
+1. **覆盖率规则的适用范围是"schema 里枚举过的结果字段"**，不是"所有字段的所有取值"。`search` 的 `freshness.state`（`current`/`stale`/`degraded`/`rebuilding`/`unknown`）与 `coverage`（`complete_for_roots`/`partial`/`none`）也有枚举，**这一轮没有给它们做覆盖率检查**——它们是**子字段**，fixture 的粒度是"一次搜索的结论"，而 `state`/`coverage` 由那一次的结论一起决定。要不要逐个覆盖，是一次**新的判断**，不该顺手加。
+2. **`error`/`cancelled` 的 † 是"这一版没有写者"，不是"永远不会有"。** 守卫的形状是"要么有 fixture、要么有 †"，所以哪天有人真的写出 `error`，`test_l1_field_values.py` 会先红（† 与写者矛盾），改完 † 之后**这一组会紧接着红**（现在必须补 fixture）——两道守卫接得上，这是有意设计的顺序。
+3. **`timed_out` 的 fixture 是合成的**：它构造时间源，不真的等一秒钟。它证的是"这个结果能被产生、且形状是这样"，**不是**"真机上超时会发生"。
+4. **这一轮没有把 `search` 的其它机器可读结果纳入 §14 的句子**（`explain`/`status` 两个子命令的输出没有 `status` 枚举）。§14 那句话现在说的是 `where`/`doctor`/`search` 的**结果**，而这三个是它们的**结论字段**。
+5. **`CrawlOutcome` 里还有一个 `truncated`**（撞上 `max_records` 或深度上限），它**不等于** `timed_out`：`truncated` 只影响 `coverage=partial` 与 cursor 的存在，`status` 仍是 `ok`/`degraded`。这一轮没有为"纯 truncated"另加 fixture——`search_response` 那条 crawl 的 `coverage` 就是完整的，而 `search_index_response` 覆盖了 `complete_for_roots`。**"truncated 但没有超时"这一格今天没有 fixture**，记在这里。
+
+### 89.7 实施顺序
+
+1. 先量 §88 留下的那条未做项：五个状态值，逐个问"谁写它"（`grep` 代码）与"有没有语料"；
+2. 分开两类原因（**可产生但没覆盖** vs **没有写者**），只给前者补；
+3. 试做 `timed_out` 之前先看 `crawl` 的时间源是不是注入的——**是**，所以这不是赛跑；
+4. **加完之后立刻检查 diff 是不是外科式的**，发现另外两条 fixture 的时间戳被推后 2 秒 → 把新 fixture 挪到最后；
+5. 写守卫（覆盖率 + 从字段取值表读例外）；2 个变异逐个验红，其中"去掉 †"那个是证明例外表承重的关键；
+6. 升级验收方案 §14 的句子；回写计数；跑全量 + 旧切片 + 真机验收；提交。

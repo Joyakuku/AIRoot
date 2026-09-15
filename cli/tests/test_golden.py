@@ -35,6 +35,7 @@ SCHEMA_FOR_FIXTURE = {
     "transaction_finalized": "transaction",
     "reference_plan": "reference-plan",
     "search_response": "search-response",
+    "search_timeout_response": "search-response",
     "search_index_response": "search-response",
     "search_stale_index_response": "search-response",
 }

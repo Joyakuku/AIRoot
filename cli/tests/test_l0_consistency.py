@@ -751,6 +751,48 @@ def test_every_machine_readable_outcome_has_a_fixture() -> None:
     assert _outcome_coverage_problems(documents, statuses, reason_codes | {"TELEPORT_FAILED"}) != []
 
 
+def _search_status_coverage_problems(
+    documents: dict[str, dict[str, Any]], statuses: set[str], daggered: set[str]
+) -> list[str]:
+    """Every `search` status needs a fixture, unless the field table says nothing writes it."""
+
+    seen = {doc["status"] for name, doc in documents.items() if name.startswith("search_")}
+    return [f"no search fixture reports status {value}" for value in sorted(statuses - seen - daggered)]
+
+
+def test_every_search_status_has_a_fixture_or_a_written_exception() -> None:
+    """The §88 rule, extended to `search`, with the exceptions read from `field-values.md`.
+
+    §14 asked this of `where`/`doctor`; `search` states the same kind of result and had the same kind
+    of gap — `timed_out` is producible (`caps/search.py`, `reason_code=SEARCH_TIMEOUT`, exit 2) and had
+    no fixture, while `error`/`cancelled` genuinely have no writer and carry a dagger in
+    `references/field-values.md`. This guard takes the *exceptions* from that document rather than
+    from a list in here, so the two cannot drift: a value that loses its dagger must gain a fixture.
+    """
+
+    from test_l1_field_values import ROWS
+
+    documents = _golden_documents()
+    statuses = set(load_schema("search-response")["properties"]["status"]["enum"])
+    daggered = {
+        value
+        for row in ROWS
+        if row.path == "status" and row.schema == "search-response"
+        for value in row.daggers
+    }
+    assert statuses and daggered, "the status vocabulary or its daggers came back empty"
+
+    assert _search_status_coverage_problems(documents, statuses, daggered) == [], "; ".join(
+        _search_status_coverage_problems(documents, statuses, daggered)
+    )
+
+    # Non-vacuity in both directions: an uncovered status, and daggers that stop being an excuse.
+    assert _search_status_coverage_problems(documents, statuses | {"wat"}, daggered) != []
+    assert _search_status_coverage_problems(documents, statuses, set()) != [], (
+        "the dagger list has to be load-bearing, or this guard is really about nothing"
+    )
+
+
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
     """§15.1 lists the CLI surface; every entry must be one of the two, never neither.
 

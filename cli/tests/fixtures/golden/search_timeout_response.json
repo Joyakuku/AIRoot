@@ -1,0 +1,49 @@
+{
+  "data": {
+    "fallback": {
+      "kind": "crawl",
+      "reason": "no resident index covers this request; results come from a bounded crawl"
+    },
+    "freshness": {
+      "coverage": "none",
+      "lag_ms": null,
+      "last_indexed_at": null,
+      "state": "unknown"
+    },
+    "implementation_id": "airoot-native-search-crawl",
+    "next_cursor": null,
+    "query": "python",
+    "results": [],
+    "stats": {
+      "index_records_examined": 0,
+      "matched": 0,
+      "returned": 0
+    }
+  },
+  "elapsed_ms": 1000,
+  "evidence": [
+    {
+      "detail": "<BASE>\\search\\root",
+      "kind": "search_roots"
+    },
+    {
+      "detail": "srch-4 (source=file); consistency=bounded_staleness",
+      "kind": "search_policy"
+    },
+    {
+      "detail": "crawl (generation=no-index)",
+      "kind": "search_source"
+    }
+  ],
+  "extension_id": "airoot-native-search-extension",
+  "finished_at": "2024-01-01T00:05:11Z",
+  "operation": "search",
+  "reason_code": "SEARCH_TIMEOUT",
+  "schema_version": 1,
+  "started_at": "2024-01-01T00:05:10Z",
+  "status": "timed_out",
+  "warnings": [
+    "no index answered this request; the result came from a live crawl, so max_staleness_ms was not applied",
+    "the crawl hit max_duration_ms; narrow the roots or lower --limit"
+  ]
+}

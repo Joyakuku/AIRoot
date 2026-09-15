@@ -496,6 +496,36 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
     }
     assert index_state.readable and index_code == 0 and stale_code == 2
 
+    # ---- search: the crawl exhausts its duration budget (draft §89) -------- #
+    # `timed_out` is a real result — `caps/search.py` sets it, with `reason_code=SEARCH_TIMEOUT` and
+    # exit 2 — and had no fixture, so `timed_out` was the one search status the plan's §14 could not
+    # point at (`error`/`cancelled` have no writer at all and are daggered in
+    # `references/field-values.md`).
+    #
+    # The crawl takes an injectable `time_source`, so this is deterministic rather than a race: the
+    # first call fixes the deadline and every later call is already past it, so the loop stops on its
+    # first iteration. A timeout answer is partial and carries **no cursor** (search.py:947) — the two
+    # facts that make it a different result from `degraded`.
+    #
+    # **Placed last on purpose.** `execute_search` reads the shared `FakeClock` twice, so one extra
+    # call shifts every *later* fixture's timestamps by two seconds — a byte change to fixtures this
+    # stage has no business touching. Appending the call keeps the diff to `index.json` plus the new
+    # file.
+    ticks = iter([0.0] + [10_000.0] * 64)
+    timeout_document, timeout_code = execute_search(
+        request,
+        roots,
+        extension_id="airoot-native-search-extension",
+        implementation_id="airoot-native-search-crawl",
+        policy=policy,
+        clock=clock,
+        time_source=lambda: next(ticks, 10_000.0),
+    )
+    documents["search_timeout_response"] = {
+        "document": _normalize_search(timeout_document),
+        "exit_code": timeout_code,
+    }
+
     # ---- the reason-code table itself ------------------------------------- #
     documents["reason_code_table"] = {
         "document": {
