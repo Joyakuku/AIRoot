@@ -35,6 +35,7 @@ from .environment import (
     EnvironmentSpec,
     EnvironmentStore,
     PATH_VARIABLES,
+    remove_path_value,
     resolve_path_entries,
     resolve_variables,
     spec_from_entry,
@@ -473,6 +474,38 @@ class ForgetResult:
         }
 
 
+@dataclass
+class ForgetAllResult:
+    """What `env forget --all` restored, across every capability at once (draft §63)."""
+
+    scopes: list[str] = field(default_factory=list)
+    capability_ids: list[str] = field(default_factory=list)
+    records: int = 0
+    restored: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    drifted: list[str] = field(default_factory=list)
+    #: Variables more than one capability had written. Reported rather than hidden: for a plain
+    #: variable it means the restore target came from the chain start, and for PATH it means the
+    #: entries removed were the union of several capabilities' additions.
+    shared_variables: list[str] = field(default_factory=list)
+    dry_run: bool = False
+
+    def to_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "operation": "forget_all_persist",
+            "scopes": sorted(self.scopes),
+            "capability_ids": sorted(set(self.capability_ids)),
+            "records": self.records,
+            "restored": sorted(self.restored),
+            "removed": sorted(self.removed),
+            "drifted": sorted(self.drifted),
+            "shared_variables": sorted(self.shared_variables),
+            "dry_run": self.dry_run,
+            "reason_code": "SUCCESS",
+        }
+
+
 def added_path_entries(record: EnvironmentPersist) -> list[Path]:
     """The entries AIROOT itself introduced: present now, absent from the old value.
 
@@ -490,6 +523,131 @@ def added_path_entries(record: EnvironmentPersist) -> list[Path]:
         for part in record.value.split(";")
         if part and normalize(part) not in previous
     ]
+
+
+def forget_all_persist(
+    *,
+    registry: Any,
+    store: EnvironmentStore | None = None,
+    clock: Clock = SYSTEM_CLOCK,
+    dry_run: bool = False,
+) -> "ForgetAllResult":
+    """Undo **everything** AIROOT ever persisted (draft §13.4's ``env forget --all``).
+
+    This is the other half of the steward model's promise. The per-capability form answers "stop
+    managing java"; this one answers "**the steward is leaving, put my environment back**" — and
+    §13.4 says why it has to exist: without it, "deleting AIROOT leaves no trace" cannot be done,
+    because what is left behind is a set of variables whose origin nobody can tell any more. The
+    table was even created with this command in mind (`ddl.sql`: *"env forget --all exact: the
+    complete old value is recorded before the write"*) — it just never got written (draft §63).
+
+    Three things make doing it in one pass different from looping the per-capability form:
+
+    * **PATH needs no order.** ``remove_path_value`` removes the entries *AIROOT added*, computed
+      as the difference between what it wrote and what was there before, so undoing two capabilities
+      in either order leaves the same survivor set. The union of every record's added entries is
+      what has to go;
+    * **a plain variable needs the *chain start*.** If two capabilities wrote the same variable, the
+      earlier record's ``old_value`` is the later record's ``value`` — so restoring them in the wrong
+      order puts the earlier write *back*. The value to restore is the ``old_value`` that is not any
+      record's ``value``, which is order-free and needs no timestamps;
+    * **drift is judged against every record**, not one: "the machine no longer holds what AIROOT
+      wrote" is only true when the live value matches none of them.
+
+    Nothing outside ``environment_persist`` is consulted, so a variable AIROOT never wrote cannot be
+    touched even by accident — that is the clause the scenario actually cares about.
+    """
+
+    rows = registry.environment_persist_records(active_only=True)
+    result = ForgetAllResult(dry_run=dry_run)
+    if not rows:
+        # A legitimate answer, not a lookup failure: "AIROOT has nothing recorded here" is exactly
+        # what someone checking before deleting AIROOT wants to hear. The per-capability form still
+        # refuses (its question names a capability that should have records), and the difference is
+        # deliberate rather than an oversight.
+        return result
+
+    groups: dict[tuple[str, str], list[Any]] = {}
+    for row in rows:
+        record = environment_persist_from_row(row)
+        groups.setdefault((str(record.scope), str(record.variable)), []).append(record)
+        result.scopes.append(str(record.scope))
+        result.capability_ids.append(str(record.capability_id))
+    result.records = len(rows)
+
+    # (scope, variable, action, value, kind): the complete decision, computed before any write.
+    plan: list[tuple[str, str, str, str | None, str | None]] = []
+    for (scope, variable), group in sorted(groups.items()):
+        resolved = _store_for_scope(scope, store)
+        current = resolved.read(variable)
+        if len(group) > 1:
+            result.shared_variables.append(variable)
+
+        if variable.lower() in {name.lower() for name in PATH_VARIABLES}:
+            added: dict[str, Any] = {}
+            for record in group:
+                for entry in added_path_entries(record):
+                    added[os.path.normcase(os.path.normpath(str(entry)))] = entry
+            if current is None:
+                plan.append((scope, variable, "delete", None, None))
+                continue
+            cleaned = remove_path_value(current.value, list(added.values()))
+            result.restored.append(variable)
+            if cleaned:
+                plan.append((scope, variable, "write", cleaned, current.kind))
+            else:
+                plan.append((scope, variable, "delete", None, None))
+            continue
+
+        values = {record.value for record in group}
+        starts = [record for record in group if record.old_value not in values]
+        # A single chain start is the answer. Several mean the variable was reset between two AIROOT
+        # writes; the earliest wins, and the tiebreak is written down so the result cannot depend on
+        # row order. (With the shipped whitelist only PATH can be written by two capabilities —
+        # JAVA_HOME is declared by exactly one — so this is the honest handling of a case the policy
+        # currently makes unreachable, not a guess about a common one.)
+        target = min(
+            starts or group,
+            key=lambda record: (str(record.written_at), str(record.old_value), str(record.capability_id)),
+        )
+        if current is not None and current.value not in values:
+            result.drifted.append(variable)
+        if target.old_value is None:
+            result.removed.append(variable)
+            plan.append((scope, variable, "delete", None, None))
+        else:
+            result.restored.append(variable)
+            plan.append(
+                (scope, variable, "write", target.old_value, target.old_kind or target.value_kind)
+            )
+
+    if dry_run:
+        return result
+
+    for scope, variable, action, value, kind in plan:
+        resolved = _store_for_scope(scope, store)
+        if action == "delete":
+            resolved.delete(variable)
+        else:
+            assert value is not None and kind is not None
+            resolved.write(variable, value, kind)
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        for row in rows:
+            registry.mark_environment_persist_forgotten(
+                connection, str(row["capability_id"]), str(row["scope"]), str(row["variable"])
+            )
+        registry.append_event(
+            connection,
+            state="FORGOTTEN",
+            detail=(
+                f"restored every persisted environment AIROOT had written "
+                f"({len(rows)} record(s) across {len(set(result.capability_ids))} capability(ies))"
+            ),
+            reason_code=None,
+            outcome="ok",
+        )
+    return result
 
 
 def forget_reference_persist(
@@ -588,6 +746,7 @@ __all__ = [
     "ExposureRequest",
     "ExposureResult",
     "ExposureTarget",
+    "ForgetAllResult",
     "ForgetResult",
     "PLAN_OPERATION",
     "PERSIST_SCOPES",
@@ -597,6 +756,7 @@ __all__ = [
     "apply_reference_plan",
     "build_reference_plan",
     "added_path_entries",
+    "forget_all_persist",
     "forget_reference_persist",
     "request_from_entry",
     "resolve_exposure",

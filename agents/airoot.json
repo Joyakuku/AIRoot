@@ -109,6 +109,12 @@
       "notes": "--dry-run reports without changing anything and without consuming the record"
     },
     {
+      "question": "put my whole environment back (the steward leaving)",
+      "command": ["env", "forget", "--all"],
+      "read": ["restored", "removed", "drifted", "shared_variables", "records", "capability_ids"],
+      "notes": "restores every variable AIROOT ever wrote and touches nothing else; --all cannot be combined with an id or --variable"
+    },
+    {
       "question": "which persisted variables exist",
       "command": ["env", "list"],
       "read": ["environment_persist"]

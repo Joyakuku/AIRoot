@@ -447,8 +447,11 @@
       "witness": null
     },
     {
-      "blocked_by": "undesigned",
-      "cited_by": [],
+      "blocked_by": null,
+      "cited_by": [
+        "test_cli_env.py",
+        "test_l1_exposure.py"
+      ],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
@@ -456,9 +459,9 @@
       "evidence": null,
       "family": "C",
       "id": "C-028",
-      "no_witness_reason": "`env forget --all` **\u8fd9\u4e2a\u547d\u4ee4\u5f62\u5f0f\u4e0d\u5b58\u5728**\uff1a`cmd_env_forget` \u7684 parser\uff08cli.py\uff09\u53ea\u63a5\u53d7 `external_id` / `--variable` / `--dry-run`\uff0c`agents/airoot.json` \u767b\u8bb0\u7684\u4e5f\u662f `[\"env\", \"forget\", \"<external-id>\"]`\uff0c`not_implemented` \u6e05\u5355\u91cc\u6ca1\u6709\u5b83\uff08\u90a3\u6761\u6e05\u5355\u7ba1\u547d\u4ee4\u8def\u5f84\uff0c`env forget` \u672c\u8eab\u662f\u5b9e\u73b0\u7684\uff09\u3002\u539f\u8bb0 `blocked_by=none` \u5e76\u6307\u5411 dry-run \u6d4b\u8bd5\uff0c\u662f**\u672c\u6b21\u590d\u6838\u6293\u5230\u7684\u7b2c\u4e00\u6761\u5224\u65ad\u9519\u8bef**\u3002\u8bc1\u4eba\u9020\u4e0d\u51fa\u6765\uff1a\u52a0\u4e00\u6761'`--all` \u4e0d\u88ab\u63a5\u53d7'\u7684\u65ad\u8a00\u53ea\u4f1a\u5728**\u522b\u4eba\u628a\u5b83\u5b9e\u73b0\u51fa\u6765**\u65f6\u53d8\u7ea2\uff0c\u800c\u90a3\u6b63\u662f'\u53f0\u8d26\u597d\u770b\u8fd9\u4ef6\u4e8b\u81ea\u5df1\u751f\u51fa\u4e00\u6761\u81ea\u8bc1\u65ad\u8a00'\u2014\u2014\u4e0e C-007 \u540c\u4e00\u5904\u7f6e",
+      "no_witness_reason": null,
       "note": null,
-      "status": "uncited",
+      "status": "evidenced",
       "superseded": null,
       "witness": null
     },
@@ -1837,7 +1840,7 @@
   ],
   "schema_version": 1,
   "summary": {
-    "evidenced": 51,
+    "evidenced": 52,
     "families": {
       "C": 34,
       "P": 21,
@@ -1845,6 +1848,6 @@
       "T": 17
     },
     "total": 108,
-    "uncited": 57
+    "uncited": 56
   }
 }

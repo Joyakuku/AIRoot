@@ -4903,6 +4903,82 @@ PROPOSED count: 2        generation: 2
 5. 三个场景各写一个点名测试，并逐个验红（62.5）；
 6. 同步 reason code 表、agent 面参考、台账与计数，跑全量 + 切片 + 两种验收模式，提交。
 
+## 63. 第 63 阶段：把"管家离场"那句话变成命令（`env forget --all`，C-028）
+
+### 63.1 这一阶段要解决什么
+
+台账里 C-028 的 `no_witness_reason` 是**整张表里最有意思的一条**：它不是"造不出证人"，而是"**证人造出来是错的**"——加一条 `--all` 不被接受的断言，只会在**别人把它实现出来**时变红，那正是"台账好看这件事自己生出一条自证断言"（与 C-007 同一处置）。所以诚实的做法不是给这条找一个证人，而是**把东西做出来**。
+
+契约 §13.4 一直要求它：`airoot env forget <capability> --scope ...` **与** `airoot env forget --all`，两者都要"精确恢复旧值、绝不触碰 AIROOT 没写过的变量"。`environment_persist` 的建表注释也一直写着它：
+
+```sql
+-- "env forget --all" exact: the complete old value is recorded before the write, so
+-- removing AIROOT never leaves a half-applied environment behind (draft §13.4).
+```
+
+**表是为这个命令建的，命令从来没写。** 与 §62 的 `failure_cleanup` 同一种形状：被声明、被写进注释、被验收，然后没有兑现。缺了它，管家模型的中心承诺——"删掉 AIROOT 不留痕"——做不到：留下的一批变量再也说不清是谁写的。
+
+### 63.2 一次通过 ≠ 循环单能力形式：三处必须想清楚的地方
+
+| 问题 | 结论 |
+|---|---|
+| **PATH 需要顺序吗？** | **不需要**。`remove_path_value` 移除的是**AIROOT 加进去的那些条目**（`added_path_entries` = 写进去的值减去写之前的值），所以两个能力按任何顺序撤销，留下的集合都一样。要移除的是每条记录"新增条目"的**并集** |
+| **普通变量需要顺序吗？** | **需要，而且不能靠时间戳**。若两个能力写过同一个变量，前面那条的 `value` 就是后面那条的 `old_value`——按错的顺序撤销会把前一次写入**放回去**。而 `clock.isoformat` **刻意只到秒**（`replace(microsecond=0)`），"谁先写的"并不总能从 `written_at` 恢复。所以用的规则**不需要顺序**：要还原的值是**链首**，即那个**不是任何记录 `value`** 的 `old_value` |
+| **漂移怎么判？** | 对着**每一条**记录判，而不是某一条：只有当活值**一条都不匹配**时，才说"机器上已经不是 AIROOT 写的那个值了" |
+
+结果里 `shared_variables` 把"被多个能力写过"这件事**报出来而不是藏起来**：对普通变量它意味着还原目标取自链首，对 PATH 它意味着移除的是多个能力新增条目的并集。
+
+### 63.3 形状
+
+- `caps/exposure.py`：`ForgetAllResult` + `forget_all_persist(...)`；`forget_reference_persist` **原样保留**（单能力语义与输出一字未改，既有测试全绿）。
+- `cli.py`：`env forget <external-id>` 的 `external_id` 变成可选，新增 `--all`；**两者同时给 → `INVALID_INPUT`(8)**，两个都不给 → 同样 8。理由写在代码里：一个问的是"别再管 java 了"，另一个问的是"管家走了，把我的环境还给我"，让其中一个**优先**于另一个是猜，所以拒绝。
+- 结果文档 `operation: "forget_all_persist"`，带 `scopes` / `capability_ids` / `records` / `restored` / `removed` / `drifted` / `shared_variables` / `dry_run`。
+- **没有记录时是成功而不是报错**（与单能力形式**故意不同**）："AIROOT 在这里什么都没记过"正是准备删掉 AIROOT 的人想听到的答案，报错等于说"这次检查本身失败了"。这个差异写在测试里，免得看起来像不一致。
+- 记录**关闭而不删除**：`forgotten_at` 落上，`active_only=False` 还能查到——可审计的还原靠的就是这条历史。
+- `agents/airoot.json` 增加一条 `["env", "forget", "--all"]` 调用元数据（问题、该读哪些字段），并把 `--all` 与 id 不可混用写进 notes。这条新登记**立刻触发了守卫**：`test_l1_agent_read_fields.py` 要求每条 invocation 都有"能产生该文档"的场景，于是那里补了 `--all --dry-run` 的录制（真跑会写 HKCU，被 conftest 的宿主守卫禁止）。
+
+### 63.4 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 链首规则换成"取最新那条记录的 `old_value`"（两条记录**时间戳不同**） | 危险 | **红**（留下 `after-alpha`） |
+| 同一个变异，但两条记录**共享同一秒** | 对照 | **绿**——而这一格是本轮最有用的读数：时间戳并列时 `max` 恰好也挑中链首，所以**只用并列时间戳的测试分辨不出这两条规则**。本测试的第一版正是那样写的，是这次变异把它抓出来的；现在它同时有"时间戳可分辨"与"时间戳不可分辨"两个用例，第一个负责让错规则变红，第二个负责证明答案不依赖顺序 |
+| PATH 分支改成"写回 `old_value`"而不是按条目移除 | 危险 | **红**（用户自己的 PATH 条目被覆盖） |
+| `--all` 与 `external_id` 同时给时不再拒绝 | 危险 | **红**（CLI 那条断言 8） |
+
+三个危险方向都变了红；每个变异都用**字节级**读写施加与恢复，恢复后逐字节相同。
+
+### 63.5 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S63.1 `forget_all_persist` | ✅ | `caps/exposure.py`；单能力路径未改动（既有测试全绿） |
+| S63.2 PATH 并集 / 普通变量链首 / 对每条判漂移 | ✅ | 三处规则各有一个点名测试 |
+| S63.3 CLI `--all` 与两种拒绝 | ✅ | `test_cli_env.py#test_C028_...`（exit 8 两次，且被拒绝的调用没有写任何东西） |
+| S63.4 无记录时成功 | ✅ | `test_C028_forget_all_with_nothing_recorded_is_a_success_not_an_error` |
+| S63.5 记录关闭不删除、事件留痕 | ✅ | 断言 `active_only=True == []` 且 `active_only=False` 仍是 4 条、事件里有 `FORGOTTEN` |
+| S63.6 agent 面登记 + 场景 | ✅ | `agents/airoot.json` 新条目；`test_l1_agent_read_fields.py` 补录 `--all --dry-run` |
+| S63.7 台账与计数回写 | ✅ | C-028 处置**删除**（改名点测试后 `status` 自己翻）；evidenced **51 → 52**、uncited **57 → 56**；测试 **765 → 771**（含链首规则那一条的两个用例） |
+
+### 63.6 如实记录的边界
+
+1. **"共享变量"这条路今天走不通，但规则必须是对的**：`PRIMARY KEY (capability_id, scope, variable)` 允许两个能力各写一行同一个变量，而**出厂白名单里只有 PATH 会被两个能力写**（`JAVA_HOME` 只由 java 声明）。也就是说普通变量的"链"规则现在**不可达**。我没有因此简化它——用一条只在可达时才正确的规则，等于把正确答案留给运气——而是把它写成一条**不依赖顺序**的规则并直接测它（`test_C028_forget_all_restores_the_chain_start_not_the_latest_write` 用手工记录构造了两条链）。歧义真正存在时（同一秒、多条链首）取最早的一条，把并列项写进 key 里，所以结果不依赖行序。
+2. **`env forget --all` 的 CLI 测试只跑 dry run**：真实调用会写 `HKCU\Environment`，而 `conftest.py` 的宿主守卫禁止测试这么做。还原语义在 `test_l1_exposure.py` 用注入 store 覆盖——这个分工本来就是这个文件 docstring 写着的规矩，不是本轮偷懒。
+3. **`--variable` 与 `--all` 不能合用**：`--all` 的语义是"全部"，加一个变量过滤就变成"全部里的一部分"，那是第三个问题，没有契约要求它。合用时给 `INVALID_INPUT` 而不是默默忽略。
+4. **没有做的事**：单能力形式的"没有任何记录 → `ENVIRONMENT_PERSIST_NOT_FOUND`"语义**没有**跟着改（两条命令回答的问题不同，见 63.3）；machine scope 的记录仍然写不出来（P2），所以 `--all` 里的 machine 分支今天只能是 `PRIVILEGE_REQUIRED`——`_store_for_scope` 本来就那样，没有为它造假路径。
+5. **这一轮改动没有 schema**：`forget_all_persist` 的文档没有发布 schema（`env forget` 的输出本来就没有），所以没有 golden fixture 变化——语料的 diff 只有台账那一份，是 C-028 翻成 evidenced 带来的。
+
+### 63.7 实施顺序
+
+1. 先确认契约与表注释都要求它（§13.4 + `ddl.sql`），再确认缺的是**命令形式**而不是语义；
+2. 想清三处顺序/漂移问题（63.2）——**先把规则想对，再写代码**；第一版"循环单能力形式"就是在这里被否掉的；
+3. 写 `forget_all_persist` + 结果文档；单能力路径不动；
+4. 接 CLI：`external_id` 变可选、加 `--all`、两种混用拒绝；
+5. 写点名测试（含手工构造的链、dry run、无记录、CLI 拒绝），逐个验红；
+6. 补 agent 面登记与场景录制，删掉台账处置，重生语料、回写计数，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

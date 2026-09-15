@@ -981,12 +981,60 @@ def cmd_env_persist(args: argparse.Namespace, context: Context) -> tuple[dict[st
 
 
 def cmd_env_forget(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
-    """Restore the values AIROOT replaced. Never touches the referenced object."""
+    """Restore the values AIROOT replaced. Never touches the referenced object.
 
-    from .caps.exposure import forget_reference_persist
+    Two questions, one verb, and they are not interchangeable: "stop managing this reference" names
+    a capability, while `--all` is the steward leaving — put back everything AIROOT ever wrote
+    (draft §13.4). Combining them would be ambiguous, so it is refused rather than resolved by
+    precedence.
+    """
+
+    from .caps.exposure import forget_all_persist, forget_reference_persist
+
+    if args.all and (args.external_id or args.variable):
+        raise AirootError(
+            "INVALID_INPUT",
+            "--all restores everything AIROOT persisted; it cannot be combined with an id or --variable",
+            evidence=["usage: airoot env forget --all [--dry-run]", "or: airoot env forget <external-id>"],
+        )
+    if not args.all and not args.external_id:
+        raise AirootError(
+            "INVALID_INPUT",
+            "env forget needs a reference id, or --all",
+            evidence=["usage: airoot env forget <external-id>", "or: airoot env forget --all"],
+        )
 
     registry = context.registry()
     try:
+        if args.all:
+            all_result = forget_all_persist(
+                registry=registry, clock=context.clock, dry_run=args.dry_run
+            )
+            document = all_result.to_document()
+            lines = [
+                f"restored {', '.join(document['restored']) or '-'} "
+                f"(removed {', '.join(document['removed']) or '-'})",
+                f"  records: {document['records']} across {len(document['capability_ids'])} capability(ies)",
+                *(
+                    [f"  written by more than one capability: {', '.join(document['shared_variables'])}"]
+                    if document["shared_variables"]
+                    else []
+                ),
+                *(
+                    [f"  drifted (changed outside AIROOT, restored anyway): {', '.join(document['drifted'])}"]
+                    if document["drifted"]
+                    else []
+                ),
+                *(["  dry run: nothing was written"] if args.dry_run else []),
+                *(
+                    ["  nothing AIROOT wrote is recorded: there is nothing to restore"]
+                    if not document["records"]
+                    else []
+                ),
+            ]
+            _emit(document, as_json=args.json, lines=lines)
+            return document, EXIT_SUCCESS
+
         row = _reference_row(registry, args.external_id)
         result = forget_reference_persist(
             registry=registry,
@@ -2667,9 +2715,16 @@ def build_parser() -> argparse.ArgumentParser:
     env_persist.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
 
     env_forget = env_sub.add_parser(
-        "forget", help="restore the values AIROOT replaced", parents=[common]
+        "forget",
+        help="restore the values AIROOT replaced",
+        description=(
+            "Restore what AIROOT persisted: give one reference's id, or --all to put every "
+            "variable AIROOT ever wrote back the way it was (draft §13.4)."
+        ),
+        parents=[common],
     )
-    env_forget.add_argument("external_id")
+    env_forget.add_argument("external_id", nargs="?", default=None)
+    env_forget.add_argument("--all", action="store_true", help="restore everything AIROOT ever persisted")
     env_forget.add_argument("--variable", default=None, help="only this variable")
     env_forget.add_argument(
         "--dry-run", action="store_true", help="report what would be restored, change nothing"

@@ -169,7 +169,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 **本节随实现推进而更新：它描述的是当前状态，不是写入时的快照。** 前文（§「已生成的实现前基线」及以上）
 是审查当时的记录，其中的计数按当时为准。
 
-**当前规模**：`cli/schema/` **19** 个 JSON Schema；`pytest cli/tests` **765 项**（含 **73** 项常驻跨工件
+**当前规模**：`cli/schema/` **19** 个 JSON Schema；`pytest cli/tests` **771 项**（含 **73** 项常驻跨工件
 一致性审计 `cli/tests/test_l0_consistency.py`）；golden 语料 **27** 个 fixture
 （`cli/tests/fixtures/golden/`，Rust 版逐字节验收面）；两份契约文档合计定义 **108 个场景编号**，
 台账见 `cli/tests/fixtures/golden/scenario_ledger.json`；决定拒绝的每个数值（搜索上限三件套、
@@ -189,7 +189,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 | **管家域步骤 1–9、11–12**：数据根注册（可跨卷）、只读 PE 静态探测、能力白名单发现、`adopt --mode reference`、依赖分流与确认、会话级环境激活、**user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、删除语义分级、能力边界、`rebuild`、来源清单、`desired` 层与 `tool pin`、只读观察面、session 快照栈 | `cli\app\airoot\caps\`、`policy\{discovery-whitelist,sources,selection-policy,capabilities}.json` |
 | **`search` 协议面与 crawl 建的持久索引**（**不是** USN 索引）：请求/实现上限/root 规则/cursor 绑定索引 generation、有界 crawl、`cache\search\index.db` 整文件原子替换、索引状态接进 D7、**只读** USN 能力探测 | `cli\app\airoot\caps\{search,searchindex,usn}.py`、`policy\search-policy.json` |
 | **Skill 适配层**：`SKILL.md` 是仓库根的唯一 Skill 入口，另有机器可读调用元数据与按需参考 | `SKILL.md`、`agents\airoot.json`、`references\` |
-| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**765 项**）、`cli\tests\fixtures\golden\`（**27 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
+| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**771 项**）、`cli\tests\fixtures\golden\`（**27 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
 
 **P1 退出条件已验证**：
 
@@ -239,12 +239,12 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
   `project_manifest_check: "not_implemented_before_p6"`）。它与 `doctor`/`desired`/`plan` 的重叠是真的，
   但那是这个命令较小的一半；第四类 `covered-elsewhere` 因此**在发明它的同一轮里被删掉**，因为不再有成员；
 - `.ai/tooling.json` 的写入。
-- **108 个场景编号里有 57 个没有任何测试点名**（台账 `scenario_ledger.json` 逐条给出结构性理由：
-  4 个需要 P2 受保护状态、1 个需要 P4 真实 artifact、11 个依赖尚未设计的能力、40 个由某个测试覆盖
+- **108 个场景编号里有 56 个没有任何测试点名**（台账 `scenario_ledger.json` 逐条给出结构性理由：
+  4 个需要 P2 受保护状态、1 个需要 P4 真实 artifact、10 个依赖尚未设计的能力、40 个由某个测试覆盖
   但那个测试没有引用编号、1 个是重复登记）。**"没有被点名"不等于"没有被测"**，台账记录的是
   **证据指针**而不是覆盖判定；`S-010`/`S-015` 是同一个场景登记了两次，
   `S-014` 在两份文档里各定义一次（两处必须同时更新），`P-021` 的"另一个卷→拒绝"一句**已取代**。
-  51 个被测试点名。**§61 把 17 条从未复核过的"缺某能力"判断逐条重新推导了一遍**，其中七条改判
+  52 个被测试点名。**§61 把 17 条从未复核过的"缺某能力"判断逐条重新推导了一遍**，其中七条改判
   （P-002 / P-016 / T-013 不该记 P2/P4，另外 §60 的 `reconcile` 同属这一类），三条改成
   `undesigned`（P-012 / P-015 / P-017：它们各有一半已交付、另一半**根本没有实现对象**——
   `revoked_at` 无写入方、`events` 表没有 `approval_mode` 列、没有签发方身份证据），其余十条**维持原判**
@@ -255,6 +255,9 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
   `http.client.IncompleteRead` 与裸 `OSError` 现在都变成 `INSTALL_IO_FAILED`（退出码 2：计划没错，
   是环境拒绝了），会按失败点回滚并把 stage 清掉，`failure_cleanup` 这个"每个 backend 都声明、
   核心从不执行"的字段第一次真的被执行（`discard_stage` 在此之前没有任何调用方）。
+  **§63 把 C-028 从"缺一个命令形式"变成已交付**：`env forget --all` 现在存在（§13.4 一直要求它、
+  `environment_persist` 的建表注释也一直写着它），`--all` 与"给一个 id"不能混用，全部还原只碰
+  AIROOT 写过的变量。
   `unchecked-invariant` 这个词汇值在 §55–§57 之后**已经没有条目在用**，
   但留在词汇表里（这一类会复发，删掉它等于连"为什么需要第五个值"一起删掉）。
 - 本报告与验证方案里写作 `AIROOT\cli\broker\...` 的路径已更正为实际位置 `docs\broker\`。

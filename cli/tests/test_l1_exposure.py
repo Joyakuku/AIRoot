@@ -35,13 +35,14 @@ from airoot.caps.exposure import (
     SCOPE_MACHINE,
     apply_reference_plan,
     build_reference_plan,
+    forget_all_persist,
     forget_reference_persist,
     request_from_entry,
     resolve_exposure,
 )
 from airoot.exits import AirootError
 from airoot.registry import ExternalReference
-from airoot.registry.entities import DataRoot, environment_persist_from_row
+from airoot.registry.entities import DataRoot, EnvironmentPersist, environment_persist_from_row
 from airoot.paths import volume_serial
 from airoot.schema_io import errors_for
 
@@ -524,6 +525,172 @@ def test_forgetting_something_never_persisted_is_refused(registry, registered: P
     with pytest.raises(AirootError) as caught:
         forget_reference_persist(registry=registry, capability_id="java", store=store)
     assert caught.value.reason_code == "ENVIRONMENT_PERSIST_NOT_FOUND"
+
+
+def test_C028_forget_all_puts_every_capability_back_and_leaves_other_variables_alone(
+    registry, registered: Path
+) -> None:
+    """C-028: `env forget --all` — everything AIROOT wrote goes back, nothing else moves.
+
+    Two capabilities, both of which prepend to `Path` (so the variable is *shared*), plus one
+    variable that belongs to the user and that AIROOT never wrote. The clause that matters most is
+    the second one: §13.4's promise is that "deleting AIROOT leaves no trace", and a `--all` that
+    also reset a variable AIROOT had never touched would be a far worse bug than not having the
+    command — it would destroy somebody's environment while claiming to restore it.
+    """
+
+    store = InMemoryEnvironmentStore()
+    store.write("MY_OWN_TOOL", "mine", "REG_EXPAND_SZ")
+    store.write("Path", "C:\\Windows;C:\\existing", "REG_EXPAND_SZ")
+
+    java_plan = build_plan(registry, registered)
+    apply_reference_plan(java_plan, registry=registry, store=store, approval_id="approval-java")
+
+    container = registered.parent / "python"
+    (container / "bin").mkdir(parents=True, exist_ok=True)
+    (container / "bin" / "python.exe").write_bytes(b"MZ-placeholder-never-executed\n")
+    python_plan = build_reference_plan(
+        make_request(container, entry=CONTAINER_ENTRY, capability_id="python"), registry=registry
+    )
+    apply_reference_plan(python_plan, registry=registry, store=store, approval_id="approval-python")
+
+    # JAVA_HOME + Path for java; CONTAINER_ROOT + Path for python. Path is one row per capability
+    # (`PRIMARY KEY (capability_id, scope, variable)`), which is what makes it the shared one.
+    assert len(registry.environment_persist_records(active_only=True)) == 4
+    after_apply = store.read("Path").value
+    assert str(registered / "bin") in after_apply and str(container / "bin") in after_apply
+
+    result = forget_all_persist(registry=registry, store=store)
+    document = result.to_document()
+
+    # Everything AIROOT wrote is gone from PATH...
+    remaining = store.read("Path").value
+    assert str(registered / "bin") not in remaining
+    assert str(container / "bin") not in remaining
+    # ...while the entries that were there before AIROOT ever ran survive both removes.
+    assert "C:\\Windows" in remaining and "C:\\existing" in remaining
+    # Neither capability variable existed before, so they are removed rather than restored.
+    assert store.read("JAVA_HOME") is None
+    assert store.read("CONTAINER_ROOT") is None
+    assert document["removed"] == ["CONTAINER_ROOT", "JAVA_HOME"]
+    # The recorded name is the canonical spelling: `_path_variable_name` probes `PATH` before `Path`
+    # and both Windows' registry and the in-memory store are case-insensitive, so a machine carrying
+    # `Path` is recorded as `PATH`. Compared case-insensitively rather than frozen to one spelling.
+    assert [name.upper() for name in document["restored"]] == ["PATH"]
+
+    # The variable the user owns is untouched, and it is not even named in the result.
+    assert store.read("MY_OWN_TOOL").value == "mine"
+    assert "MY_OWN_TOOL" not in document["restored"] + document["removed"] + document["drifted"]
+
+    # PATH was written by two capabilities; that fact is reported, not hidden.
+    assert document["shared_variables"] == ["PATH"]
+    assert document["records"] == 4
+    assert document["capability_ids"] == ["java", "python"]
+
+    # The records are closed, not deleted: the history is what makes the restore auditable.
+    assert registry.environment_persist_records(active_only=True) == []
+    assert len(registry.environment_persist_records(active_only=False)) == 4
+    assert "FORGOTTEN" in [row["state"] for row in registry.events()]
+
+
+@pytest.mark.parametrize(
+    "alpha_written, beta_written",
+    [
+        # Distinct seconds: the wrong rule ("take the latest record's old_value") is unambiguous here
+        # and gives 'after-alpha', which is why this case has to exist — a test whose two records share
+        # a timestamp cannot tell the two rules apart, because `max` breaks the tie the same way.
+        ("2024-01-01T00:00:01Z", "2024-01-01T00:00:02Z"),
+        # ...and the *same* second, which is what the rule must also survive: `clock.isoformat` drops
+        # microseconds on purpose, so this is a real shape, not a contrived one.
+        ("2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z"),
+    ],
+)
+def test_C028_forget_all_restores_the_chain_start_not_the_latest_write(
+    registry, alpha_written: str, beta_written: str
+) -> None:
+    """Two capabilities, one plain variable: the value to restore is where AIROOT's chain began.
+
+    The later record's `old_value` is the *earlier record's* `value`, so undoing them in the wrong
+    order puts the earlier write back. The rule used needs no ordering at all: the pre-AIROOT value
+    is the `old_value` that is not any record's `value`. The first case below is what makes that
+    rule testable — with distinct timestamps "take the latest" is well defined and wrong; the second
+    shows the answer does not change when the timestamps cannot order the two writes.
+    """
+
+    store = InMemoryEnvironmentStore()
+    store.write("SHARED_TOOL", "user-original", "REG_EXPAND_SZ")
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.record_environment_persist(
+            connection,
+            EnvironmentPersist(
+                capability_id="alpha", scope="user", variable="SHARED_TOOL",
+                value="after-alpha", value_kind="REG_EXPAND_SZ",
+                old_value="user-original", old_kind="REG_EXPAND_SZ",
+                written_at=alpha_written,
+            ),
+        )
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.record_environment_persist(
+            connection,
+            EnvironmentPersist(
+                capability_id="beta", scope="user", variable="SHARED_TOOL",
+                value="after-beta", value_kind="REG_EXPAND_SZ",
+                old_value="after-alpha", old_kind="REG_EXPAND_SZ",
+                written_at=beta_written,
+            ),
+        )
+    store.write("SHARED_TOOL", "after-beta", "REG_EXPAND_SZ")
+
+    result = forget_all_persist(registry=registry, store=store)
+
+    assert store.read("SHARED_TOOL").value == "user-original", (
+        "restoring the latest record's old_value would leave 'after-alpha' behind"
+    )
+    assert result.restored == ["SHARED_TOOL"]
+    assert result.shared_variables == ["SHARED_TOOL"]
+
+
+def test_C028_forget_all_dry_run_writes_nothing_and_says_what_it_would_do(
+    registry, registered: Path
+) -> None:
+    store = InMemoryEnvironmentStore()
+    store.write("Path", "C:\\Windows", "REG_EXPAND_SZ")
+    apply_reference_plan(build_plan(registry, registered), registry=registry, store=store)
+    before = {name: store.read(name).value for name in ("Path", "JAVA_HOME") if store.read(name)}
+    writes_before = list(store.writes)
+
+    result = forget_all_persist(registry=registry, store=store, dry_run=True)
+    document = result.to_document()
+
+    assert document["dry_run"] is True
+    assert document["restored"] or document["removed"], "a dry run still has to say what it would do"
+    after = {name: store.read(name).value for name in ("Path", "JAVA_HOME") if store.read(name)}
+    assert after == before, "a dry run wrote something"
+    assert store.writes == writes_before, "a dry run wrote to the store"
+    assert registry.environment_persist_records(active_only=True) != [], "a dry run closed the records"
+
+
+def test_C028_forget_all_with_nothing_recorded_is_a_success_not_an_error(registry) -> None:
+    """The per-capability form refuses when it finds nothing; `--all` must not.
+
+    "AIROOT has nothing recorded here" is exactly what someone wants to hear while checking before
+    deleting AIROOT — an error would say the check itself failed. The two answers differ on purpose,
+    so the difference is pinned here rather than left to look like an inconsistency.
+    """
+
+    store = InMemoryEnvironmentStore()
+    store.write("MY_OWN_TOOL", "mine", "REG_EXPAND_SZ")
+    writes_before = list(store.writes)
+
+    result = forget_all_persist(registry=registry, store=store)
+    document = result.to_document()
+
+    assert document["records"] == 0
+    assert document["restored"] == [] and document["removed"] == [] and document["drifted"] == []
+    assert document["reason_code"] == "SUCCESS"
+    assert store.read("MY_OWN_TOOL").value == "mine"
+    assert store.writes == writes_before and store.deletes == []
 
 
 def test_a_tampered_plan_cannot_be_applied(registry, registered: Path) -> None:

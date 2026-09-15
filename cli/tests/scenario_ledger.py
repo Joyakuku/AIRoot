@@ -764,17 +764,14 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "test_apply_then_forget_restores_the_exact_previous_value` 覆盖"
         ),
     },
-    "C-028": {
-        "blocked_by": "undesigned",
-        "no_witness_reason": (
-            "`env forget --all` **这个命令形式不存在**：`cmd_env_forget` 的 parser（cli.py）只接受 "
-            "`external_id` / `--variable` / `--dry-run`，`agents/airoot.json` 登记的也是 `[\"env\", \"forget\", "
-            "\"<external-id>\"]`，`not_implemented` 清单里没有它（那条清单管命令路径，`env forget` 本身是实现的）。"
-            "原记 `blocked_by=none` 并指向 dry-run 测试，是**本次复核抓到的第一条判断错误**。"
-            "证人造不出来：加一条'`--all` 不被接受'的断言只会在**别人把它实现出来**时变红，"
-            "而那正是'台账好看这件事自己生出一条自证断言'——与 C-007 同一处置"
-        ),
-    },
+    # C-028 used to sit here as `undesigned`, and §63 is why it does not any more. Its
+    # `no_witness_reason` was the most interesting one in the table: the witness *could* have been
+    # written ("`--all` is not accepted") but deliberately was not, because such an assertion only
+    # goes red when somebody **implements** the command — the ledger manufacturing a self-confirming
+    # green. The honest move was to build the thing instead, so it was built: `env forget --all`
+    # exists now, `test_l1_exposure.py#test_C028_...` covers the restore (including the chain-start
+    # rule for a variable two capabilities wrote) and `test_cli_env.py#test_C028_...` covers the flag
+    # surface and its two refusals. Disposition **deleted rather than rewritten** (§52/§55).
     "C-029": {
         "blocked_by": "none",
         "evidence": "test_cli_env.py#test_env_persist_without_a_token_stops_at_the_approval_boundary",

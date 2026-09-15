@@ -228,6 +228,9 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     # Without a token this stops at the approval boundary and hands the caller the plan to approve.
     record("env persist <external-id>", "env", "persist", REFERENCE)
     record("env forget <external-id>", "env", "forget", REFERENCE, "--dry-run")
+    # `--all` answers a different question, so it is a separate invocation entry, and its dry run is
+    # what can be recorded here: the real one writes HKCU (draft §63).
+    record("env forget --all", "env", "forget", "--all", "--dry-run")
     record("env deactivate --session <id>", "env", "deactivate", "--session", SESSION)
     record("tool pin <capability>", "tool", "pin", CAPABILITY, "--version", "1.0.0")
     record("search <query>", "search", "--query", "python")

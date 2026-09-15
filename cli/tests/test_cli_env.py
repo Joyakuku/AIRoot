@@ -258,6 +258,42 @@ def test_env_forget_dry_run_reports_without_changing_anything(
     assert len(registry.environment_persist_records(active_only=True)) == 2
 
 
+def test_C028_env_forget_all_dry_run_and_its_two_refusals(
+    capsys, cli_root: Path, registered_reference: Path, registry
+) -> None:
+    """C-028 at the CLI surface: the `--all` form exists, and its ambiguous uses are refused.
+
+    Only the dry run runs here, and that is the point rather than a shortcut: `--all` on a real
+    machine writes `HKCU\\Environment`, and the conftest guard forbids these tests from touching the
+    host. The restore itself is exercised in `test_l1_exposure.py` with an injected store — the split
+    this file's docstring already documents.
+    """
+
+    store = InMemoryEnvironmentStore()
+    persist_module(registry, registered_reference, store)
+
+    code, document = env(capsys, cli_root, "forget", "--all", "--dry-run")
+    assert code == 0
+    assert document["operation"] == "forget_all_persist"
+    assert document["dry_run"] is True
+    assert document["records"] == 2
+    assert document["capability_ids"] == ["java"]
+    # Still recorded: a dry run must not consume the records (same rule as the per-capability form).
+    assert len(registry.environment_persist_records(active_only=True)) == 2
+
+    # `--all` answers "put everything back"; an id answers "stop managing this one". Precedence
+    # between them would be a guess, so it is refused instead.
+    code, document = env(capsys, cli_root, "forget", "--all", "external/dr-env/java")
+    assert code == 8  # EXIT_INVALID_INPUT
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert len(registry.environment_persist_records(active_only=True)) == 2, "a refused call wrote something"
+
+    code, document = env(capsys, cli_root, "forget")
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert len(registry.environment_persist_records(active_only=True)) == 2
+
+
 # --------------------------------------------------------------------------- #
 # exec: session-only injection
 # --------------------------------------------------------------------------- #
