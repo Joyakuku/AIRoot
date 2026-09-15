@@ -235,18 +235,23 @@ FINALIZED
 
 ### `where`
 
-为每种结果固定 JSON fixture：
+每种结果固定一个 JSON fixture。**下表是完整清单，与 `cli/tests/fixtures/golden/where_*.json` 双向相等**（守卫第二十九组：fixture 名与退出码都比）——一张"要覆盖哪些场景"的清单如果不与语料对账，就会像 §86 那两份"还没决定"的清单一样，各自完整地描述一个更小的集合（§87）。
 
-```text
-healthy
-not_found
-unmanaged_only
-broken
-version_unsatisfied
-current_process_stale
-session_required
-recovery_required
-```
+| 场景 | fixture | 退出码 |
+|---|---|---|
+| healthy | `where_healthy` | 0 |
+| not_found | `where_not_found` | 1 |
+| version_unsatisfied | `where_version_unsatisfied` | 1 |
+| unmanaged_only（只看到 unmanaged 候选） | `where_unmanaged_only` | 1 |
+| broken（owned 坏了，且没有别的候选） | `where_broken` | 3 |
+| current_process_stale | `where_current_process_stale` | 0 |
+| owned 坏了但健康的 reference 顶上（ADR-0006 的正常降级） | `where_owned_broken_degrades_to_reference` | 2 |
+| 弃用的 external fallback 开关不改变结果 | `where_deprecated_external_fallback_is_ignored` | 2 |
+
+**原清单里的两个名字不是 `where` 的结果，已从表里去掉，原因记在这里**（§87 的实测；它们在这一节里待了很久，而语料里从来没有对应的东西）：
+
+- `session_required`：这个 build 里**没有**这个结果——`caps/where.py` 不产生它，`where-response.schema.json` 里也没有对应取值。它是 session 槽位的**规划**用语，而 session 槽位今天由 `env activate` 的会话栈承担；
+- `recovery_required`：它是 **`doctor` 的 remediation 与事务状态**，不是 `where` 的候选结果。恢复期为 pending 时 `where` 返回 `found=false` 加相应的 reason code，不会自称 `recovery_required`。
 
 字段顺序不重要，字段名称、类型、schema version、reason code 和退出码必须稳定。文本输出只能作为 JSON 的渲染结果。
 

@@ -20,6 +20,8 @@ SCHEMA_FOR_FIXTURE = {
     "where_healthy": "where-response",
     "where_current_process_stale": "where-response",
     "where_version_unsatisfied": "where-response",
+    "where_broken": "where-response",
+    "where_unmanaged_only": "where-response",
     "where_owned_broken_degrades_to_reference": "where-response",
     "where_deprecated_external_fallback_is_ignored": "where-response",
     "doctor_healthy": "doctor-response",

@@ -1,0 +1,54 @@
+{
+  "candidates": [
+    {
+      "evidence": [
+        {
+          "detail": "machine/fake-tool/windows/x64 active at generation 1",
+          "kind": "binding"
+        },
+        {
+          "detail": "lifecycle=active health=broken",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "registry",
+          "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin"
+        }
+      ],
+      "health": "broken",
+      "machine_discoverable": true,
+      "management": "managed",
+      "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin",
+      "source": "registry",
+      "usable": false
+    }
+  ],
+  "capability_id": "fake-tool",
+  "effective_new_process": false,
+  "effective_now": false,
+  "evidence": [
+    {
+      "detail": "capability=fake-tool version=* scope=*",
+      "kind": "query"
+    },
+    {
+      "detail": "selection precedence=steward (revision=sp-1, source=file)",
+      "kind": "policy"
+    },
+    {
+      "detail": "an owned binding is declared but not healthy and no reference can answer",
+      "kind": "registry"
+    }
+  ],
+  "executable": null,
+  "found": false,
+  "health": null,
+  "instance_id": null,
+  "management": null,
+  "reason_code": "BROKEN",
+  "schema_version": 1,
+  "scope": null,
+  "selection_reason": "MANAGED_NOT_HEALTHY",
+  "source": null,
+  "usable": false,
+  "version": null,
+  "zone": null
+}

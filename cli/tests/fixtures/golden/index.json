@@ -19,10 +19,12 @@
   "search_stale_index_response": 2,
   "transaction_finalized": 0,
   "transaction_transitions": 0,
+  "where_broken": 3,
   "where_current_process_stale": 0,
   "where_deprecated_external_fallback_is_ignored": 2,
   "where_healthy": 0,
   "where_not_found": 1,
   "where_owned_broken_degrades_to_reference": 2,
+  "where_unmanaged_only": 1,
   "where_version_unsatisfied": 1
 }

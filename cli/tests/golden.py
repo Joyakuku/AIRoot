@@ -183,9 +183,20 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "exit_code": exit_code_for("VERSION_UNSATISFIED"),
     }
 
-    # ---- where: broken managed plus healthy external ----------------------- #
+    # ---- where: broken managed, nothing else to answer with (§87) ---------- #
+    # The plan's §8 list asks for one fixture per `where` *result*. `broken` (exit 3) is a different
+    # result from the degradation below it, and had no fixture: the corpus only had the case where a
+    # healthy reference answers instead.
     with registry.write(expected_generation=registry.generation) as connection:
         registry.set_instance_status(connection, "fake-tool/fake-tool/1.0.0/win-x64", health="broken")
+    documents["where_broken"] = {
+        "document": where(registry, WhereQuery(capability_id=CAPABILITY), root=root.path,
+                          process_entries=[], machine_entries=[], user_entries=[]),
+        "exit_code": exit_code_for("BROKEN"),
+    }
+
+    # ---- where: broken managed plus healthy external ----------------------- #
+    with registry.write(expected_generation=registry.generation) as connection:
         connection.execute(
             """
             INSERT INTO external_references (external_id, capability_id, path, management, health,
@@ -204,6 +215,28 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "document": where(registry, WhereQuery(capability_id=CAPABILITY, allow_external_fallback=True), root=root.path,
                           process_entries=[], machine_entries=[], user_entries=[]),
         "exit_code": exit_code_for("CURRENT_SOURCE_DEGRADED"),
+    }
+    registry.close()
+
+    # ---- where: unmanaged candidates only (§87) ---------------------------- #
+    # `UNMANAGED_ONLY` is a real selection reason (`caps/where.py`) and had no fixture. A row whose
+    # management is not `external_reference` gets no steward slot, so it lands in the `external` list
+    # without ever competing: the answer is "found nothing, but here is what I saw".
+    root, registry, clock = _build_root(base / "unmanaged_only")
+    with registry.write(expected_generation=0, bump=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO external_references (external_id, capability_id, path, management, health,
+                                             observed_digest, observed_at, payload_json)
+            VALUES ('unmanaged/tools-fake-tool', ?, ?, 'unmanaged', 'healthy', NULL,
+                    '2024-01-01T00:00:00Z', '{}')
+            """,
+            (CAPABILITY, str(root.path / "tools" / PAYLOAD_NAME)),
+        )
+    documents["where_unmanaged_only"] = {
+        "document": where(registry, WhereQuery(capability_id=CAPABILITY), root=root.path,
+                          process_entries=[], machine_entries=[], user_entries=[]),
+        "exit_code": exit_code_for("NOT_FOUND"),
     }
     registry.close()
 

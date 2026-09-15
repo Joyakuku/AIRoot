@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 APP = REPO / "cli" / "app" / "airoot"
 AGENTS = REPO / "AGENTS.md"
 PLANNING = REPO / "docs" / "AIROOT-总体方案规划-v0.3.md"
+VALIDATION = REPO / "docs" / "AIROOT-v0.3-验证与测试方案.md"
 REASON_TABLE = REPO / "docs" / "AIROOT-v0.3-诊断码与ReasonCode表.md"
 SCHEMA_README = REPO / "docs" / "schema" / "README.md"
 SKILL = REPO / "SKILL.md"
@@ -583,6 +584,54 @@ def test_every_decision_is_reachable_from_an_open_question_list() -> None:
     assert _unreachable_decisions([re.sub(r"\bD7\b", "D9", block) for block in blocks], adr) != [], (
         "an open-question list that stops naming a decision must be reported"
     )
+
+
+# --- Guard group 29: the plan's `where` result list against the corpus (draft §87) ---------------
+#
+# The validation plan's §8 said "每一种结果固定 JSON fixture" and then listed eight names. §87 put
+# that list beside the corpus: two of the eight (`session_required`, `recovery_required`) are **not
+# `where` results at all** — one does not exist in this build, the other belongs to `doctor` and the
+# transaction states — while two results that do exist (`broken` with no fallback, and
+# `UNMANAGED_ONLY`) had no fixture, and two fixtures had no entry in the list. A coverage list that is
+# never reconciled with the corpus ends up describing a smaller set than the code, in both directions:
+# this is the §86 defect one layer down, in the test plan instead of the decision log.
+
+#: The sentence that owns the table. Anchored on the sentence, not the heading, so renaming the
+#: section cannot quietly point this guard at another table.
+WHERE_FIXTURE_TABLE = "每种结果固定一个 JSON fixture"
+WHERE_FIXTURE_ROW = re.compile(r"(?m)^\|\s*[^|]+\|\s*`(where_[a-z0-9_]+)`\s*\|\s*(\d+)\s*\|")
+
+
+def _where_fixture_problems(block: str, corpus: dict[str, int]) -> list[str]:
+    """Both directions, plus the exit code the table states for each fixture."""
+
+    listed = {name: int(code) for name, code in WHERE_FIXTURE_ROW.findall(block)}
+    problems = [f"{name} is in the plan but has no fixture" for name in sorted(set(listed) - set(corpus))]
+    problems += [f"{name} is in the corpus but not in the plan" for name in sorted(set(corpus) - set(listed))]
+    problems += [
+        f"{name}: the plan says exit {code}, the corpus index says {corpus[name]}"
+        for name, code in sorted(listed.items())
+        if name in set(corpus) and corpus[name] != code
+    ]
+    return problems
+
+
+def test_the_where_result_list_and_the_corpus_are_the_same_set() -> None:
+    """A coverage list and the corpus it describes must be each other's whole truth."""
+
+    plan = VALIDATION.read_text(encoding="utf-8")
+    block = plan.split(WHERE_FIXTURE_TABLE, 1)[1].split("\n## ", 1)[0]
+    index = json.loads((GOLDEN / "index.json").read_text(encoding="utf-8"))
+    corpus = {name: code for name, code in index.items() if name.startswith("where_")}
+
+    assert len(corpus) >= 4, f"the corpus has {len(corpus)} where fixtures; this guard is about them"
+    assert _where_fixture_problems(block, corpus) == [], "; ".join(_where_fixture_problems(block, corpus))
+
+    # Non-vacuity, one mutation per direction, including the exit-code column: a wrong exit code in an
+    # agent-facing document is exactly the defect §36 found surviving a green suite.
+    assert _where_fixture_problems(block.replace("`where_broken`", "`where_teleport`", 1), corpus) != []
+    assert _where_fixture_problems(block.replace("| `where_healthy` | 0 |", "", 1), corpus) != []
+    assert _where_fixture_problems(block.replace("| `where_healthy` | 0 |", "| `where_healthy` | 7 |", 1), corpus) != []
 
 
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:

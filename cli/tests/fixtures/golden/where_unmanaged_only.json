@@ -1,0 +1,46 @@
+{
+  "candidates": [
+    {
+      "evidence": [
+        {
+          "detail": "observed at 2024-01-01T00:00:00Z (unmanaged)",
+          "digest": null,
+          "kind": "external_reference",
+          "path": "<BASE>\\unmanaged_only\\root\\tools\\fake-tool.bin"
+        }
+      ],
+      "health": "healthy",
+      "machine_discoverable": true,
+      "management": "unmanaged",
+      "path": "<BASE>\\unmanaged_only\\root\\tools\\fake-tool.bin",
+      "source": "path",
+      "usable": false
+    }
+  ],
+  "capability_id": "fake-tool",
+  "effective_new_process": false,
+  "effective_now": false,
+  "evidence": [
+    {
+      "detail": "capability=fake-tool version=* scope=*",
+      "kind": "query"
+    },
+    {
+      "detail": "selection precedence=steward (revision=sp-1, source=file)",
+      "kind": "policy"
+    }
+  ],
+  "executable": null,
+  "found": false,
+  "health": null,
+  "instance_id": null,
+  "management": null,
+  "reason_code": "NOT_FOUND",
+  "schema_version": 1,
+  "scope": null,
+  "selection_reason": "UNMANAGED_ONLY",
+  "source": null,
+  "usable": false,
+  "version": null,
+  "zone": null
+}
