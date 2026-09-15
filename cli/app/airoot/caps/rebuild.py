@@ -36,6 +36,7 @@ from ..registry.projection import (
     projection_path,
     read_projection,
 )
+from .layout import misdeclared_payloads, mislocated_payloads, store_orphans
 
 REBUILD_DIR = "state/rebuild"
 REGISTRY_BACKUP = "registry.json"
@@ -52,6 +53,13 @@ class RebuildFindings:
     unmanaged: list[str] = field(default_factory=list)
     pending_transactions: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    # §71: the other two shapes of the same D4 fact. `orphans` covers payload markers under `store/`
+    # that nobody declares; these cover a *declaration* pointing outside the store and a payload
+    # marker sitting in a view directory. `doctor` reported all three and this report none of the
+    # last two, so an operator could read "no orphans, no problems" after a recovery while a frozen
+    # contract was violated (measured in §71.2).
+    misdeclared_payloads: list[str] = field(default_factory=list)
+    mislocated_payloads: list[str] = field(default_factory=list)
 
     @property
     def derived_stale(self) -> bool:
@@ -65,24 +73,10 @@ class RebuildFindings:
             "unmanaged": sorted(self.unmanaged),
             "pending_transactions": sorted(self.pending_transactions),
             "problems": list(self.problems),
+            "misdeclared_payloads": sorted(self.misdeclared_payloads),
+            "mislocated_payloads": sorted(self.mislocated_payloads),
             "derived_state_stale": self.derived_stale,
         }
-
-
-def _store_orphans(registry: Any, root: Path) -> list[str]:
-    """Store payloads with no registry row. Reported, never adopted (D4)."""
-
-    store = Path(root) / "store"
-    if not store.is_dir():
-        return []
-    declared = {str(row["store_path"]).replace("\\", "/") for row in registry.instances()}
-    found: list[str] = []
-    for entry in sorted(path for path in store.iterdir() if path.is_dir()):
-        for leaf in sorted(path for path in entry.rglob("*") if path.is_dir() and (path / "artifact.json").is_file()):
-            relative = leaf.relative_to(root).as_posix()
-            if relative not in declared:
-                found.append(relative)
-    return found
 
 
 def _unmanaged_references(registry: Any) -> list[str]:
@@ -98,7 +92,14 @@ def rebuild_plan(registry: Any, root: Path) -> RebuildFindings:
 
     root = Path(root)
     findings = RebuildFindings()
-    findings.orphans = _store_orphans(registry, root)
+    findings.orphans = store_orphans(registry, root)
+    findings.mislocated_payloads = mislocated_payloads(registry, root)
+    # `<instance_id> -> <store_path>`, because `rebuild`'s document has no published schema and a
+    # report an operator reads should not require a second command to name the path. `doctor` keeps
+    # the two apart, since its diagnostics are fielded.
+    findings.misdeclared_payloads = [
+        f"{instance_id} -> {store_path}" for instance_id, store_path in misdeclared_payloads(registry)
+    ]
     findings.unmanaged = _unmanaged_references(registry)
     findings.pending_transactions = [
         str(row["transaction_id"]) for row in registry.transactions(unfinished_only=True)

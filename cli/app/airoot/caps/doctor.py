@@ -18,18 +18,19 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .. import ENV_DIR, LOGS_DIR, TOOLS_DIR
+from .. import LOGS_DIR
 from ..canon import digest_file, tree_digest
 from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
 from ..paths import from_root_relative
 from ..registry import Registry
-from ..registry.entities import is_store_path, load_json
+from ..registry.entities import load_json
 from ..registry.projection import projection_generation
 from ..root import marker_path, read_marker
 from ..schema_io import errors_for, load_schema
 from ..paths import volume_serial
 from .acl import AclSnapshot, acl_digest, capture_acl, differences
+from .layout import misdeclared_payloads, mislocated_payloads, store_orphans
 
 AUDIT_RELATIVE = f"{LOGS_DIR}/audit/events.json"
 
@@ -289,23 +290,16 @@ def _check_payloads(registry: Registry, root: Path, verify: bool, diagnostics: l
 def _check_orphans(registry: Registry, root: Path, diagnostics: list[dict[str, Any]]) -> None:
     """D4: payloads inside the root with no registry record are reported, never adopted."""
 
-    store = root / "store"
-    if not store.is_dir():
-        return
-    declared = {str(row["store_path"]).replace("\\", "/") for row in registry.instances()}
-    for entry in sorted(path for path in store.iterdir() if path.is_dir()):
-        for leaf in sorted(path for path in entry.rglob("*") if path.is_dir() and (path / "artifact.json").is_file()):
-            relative = leaf.relative_to(root).as_posix()
-            if relative not in declared:
-                diagnostics.append(
-                    _diagnostic(
-                        "warning",
-                        "ORPHANED_STORE_INSTANCE",
-                        [f"store object without a registry row: {relative}"],
-                        "the object is unmanaged; where will not select it",
-                        "inspect",
-                    )
-                )
+    for relative in store_orphans(registry, root):
+        diagnostics.append(
+            _diagnostic(
+                "warning",
+                "ORPHANED_STORE_INSTANCE",
+                [f"store object without a registry row: {relative}"],
+                "the object is unmanaged; where will not select it",
+                "inspect",
+            )
+        )
 
 
 def _check_layout(registry: Registry, root: Path, diagnostics: list[dict[str, Any]]) -> None:
@@ -323,45 +317,41 @@ def _check_layout(registry: Registry, root: Path, diagnostics: list[dict[str, An
     ``--include-unmanaged``): an unfamiliar object in a data root is information, while a payload in a
     view directory contradicts a frozen contract. Gating the second one behind a flag would let the
     quiet default hide a violated invariant.
+
+    The scan itself lives in ``caps/layout.py`` since §71: `rebuild` reports the same fact, and a
+    second copy of the walk is how the two readers drifted apart in the first place.
     """
 
-    for row in registry.instances():
-        if is_store_path(row["store_path"]):
-            continue
+    for instance_id, store_path in misdeclared_payloads(registry):
         diagnostics.append(
             _diagnostic(
                 "error",
                 "PAYLOAD_OUTSIDE_STORE",
                 [
-                    f"instance={row['instance_id']}",
-                    f"store_path={row['store_path']}",
+                    f"instance={instance_id}",
+                    f"store_path={store_path}",
                     "the declared payload path is not under store/",
                 ],
                 "the declaration cannot be honoured; where will not select this payload",
                 "repair",
-                str(row["instance_id"]),
+                instance_id,
             )
         )
 
-    declared = {str(row["store_path"]).replace("\\", "/") for row in registry.instances()}
-    for view in (TOOLS_DIR, ENV_DIR):
-        directory = root / view
-        if not directory.is_dir():
-            continue
-        for leaf in sorted(path for path in directory.rglob("*") if path.is_dir() and (path / "artifact.json").is_file()):
-            relative = leaf.relative_to(root).as_posix()
-            if relative in declared:
-                # Already reported above as a mislocated declaration; one fact, one diagnostic.
-                continue
-            diagnostics.append(
-                _diagnostic(
-                    "warning",
-                    "PAYLOAD_OUTSIDE_STORE",
-                    [f"payload marker outside the store: {relative}", f"{view}/ is a binding/view directory and carries no payload"],
-                    "layout drifted from the frozen rule that store is the only payload storage",
-                    "inspect",
-                )
+    for relative in mislocated_payloads(registry, root):
+        view = relative.split("/", 1)[0]
+        diagnostics.append(
+            _diagnostic(
+                "warning",
+                "PAYLOAD_OUTSIDE_STORE",
+                [
+                    f"payload marker outside the store: {relative}",
+                    f"{view}/ is a binding/view directory and carries no payload",
+                ],
+                "layout drifted from the frozen rule that store is the only payload storage",
+                "inspect",
             )
+        )
 
 
 def _check_data_roots(

@@ -145,6 +145,97 @@ def test_orphan_payloads_are_reported_and_left_alone(registry, clock, root) -> N
     assert digest_text((orphan / "artifact.json").read_text(encoding="utf-8")) == digest_before
 
 
+def test_rebuild_reports_every_shape_of_payload_outside_the_store(registry, clock, root) -> None:
+    """D4's three shapes, reported by the operator's recovery verb too (draft §71).
+
+    `rebuild` promises that "unfamiliar objects are reported, never adopted or deleted", and it kept
+    that promise for payload markers under `store/` only. A marker in a **view** directory, a
+    **declaration** pointing outside `store/`, and a marker at **depth 1** under `store/` were all
+    invisible to it — measured on the same root `doctor` reports them for, so an operator could read
+    "no orphans, no problems" after a recovery while a frozen contract was violated.
+    """
+
+    from airoot.registry.entities import Binding, Instance
+
+    # (1) a marker under a view directory, declared by nobody
+    view = Path(root.path) / "tools" / "mystery"
+    view.mkdir(parents=True)
+    (view / "artifact.json").write_text("{}\n", encoding="utf-8")
+    # (2) a marker at depth 1 under store/, declared by nobody — the depth the old scan skipped
+    shallow = Path(root.path) / "store" / "handmade"
+    shallow.mkdir(parents=True)
+    (shallow / "artifact.json").write_text("{}\n", encoding="utf-8")
+    # (3) a declaration whose payload is not under store/ at all
+    rogue = Path(root.path) / "env" / "runtimes" / "rogue"
+    rogue.mkdir(parents=True)
+    (rogue / "artifact.json").write_text("{}\n", encoding="utf-8")
+    instance_id = "rogue/rogue/1.0.0/win-x64"
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_instance(
+            connection,
+            Instance(
+                instance_id=instance_id,
+                kind="managed_tool",
+                capability_id="rogue",
+                version="1.0.0",
+                platform="windows",
+                architecture="x64",
+                install_backend_id="fake_fixture",
+                artifact_digest="sha256:" + "a" * 64,
+                store_path="env/runtimes/rogue",
+                lifecycle_status="active",
+                health="healthy",
+                created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        registry.bind_active(
+            connection, Binding("rogue", instance_id, "machine", "R", "stable_launcher", 1, True)
+        )
+
+    findings = rebuild_plan(registry, root.path).to_document()
+
+    assert findings["orphans"] == ["store/handmade"], findings
+    assert findings["mislocated_payloads"] == ["tools/mystery"], findings
+    assert findings["misdeclared_payloads"] == [f"{instance_id} -> env/runtimes/rogue"], findings
+    # The declared-and-mislocated payload is reported once as the error, not again as drift — the
+    # same "one fact, one report" rule `doctor` follows.
+    assert "env/runtimes/rogue" not in findings["mislocated_payloads"]
+
+    # The two readers agree, which is the point of moving the scan into one module. `doctor` splits
+    # the same three facts across D4's two codes — an undeclared store marker is `ORPHANED_STORE_INSTANCE`,
+    # a mislocated declaration is the `error` half of `PAYLOAD_OUTSIDE_STORE`, a marker in a view is the
+    # `warning` half — and nothing is reported twice.
+    document = doctor(root.path, registry=registry, data_roots=False)
+    d4 = [
+        item
+        for item in document["diagnostics"]
+        if item["code"] in {"ORPHANED_STORE_INSTANCE", "PAYLOAD_OUTSIDE_STORE"}
+    ]
+    assert sorted(item["code"] for item in d4) == [
+        "ORPHANED_STORE_INSTANCE",
+        "PAYLOAD_OUTSIDE_STORE",
+        "PAYLOAD_OUTSIDE_STORE",
+    ]
+    assert sorted(item["severity"] for item in d4) == ["error", "warning", "warning"]
+    mentioned = {
+        candidate
+        for candidate in ("store/handmade", "tools/mystery", "env/runtimes/rogue")
+        if any(candidate in entry for item in d4 for entry in item["evidence"])
+    }
+    assert mentioned == {"store/handmade", "tools/mystery", "env/runtimes/rogue"}
+
+
+def test_rebuild_reports_nothing_for_a_clean_root(registry, clock, root) -> None:
+    """The negative half: a healthy root must not grow findings just because the scan widened."""
+
+    install(registry, clock, root)
+
+    findings = rebuild_plan(registry, root.path).to_document()
+
+    assert findings["misdeclared_payloads"] == []
+    assert findings["mislocated_payloads"] == []
+
+
 def test_unmanaged_references_are_reported_not_adopted(registry, root) -> None:
     with registry.write(expected_generation=registry.generation) as connection:
         connection.execute(
