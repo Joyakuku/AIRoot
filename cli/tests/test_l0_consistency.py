@@ -634,6 +634,123 @@ def test_the_where_result_list_and_the_corpus_are_the_same_set() -> None:
     assert _where_fixture_problems(block.replace("| `where_healthy` | 0 |", "| `where_healthy` | 7 |", 1), corpus) != []
 
 
+# --- Guard group 30: a fixture's recorded exit code against its own bytes (draft §88) ------------
+#
+# `index.json` records one exit code per fixture, and every document carries the machine-readable
+# outcome that decides it. Nothing compared the two. So `doctor_healthy` shipped a document whose
+# `status` was `degraded` with an index entry of **0** — a fixture whose recorded exit code
+# contradicted its own bytes — and `healthy` was consequently the one doctor status the validation
+# plan's §14 ("`where`/`doctor` 的所有机器可读结果都有固定 fixture") could not point at. A port that
+# reproduced "exit 0 with a degraded document" would have been graded correct against this corpus.
+
+GOLDEN_INDEX = GOLDEN / "index.json"
+#: `reason = "..."` and `reason = SOME_CONSTANT` in `caps/where.py`; the constants are resolved, so
+#: `DEGRADED_TO_REFERENCE` counts as the code it holds rather than as a second name for it. The
+#: lookbehind matters: `selection_reason = UNMANAGED_ONLY` contains `reason = UNMANAGED_ONLY`, and
+#: without it this scanner reports four selection reasons as exit-code-bearing outcomes.
+WHERE_CONSTANT = re.compile(r"(?m)^([A-Z_]+) = \"([A-Z_]+)\"")
+WHERE_REASON_LITERAL = re.compile(r"(?<![A-Za-z_])reason = \"([A-Z_]+)\"")
+WHERE_REASON_NAME = re.compile(r"(?<![A-Za-z_])reason = ([A-Z_]+)\b")
+
+
+def _where_reason_codes(source: str) -> set[str]:
+    constants = dict(WHERE_CONSTANT.findall(source))
+    codes = set(WHERE_REASON_LITERAL.findall(source))
+    codes |= {constants[name] for name in WHERE_REASON_NAME.findall(source) if name in constants}
+    return codes
+
+
+def _recorded_exit_code_problems(index: dict[str, int], documents: dict[str, dict[str, Any]]) -> list[str]:
+    """The code the index records must be the one the document's own outcome derives.
+
+    Two derivations, because the two response families state their outcome differently: a
+    `reason_code` (any document that carries one — `where` and `search` both do) or a doctor
+    `status`. A document that states neither is not constrained here, and §88 records which one
+    fixture that leaves out.
+    """
+
+    from airoot.caps.doctor import status_exit_code
+    from airoot.exits import exit_code_for
+
+    problems: list[str] = []
+    for name, recorded in sorted(index.items()):
+        document = documents.get(name)
+        if document is None:
+            problems.append(f"{name} is in the index but has no document")
+            continue
+        code = document.get("reason_code")
+        if code is not None:
+            derived, basis = exit_code_for(code), f"reason_code {code}"
+        elif name.startswith("doctor_") and "status" in document:
+            derived, basis = status_exit_code(document["status"]), f"status {document['status']}"
+        else:
+            continue
+        if derived != recorded:
+            problems.append(f"{name}: the index says {recorded}, its own {basis} says {derived}")
+    return problems
+
+
+def _outcome_coverage_problems(
+    documents: dict[str, dict[str, Any]], statuses: set[str], reason_codes: set[str]
+) -> list[str]:
+    """§14's sentence, made checkable: every machine-readable result has a fixed fixture."""
+
+    seen_statuses = {doc["status"] for name, doc in documents.items() if name.startswith("doctor_")}
+    seen_codes = {doc["reason_code"] for name, doc in documents.items() if name.startswith("where_")}
+    problems = [f"no doctor fixture reports status {value}" for value in sorted(statuses - seen_statuses)]
+    problems += [f"no where fixture reports reason code {value}" for value in sorted(reason_codes - seen_codes)]
+    return problems
+
+
+def _golden_documents() -> dict[str, dict[str, Any]]:
+    return {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(GOLDEN.glob("*.json"))
+        if path.name != "index.json"
+    }
+
+
+def test_every_fixture_records_the_exit_code_its_own_outcome_derives() -> None:
+    """A corpus whose indices and bytes disagree grades a wrong port as correct."""
+
+    index = json.loads(GOLDEN_INDEX.read_text(encoding="utf-8"))
+    documents = _golden_documents()
+    assert len(index) >= 20, f"the corpus index has {len(index)} entries; this guard is about them"
+
+    assert _recorded_exit_code_problems(index, documents) == [], "; ".join(
+        _recorded_exit_code_problems(index, documents)
+    )
+
+    # Non-vacuity: the exact defect §88 found, restored, plus a swapped reason code and an index
+    # entry with no document.
+    stale = dict(index, doctor_healthy=0)
+    documents["doctor_healthy"] = {**documents["doctor_healthy"], "status": "degraded"}
+    assert _recorded_exit_code_problems(stale, documents) != [], "a contradictory index entry must be reported"
+    swapped = {**documents, "where_broken": {**documents["where_broken"], "reason_code": "NOT_FOUND"}}
+    assert _recorded_exit_code_problems(index, swapped) != [], "a swapped reason code must be reported"
+    assert _recorded_exit_code_problems({**index, "ghost_fixture": 0}, documents) != [], (
+        "an index entry with no document must be reported"
+    )
+
+
+def test_every_machine_readable_outcome_has_a_fixture() -> None:
+    """§14 requires a fixed fixture per result; the statuses and codes are the results."""
+
+    documents = _golden_documents()
+    schema = load_schema("doctor-response")
+    statuses = set(schema["properties"]["status"]["enum"])
+    reason_codes = _where_reason_codes((APP / "caps" / "where.py").read_text(encoding="utf-8"))
+    assert statuses and reason_codes, "a vocabulary came back empty; this guard is about nothing"
+
+    assert _outcome_coverage_problems(documents, statuses, reason_codes) == [], "; ".join(
+        _outcome_coverage_problems(documents, statuses, reason_codes)
+    )
+
+    # Non-vacuity: a status and a reason code nothing covers.
+    assert _outcome_coverage_problems(documents, statuses | {"unmanaged"}, reason_codes) != []
+    assert _outcome_coverage_problems(documents, statuses, reason_codes | {"TELEPORT_FAILED"}) != []
+
+
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
     """§15.1 lists the CLI surface; every entry must be one of the two, never neither.
 

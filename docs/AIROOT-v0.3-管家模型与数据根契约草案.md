@@ -7287,3 +7287,81 @@ P1 有**两份**"还没决定"的清单，读者会各按各的找答案：
 4. 改文档：清单从自由列表改成表，把两个不是结果的名字移出并写明原因；
 5. 写守卫（两条方向 + 退出码）；3 个变异逐个验红；
 6. 回写计数；跑全量 + 旧切片 + 真机验收；提交。
+## 88. 第 88 阶段：语料里有一条 fixture，它记录的成功码与它自己的字节相反
+
+### 88.1 这一阶段要解决什么
+
+§87 补完 `where` 那一半之后留下的边界是："`doctor` 那节列的是五个方面（健康 fixture、最小坏例、含证据的诊断、不误伤的 remediation 预览、修复后复验），同样的双向对账对它不成立。"
+
+但验收方案 **§14** 自己写着一条更硬的判据：「**`where`/`doctor` 的所有机器可读结果都有固定 fixture**」。这一轮做 `doctor` 那一半——而动手之前先问一个更基础、也更便宜的问题：
+
+> `index.json` 给每个 fixture 记的那个退出码，和 fixture **自己文档里**的结果，一致吗？
+
+### 88.2 实测：28 条里只有一条不一致，而它是最贵的那种
+
+`where` 的文档带 `reason_code`，`doctor` 的带 `status`；两者都由核心的函数决定退出码（`exits.exit_code_for` / `caps.doctor.status_exit_code`）。把 `index.json` 记的数与文档推出的数逐个对上：
+
+| fixture | index 记的 | 文档自己的结果推出 |
+|---|---|---|
+| `doctor_healthy` | **0** | `status: degraded` → **2** |
+| 其余 27 条 | —— | **全部一致**（八个 `where_*`、两条 `search_*` 一个不差） |
+
+这一条错得比它看起来严重三倍：
+
+1. **它的名字在说谎**：叫 `doctor_healthy`，文档里是 `degraded`；
+2. **它的退出码与自己的字节相反**：一个端口只要"复现出 degraded 文档 + 退出 0"就会被判为**正确**——**验收面把一个错的实现判成对的**；
+3. **它是 §14 那句话唯一的漏洞**：`doctor-response.schema.json` 的 `status` 枚举有四个取值（`healthy`/`degraded`/`broken`/`recovery_required`），语料里只出现三个——**`healthy` 一个 fixture 都没有**，而这个叫 healthy 的正好顶了它的位置。
+
+**根因也量清了**：`_build_root` 建出来的新 root **没有 `state/registry.json` 投影**，`doctor` 于是报 `REGISTRY_PROJECTION_STALE`（证据："state/registry.json is missing or unreadable"）→ `degraded`。而 `doctor_degraded_stale_projection` 做的是"generation 涨了但投影没重写"——**在 §88 之前，这两个 fixture 是同一个场景的两份拷贝**，其中一份还挂着 `healthy` 的名字。
+
+### 88.3 做了什么
+
+1. **生成器里让 `doctor_healthy` 真的健康**：先 `registry.update_projection()` 再跑 `doctor`。现在 `status=healthy`、`exit_code=0`，只剩一条 `POLICY_ONLY_MODE`(info)。
+2. **顺带把第二个 fixture 变成真的"过期"**（这是修好第一个的副产品）：投影存在了，于是 `REGISTRY_PROJECTION_STALE` 的证据从"missing or unreadable"变成 `projection generation=0` / `registry generation=1`，impact 也从"读不到声明状态"变成"投影不描述当前 generation"。**两个 fixture 从此是两个场景**，而不是一个场景的两个名字。
+3. **新增守卫第三十组**，两条：
+   - **每条 fixture 记录的退出码必须等于它自己文档推出的那个**——用核心自己的函数，不在这里重写一遍映射（重写一遍就是第三次把同一张表抄成两份）；
+   - **§14 那句话本身可检查**：`doctor` 的 `status` 取值**从 schema 的枚举里读**，`where` 的 reason code 从 `caps/where.py` 里扫（常量会被解析，`DEGRADED_TO_REFERENCE` 算它持有的那个码），每一个都必须出现在某个 fixture 的对应字段里。
+4. **在验收方案 §14 那条判据下补一句指针**，指明它现在由第二十九、三十组守着，以及 §87/§88 之前它哪里不成立。
+5. **回写计数**：测试 835 → **837**；审计检查 88 → **90**；fixture 数量 **29 不变**。
+
+### 88.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 把 §88 那条缺陷恢复（`doctor_healthy` 记 0、文档改回 `degraded`） | 红 | ✅ 红 |
+| 把某条 fixture 的 `reason_code` 换成另一个码（而 index 不变） | 红 | ✅ 红 |
+| index 里加一条没有文档的 fixture | 红 | ✅ 红 |
+| 给覆盖率检查加一个没有任何 fixture 的 doctor 状态（`unmanaged`） | 红 | ✅ 红 |
+| 给它加一个没有任何 fixture 的 reason code（`TELEPORT_FAILED`） | 红 | ✅ 红 |
+
+**规则范围一次扩到位**：第一版只对 `where_*` 与 `doctor_*` 生效（覆盖 13 条）。量了一遍全语料之后发现**任何带 `reason_code` 的文档**都能用同一把尺子——那 10 条（8 个 `where_*` + 2 个 `search_*`）**今天全部一致**，于是规则改成"带 `reason_code` 就用它推，否则 `doctor_*` 用 `status` 推"。这不是为了多抓一个缺陷，而是**少一条手写的范围列表**：判据从"前缀是 where\_ 还是 doctor\_"变成"文档自己有没有交代结果"。
+
+**解析器踩了一次，与前几轮同一族**：扫描 `where.py` 时第一版用 `reason = ([A-Z_]+)`，把 `selection_reason = UNMANAGED_ONLY` 里的后半截也匹配上了，于是报出四个"没有任何 fixture 的结果"（`MANAGED_NOT_HEALTHY`、`REFERENCE_NOT_USABLE`、`UNMANAGED_ONLY`、`VERSION_AVAILABLE_BUT_INACTIVE`）——**那四个是选择理由，不是退出码级的结果**。加上 `(?<![A-Za-z_])` 之后才对。这是"解析器必须先知道那句话在说什么"的第四次：前三次是**哪一句**，这次是**哪个词**。
+
+### 88.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **835 → 837**（新增 2 条） |
+| 审计检查（`test_l0_consistency.py`） | **88 → 90** |
+| golden fixture | **29 不变**（改了两条的**内容**，没有增删） |
+| 语料重生 | 是；**`doctor_healthy.json` 与 `doctor_degraded_stale_projection.json` 两个文件变了**，其余 27 个逐字节不变 |
+| schema / 台账 / 边界 | 19 / 108 / 均不变 |
+
+### 88.6 如实记录的边界
+
+1. **有一条 fixture 不受这条规则约束**：`search_index_response` 的 `reason_code` 是 `null`（成功），而 `exit_code_for` 需要一个码。它的退出码 0 今天**没有东西核对**。剩下 17 个 fixture 根本不带结果字段（台账、边界、投影、事务、扩展信封），规则对它们不适用——这是**形状不同**，不是缺口。
+2. **覆盖率检查只覆盖 `doctor.status` 与 `where` 的 reason code。** `search` 的 `status` 枚举（`ok`/`degraded`/`error`/`cancelled`/`timed_out`）里有四个取值没有任何 fixture——这一轮**没有**给它加，因为 §14 那句话只点了 `where`/`doctor`，而"search 的每个状态都要有 fixture"是一次**新的工作量承诺**，不该顺手塞进这一轮。**记在这里，作为一个明确的未做项。**
+3. **`doctor_healthy` 修好之后，`doctor_degraded_stale_projection` 的证据字符串变了**——它是**同一个改动**的必然结果（投影从"不存在"变成"过期"）。这不是"顺手改了别的 fixture"，而是把那两个 fixture 从"同一个场景两份拷贝"变成两个场景时，第二份自然要说的话。
+4. **守卫不检查 fixture 与真机行为一致**。它检查的是**语料内部**自洽（index ⟷ 文档）与**覆盖面**（结果词汇 ⟷ 语料）。真机路径由 `real_machine_acceptance.py` 管。
+5. **这一轮没有改 schema。** `doctor-response` 的 `status` 枚举本来就是那四个值——变的只是语料终于把第四个也覆盖了。
+
+### 88.7 实施顺序
+
+1. 先问最便宜的那个问题（**index 记的退出码与文档一致吗**），28 条里量出 1 条；
+2. 追根因：新 root 没有投影 → `doctor` 报 `REGISTRY_PROJECTION_STALE` → 两个 fixture 其实是同一个场景；
+3. 修生成器（先写投影），**并检查这次改动是否让别的 fixture 变化**（它让"过期"那条的证据真的变成过期）；
+4. 写守卫：先是"每条 fixture 的退出码要能从它自己文档推出"，再是"§14 那句话可检查"；
+5. 量一遍全语料，把规则范围从"两个前缀"扩成"文档自己有没有交代结果"（多覆盖 2 条，**少一条手写列表**）；
+6. 5 个变异逐个验红；解析器踩一次（`selection_reason`）并修掉；
+7. 在验收方案 §14 补指针；回写计数；跑全量 + 旧切片 + 真机验收；提交。

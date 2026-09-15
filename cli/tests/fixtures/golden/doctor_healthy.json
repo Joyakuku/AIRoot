@@ -3,16 +3,6 @@
   "diagnostics": [
     {
       "capability": null,
-      "code": "REGISTRY_PROJECTION_STALE",
-      "evidence": [
-        "state/registry.json is missing or unreadable"
-      ],
-      "impact": "agents reading the projection see no declared state",
-      "remediation": "rebuild",
-      "severity": "warning"
-    },
-    {
-      "capability": null,
       "code": "POLICY_ONLY_MODE",
       "evidence": [
         "P1 has no ACL, broker or machine PATH exposure"
@@ -27,5 +17,5 @@
   "root_instance_id": "root-4f2a9c1d8e3b",
   "schema_version": 1,
   "security_mode": "policy_only",
-  "status": "degraded"
+  "status": "healthy"
 }

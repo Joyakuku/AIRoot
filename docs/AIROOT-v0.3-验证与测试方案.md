@@ -373,7 +373,7 @@ CLI fixture 必须验证统一退出码：`0` success、`1` not found、`2` degr
 
 - 任何核心安全承诺都有对应的正向、负向和误报测试；
 - 每个事务边界都有故障注入和恢复预期；
-- `where`/`doctor` 的所有机器可读结果都有固定 fixture；
+- `where`/`doctor` 的所有机器可读结果都有固定 fixture（**守卫第二十九、三十组**：前者把 `where` 那张场景表与语料双向对账，后者要求每个 fixture 记录的退出码等于**它自己文档**推出的那个，并要求 schema 里 `doctor.status` 的每个取值都出现在某个 fixture 里——§87/§88 之前，`doctor_healthy` 的名称、状态与退出码三者互不相符，而 `healthy` 一个 fixture 都没有）；
 - 测试不会污染开发机环境；
 - 测试能区分协议失败、物理损坏、权限不足、恢复待处理和外部副作用；
 - 所有不可能强制保证的内容，例如同用户绕过 User PATH，都被明确标记为 `policy_only` 而不是测试成“安全通过”。

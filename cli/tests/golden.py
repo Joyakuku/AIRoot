@@ -242,6 +242,11 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
 
     # ---- doctor: healthy, degraded, broken, recovery_required -------------- #
     root, registry, clock = _build_root(base / "doctor_healthy")
+    # A fresh root has no `state/registry.json` projection, so `doctor` reports REGISTRY_PROJECTION_STALE
+    # and the run is **degraded**. Until §88 this fixture stored that degraded document under the name
+    # `doctor_healthy` with an index entry of 0 — a fixture whose recorded exit code contradicted its
+    # own bytes, and the reason `healthy` was the one status the plan's §14 could not point at.
+    registry.update_projection()
     documents["doctor_healthy"] = {
         "document": doctor(root.path, clock=FakeClock(start="2024-01-01T00:00:00Z"), registry=registry),
         "exit_code": status_exit_code("healthy"),

@@ -5,9 +5,10 @@
       "capability": null,
       "code": "REGISTRY_PROJECTION_STALE",
       "evidence": [
-        "state/registry.json is missing or unreadable"
+        "projection generation=0",
+        "registry generation=1"
       ],
-      "impact": "agents reading the projection see no declared state",
+      "impact": "the projection does not describe the current generation",
       "remediation": "rebuild",
       "severity": "warning"
     },
