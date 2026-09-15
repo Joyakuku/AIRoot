@@ -1071,7 +1071,51 @@ _REASON_CODE_ALTERNATION = "|".join(
 _PROSE_EXIT_FORMS = (
     re.compile(rf"(?<![A-Z0-9_])({_REASON_CODE_ALTERNATION})(?![A-Z0-9_])`?\s*[（(]\s*(\d)\s*[)）]"),
     re.compile(rf"(?<![A-Z0-9_])({_REASON_CODE_ALTERNATION})(?![A-Z0-9_])`?\s*[，,]\s*退出码\s*(\d)"),
+    # The third spelling (draft §51): a parenthesised "退出码 N" right after the code. It was
+    # invisible to the two forms above — `（退出码 4）` is neither a bare parenthesised digit nor a
+    # comma-then-退出码 — and a mutation proved it: swapping `SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码
+    # 4）to 5 left all 739 tests green. Note the *adjacency* requirement: the code must sit immediately
+    # before the group. Pairing "a code and a number somewhere on the same line" was measured to
+    # produce 135 false positives and not one true finding.
+    re.compile(rf"(?<![A-Z0-9_])({_REASON_CODE_ALTERNATION})(?![A-Z0-9_])`?\s*[（(]\s*退出码\s*(\d)\s*[)）]"),
 )
+
+#: `退出码 N` occurrences (draft §51) — every one, bound or not.
+_ANY_EXIT_WORDS = re.compile(r"退出码\s*\*{0,2}(\d)")
+
+#: How many `退出码 N` claims have **no** reason code bound to them (draft §51.4 decision 2).
+#:
+#: This is a *census*, not a list of mistakes: some of these numbers legitimately belong to a code
+#: named in another sentence ("需要确认或 scope 提升时…以退出码 4 停下"), and two of them describe an
+#: exit code rather than a reason code at all. What it buys is that "how many exit numbers does
+#: nothing check?" is a recorded number instead of a silence — adding such a sentence now either
+#: binds it with an explicit marker or makes this number wrong on purpose.
+#:
+#: Consequence for prose: when *describing the spellings themselves*, write the placeholder
+#: (`` `CODE`，退出码 N ``) rather than a real digit. A digit there is not a claim about any code, so
+#: counting it would inflate the census with something that says nothing — and it is cheaper to write
+#: the shape accurately than to explain a number that moved for no behavioural reason.
+UNBOUND_EXIT_WORDS = 9
+
+
+def _exit_word_claims(text: str) -> list[tuple[int, int, int]]:
+    """(value, line, offset) for every ``退出码 N`` in ``text``."""
+
+    return [
+        (int(match.group(1)), text.count("\n", 0, match.start()) + 1, match.start())
+        for match in _ANY_EXIT_WORDS.finditer(text)
+    ]
+
+
+def _unbound_exit_words(text: str) -> list[tuple[int, int]]:
+    """``退出码 N`` claims that no explicit code marker covers, as (value, line)."""
+
+    spans = [m.span() for form in _PROSE_EXIT_FORMS[1:] for m in form.finditer(text)]
+    return [
+        (value, line)
+        for value, line, offset in _exit_word_claims(text)
+        if not any(start <= offset < end for start, end in spans)
+    ]
 
 
 def _prose_exit_claims(text: str) -> list[tuple[str, int, int]]:
@@ -1109,15 +1153,46 @@ def test_the_prose_exit_patterns_only_match_explicit_markers() -> None:
     # A parenthesised number after the code is a claim.
     assert _prose_exit_claims("`SEARCH_FALLBACK_USED`(2)") == [("SEARCH_FALLBACK_USED", 2, 1)]
     assert _prose_exit_claims("`OWNERSHIP_REQUIRED`，退出码 7") == [("OWNERSHIP_REQUIRED", 7, 1)]
+    # ...and so is a parenthesised "退出码 N" (draft §51 — the spelling that was invisible).
+    assert _prose_exit_claims("`SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码 4）") == [
+        ("SCOPE_UPGRADE_REQUIRES_APPROVAL", 4, 1)
+    ]
 
     # A code next to an unrelated number is not: `D7` is an invariant and the counts are prose.
     assert _prose_exit_claims("`INVARIANTS` 的 **D7** 新增两个码（3 个）") == []
     assert _prose_exit_claims("`SEARCH_INDEX_DEGRADED` 读不出来 / 2 个码") == []
+    # **Adjacency is required**: an exit number several words after the code is a census entry, not a
+    # claim about that code. Measured: pairing "same line" produced 135 false positives, zero true.
+    assert _prose_exit_claims("`SEARCH_FALLBACK_USED` 是降级，并以退出码 2 停下") == []
     # A code name inside a longer identifier must not match.
     assert _prose_exit_claims("`SEARCH_FALLBACK_USED_EXTRA`(2)") == []
     # And the line number is the claim's line, not the first line of the document.
     text = "line one\n\n`SEARCH_FALLBACK_USED`(2)\n"
     assert _prose_exit_claims(text)[0][2] == 3
+
+
+def test_every_unbound_exit_number_is_a_census_and_not_a_silence() -> None:
+    """`退出码 N` with no adjacent code is allowed — being *uncounted* is not (draft §51.4-2).
+
+    Four of the numbers this counts are claims about a code named in another sentence, and the rest
+    describe an exit code without naming one. None of them can be bound automatically without
+    guessing, which the 135-false-positive measurement rules out. So the count is frozen instead, and
+    a new unbound sentence has to either bind itself or move the number deliberately.
+    """
+
+    total = 0
+    for path in (*AGENT_OPERATIONAL_DOCS, REASON_TABLE):
+        total += len(_unbound_exit_words(path.read_text(encoding="utf-8")))
+
+    assert total == UNBOUND_EXIT_WORDS, (
+        f"{total} `退出码 N` claims have no adjacent reason code, but the census says {UNBOUND_EXIT_WORDS}. "
+        "Bind it with an explicit marker (`` `CODE`（退出码 N） ``) or bump UNBOUND_EXIT_WORDS — "
+        "an unbound number is fine, an uncounted one is not."
+    )
+
+    # Non-vacuity: the counter must actually see a bound claim as bound and an unbound one as unbound.
+    assert _unbound_exit_words("`OWNERSHIP_REQUIRED`，退出码 7") == []
+    assert _unbound_exit_words("以退出码 4 停下") == [(4, 1)]
 
 
 # --- Guard group 14: the D1-D10 catalogue must be the same in both places (draft §46) ----------
@@ -1660,3 +1735,63 @@ def _audit_check_count(text: str) -> int:
     functions = len(re.findall(r"(?m)^def test_", text))
     extra = sum(len([item for item in group.split(",") if item.strip()]) - 1 for group in _PARAMETRIZE_LIST.findall(text))
     return functions + extra
+
+
+# --- Guard group 19: the on-demand reference must agree with the code (draft §51) ---------------
+#
+# `references/confirmation.md` is the file the Skill tells an agent to consult before it asks the user
+# anything, and two things in it had no guard at all:
+#
+#   * the **three-way choice**. `test_the_confirmation_triple_is_the_frozen_one` binds the Skill text
+#     and the machine-readable metadata to `CONFIRMATION_OPTIONS`, but not this file — measured:
+#     renaming `data-root` to `data_root` left all 739 tests green, and this is the file that tells
+#     the agent which words to offer;
+#   * the claim that `.ai/tooling.json` is **read-only**. That is a statement about the
+#     implementation, and nothing compared it with the implementation (§48's class: a document may
+#     not go on asserting what the code no longer does — here, the reverse direction).
+
+CONFIRMATION_REFERENCE = REPO / "references" / "confirmation.md"
+
+
+def test_the_confirmation_reference_lists_exactly_the_frozen_triple() -> None:
+    """Exact equality in both directions: an extra option is as wrong as a renamed one."""
+
+    from airoot.caps.planner import CONFIRMATION_OPTIONS
+
+    text = CONFIRMATION_REFERENCE.read_text(encoding="utf-8")
+    assert "三选一" in text, "the three-way section is gone; this guard is now about nothing"
+    block = text.split("三选一", 1)[1].split("```text", 1)[1].split("```", 1)[0]
+    listed = [line.split()[0] for line in block.strip().splitlines() if line.split()]
+
+    assert listed == list(CONFIRMATION_OPTIONS), (
+        f"references/confirmation.md offers {listed}; the frozen options are {list(CONFIRMATION_OPTIONS)}. "
+        "The reference is what the agent reads before it speaks, so an extra or renamed word here is a "
+        "different product."
+    )
+
+
+def test_the_tooling_memory_is_read_only_in_the_code_and_not_just_in_the_prose() -> None:
+    """`confirmation.md` says the memory is read-only; the code must still agree (draft §51.2-F3).
+
+    The dangerous direction is "did it and did not say so": the day a write channel lands (it belongs
+    to P2's human-approval path), this fails until the reference and ADR-0004 §12.2 are updated
+    together. The read path is asserted too, so the guard cannot pass by the feature being deleted.
+    """
+
+    planner = (APP / "caps" / "planner.py").read_text(encoding="utf-8")
+    assert "read_tooling_memory" in planner, "the read path vanished; this guard is now about nothing"
+    assert "TOOLING_MEMORY_RELATIVE" in planner
+
+    writes: list[str] = []
+    for path in sorted(APP.rglob("*.py")):
+        body = path.read_text(encoding="utf-8")
+        for pattern in (r"write_text", r"\.write\(", r"json\.dump\(", r"open\([^)]*['\"][wa]"):
+            for match in re.finditer(pattern, body):
+                window = body[max(0, match.start() - 400) : match.end() + 400].lower()
+                if "tooling" in window:
+                    writes.append(f"{path.name}:{body.count(chr(10), 0, match.start()) + 1}")
+
+    assert writes == [], (
+        f"something now writes `.ai/tooling.json` ({writes}); references/confirmation.md still says the "
+        "memory is read-only and the write channel is deliberately P2's, so update both or revert"
+    )
