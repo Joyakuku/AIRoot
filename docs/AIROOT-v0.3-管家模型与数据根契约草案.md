@@ -5415,6 +5415,93 @@ ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 i
 5. 四条守卫，两条是**放宽既有守卫的判据**而不是新增（元数据 lane、Skill 行），逐个验红；
 6. 回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
 
+## 69. 第 69 阶段：一个动作两个入口，只有一个检查边界（`adopt --mode import`）
+
+### 69.1 这一阶段要解决什么
+
+§64 交付了 `adopt --mode import`：它产出**真实 artifact 计划**，`approve` + `install` 之后把 payload 复制进 `store/` 并绑定。§64 检查了 `--capability` 的**形状**（是名字，不是路径），**没有**检查它**是否存在**。
+
+而"AIROOT 允许管理什么"这条边界的事实来源是冻结能力清单（`policy/capabilities.json`）：规划 §15.2-1 写着"没有冻结能力 → `unmanaged`：只报告，永不接管"。`plan` 一直在强制这一条——于是**同一个动作（为受管实例产出计划）有两个入口，只有其中一个检查边界**。§15.4 的成长路径（提议 → 冻结 → 白名单）因此可以被 `adopt --mode import` 绕过去。
+
+### 69.2 今天到底怎么样（实测，不是推断）
+
+先量的是"**哪些入口接受 capability id**"。逐个用 `not-a-frozen-capability` 跑：
+
+| 入口 | 结果 | 判断 |
+|---|---|---|
+| `where <cap>` | `NOT_FOUND`(1) | **对**：只读查询，"没找到"就是诚实答案 |
+| `scope decide <cap>` | `CAPABILITY_NOT_DECLARED`(9) | **对** |
+| `plan <cap> --scope data-root --target … --dry-run` | `CAPABILITY_NOT_DECLARED`(9)，消息 `no frozen capability is declared for …` | **对** |
+| `source resolve <cap>` | `NOT_FOUND`(1) | **对**：来源目录查询 |
+| `tool pin <cap> --version …` | `SUCCESS`，`plan: null`，`sync[].plan_blocked_by = NOT_FOUND` | **对**：desired 层只记愿望、不产出计划、不改绑定（先疑后证，见 69.7 pt 3） |
+| **`adopt <file> --mode import --capability <cap>`** | **`SUCCESS`(0) + 一份完整计划** | **错**：既有边界对它只是建议 |
+
+最后一行是这一轮的红：一条**能装进 `store/` 的**路径，用一个没冻结过的能力名字就能走完。
+
+### 69.3 修法
+
+在**形状检查之后、路径检查之前**加一次边界检查（顺序与 `plan` 一致：先看这个能力名字合不合法、再看目标）：
+
+```python
+    frozen = load_capabilities()
+    if frozen.by_id(capability) is None:
+        raise AirootError("CAPABILITY_NOT_DECLARED", f"no frozen capability is declared for {capability}", ...)
+```
+
+`evidence` 里给三件事：当前 revision **声明了哪些**能力（读者不必再去翻文件）、这条边界的含义（没有冻结能力就是 `unmanaged`）、以及成长路径（提议 → 冻结 → 白名单谓词）。
+
+**消息与 `plan` 逐字相同**，而且测试断言两者**相等**：两个入口、一条规则——否则"一条边界"会悄悄变成两条会各自漂移的规则。这是 §66"同一条规则只有一处拼写"的同类做法，只是这次共享的是**措辞**而不是常量。
+
+### 69.4 连带影响：示例自己会失败
+
+`jq` 不在冻结清单里（清单是 `python`/`node`/`java`/`git`/`archive`/`media_probe`/`build`/`fake-tool`），而 **`AGENTS.md`** 与 **CLI 自己的证据串**都把 `--capability jq` 当例子。边界一旦生效，这两处就从"能跑"变成"跑不通"——**修一个"少一个检查"，如果不看例子，等于把一条能跑的命令改成跑不通的命令**。
+
+所以：
+
+* 两处例子改成 `7z.exe` / `archive`（冻结清单里最接近"用户本来就有的单文件 CLI"的那一个）；
+* 例子旁边写明前置条件：必须在冻结清单里，否则 `CAPABILITY_NOT_DECLARED`(9)，口径与 `plan` 相同；
+* 新增守卫：**文档里任何具体的 `--capability <id>` 例子都必须是冻结能力**。占位符（`<id>`）不算例子——它不是承诺。守卫同时断言"至少找到过一个例子"，否则它可以在"例子被删光"之后假装通过。
+
+### 69.5 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 去掉 import 的边界检查 | 危险 | **红**（修之前实测到的正是这个状态：exit 0 + 一份完整计划） |
+| 让两个入口的消息不再逐字相同 | 危险 | **红**（相等断言） |
+| 把 `AGENTS.md` 的例子改回 `--capability jq` | 危险 | **红**（示例守卫） |
+
+### 69.6 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S69.1 量清每个接受 capability id 的入口 | ✅ | 69.2 的表；六个入口逐个实测，四个"对"、一个"对（先疑后证）"、一个"错" |
+| S69.2 import 强制冻结边界 | ✅ | `cli.py` 的 `_adopt_import`；`CAPABILITY_NOT_DECLARED`(9)，证据含 revision 与成长路径 |
+| S69.3 两个入口一条规则 | ✅ | 测试断言 `plan` 与 `adopt --mode import` 的 `message` **相等** |
+| S69.4 例子跟着改 + 示例守卫 | ✅ | `AGENTS.md` 与 CLI 证据串改成 `7z.exe`/`archive`；`test_l1_boundary.py#test_every_documented_capability_example_names_a_frozen_capability` |
+| S69.5 拒绝时不落盘 | ✅ | 测试断言被拒的 adopt **没有**在 `state/plans/` 留下文件（"还没决定"在文件系统上可证，§20.3-2） |
+| S69.6 计数与语料 | ✅ | 测试 **782 → 783**；审计检查 **74 不变**；台账计数**不变**；无需重生语料（没有改动任何对外 JSON 形状） |
+
+### 69.7 如实记录的边界
+
+1. **只加了一处检查。** 其余入口实测都已诚实（69.2），**没有**为了整齐去动它们。
+2. **不清算 `kind` 的两种词表。** 冻结清单的 `kind` 是 `tool|runtime`（决定路由默认值），计划的 `target.kind` 是 `managed_tool|runtime`（另一种词表），而 P1 在 **6 处**硬编码 `managed_tool`（`tx/simulate.py` ×2、`tx/artifact.py` 的默认、`cli.py` ×3）。所以 `--capability python` import 出来的计划写的是 `managed_tool`，而冻结清单说 `python` 是 `runtime`。这是 **P1 的系统性简化**（这个 build 不产出 `runtime` 实例，P5 才有），不是 import 的缺陷——改它要动实例种类、`inventory` 的类集合与 gc 的语义。**记在这里，不改。**
+3. **`desired` 层不查边界是判断，不是遗漏。** `tool pin` 对未冻结能力返回 `SUCCESS` + `plan: null` + `sync[].plan_blocked_by`，意思是"愿望记下了，但明确没有计划"。它不改 binding、不产出计划，所以拿它和 import 类比会得出错误结论。这一轮**先怀疑它是第二个洞，量完改成"不是"**——过程留在 69.2 的表里，因为"排除一个嫌疑"和"找到一个缺陷"一样是结论。
+4. **import 只查"冻结"这一半，不查白名单那一半。** 规划 §15.4 的成长路径是"提议 → 冻结 → 加白名单谓词"，但白名单管的是**识别**（在数据根里怎么认出这种对象），而 import 的对象是显式交到手里的，识别不适用。这里对齐的是 `plan` 已经强制的那一半。
+5. **`capability check` 与 import 同一口径**：用同一个 capability id 问同一份文件，前者按 `check_admission` 的默认 `source_verifiable=True` 说 `adoptable`，后者给出计划。两处没有分叉。
+6. **台账计数不变。** C-009（`adopt` 的三档 mode）仍记 `undesigned`，因为缺的是 `recreate` 那一半；把 `import` 那一半做得更严，不构成"这条场景完成了"。
+7. **没有新增 reason code 或退出码**：用的是既有的 `CAPABILITY_NOT_DECLARED`(9)，也没有动码表与不变量目录。
+
+### 69.8 实施顺序
+
+1. 先量"哪些入口接受 capability id、各自怎么回答"（69.2）——**先怀疑 `tool pin`，再用证据把它排除**；
+2. 红先写：在既有的参数契约测试里加一例（未冻结 capability），实测拿到 `exit 0` + 一份完整计划；
+3. 在形状检查之后、路径检查之前插入边界检查，**消息抄 `plan` 的原话**；
+4. 追加"两个入口消息逐字相同"与"被拒时不落盘"两条断言；
+5. **顺着例子读一遍**：`AGENTS.md` 与 CLI 证据串里的 `jq` 会被这条检查打死 → 换成冻结能力并写明前置条件；
+6. 加示例守卫，逐个验红；回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

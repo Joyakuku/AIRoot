@@ -573,6 +573,7 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
 
     from .canon import plan_hash
     from .caps.backends import assert_script_free, resolve_backend, sha256_file
+    from .caps.boundary import load_capabilities
     from .paths import canonicalize
     from .schema_io import validate_self
     from .tx.artifact import create_artifact_plan
@@ -584,7 +585,7 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             evidence=[
                 "a loose file carries no data-root context, so its capability cannot be discovered",
                 "P1 accepts an identity it cannot observe as explicit input rather than guessing it",
-                "example: adopt D:\\downloads\\jq.exe --mode import --capability jq --version 1.7.1",
+                "example: adopt D:\\downloads\\7z.exe --mode import --capability archive --version 24.09",
             ],
         )
     capability = str(args.capability)
@@ -597,6 +598,24 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             "INVALID_INPUT",
             f"a capability id is a name, not a path: {capability!r}",
             evidence=["it becomes part of store/<instance_id> and of the binding key"],
+        )
+
+    # §69: the frozen capability list decides what AIROOT may manage at all (draft §15.2-1: "no frozen
+    # capability -> unmanaged: reported, never adopted"). `plan` has always enforced that, and this is
+    # the *other* entry point that produces a plan for a managed instance — so without this check the
+    # boundary would be advisory for whoever typed `adopt --mode import` instead of `plan`. The message
+    # matches `plan`'s word for word on purpose: the two entry points must not read as two rules.
+    frozen = load_capabilities()
+    if frozen.by_id(capability) is None:
+        raise AirootError(
+            "CAPABILITY_NOT_DECLARED",
+            f"no frozen capability is declared for {capability}",
+            evidence=[
+                f"revision {frozen.revision} declares: {', '.join(frozen.ids())}",
+                "the boundary is what AIROOT may manage at all; no frozen capability means unmanaged",
+                "to manage it: propose the capability, freeze it in policy/capabilities.json, then add "
+                "a whitelist evidence predicate (draft §15.4)",
+            ],
         )
 
     target = canonicalize(args.path, must_exist=True)

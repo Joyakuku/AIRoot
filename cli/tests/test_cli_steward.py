@@ -396,6 +396,31 @@ def test_adopt_import_needs_an_explicit_capability_and_refuses_a_path_shaped_one
     assert code == 8
     assert "a name, not a path" in document["message"]
 
+    # §64 checked the *shape* of the argument and never the frozen list, so a made-up id rode all the
+    # way to a binding. `plan` has always refused it (draft §15.2-1: no frozen capability means
+    # unmanaged — reported, never adopted), and import is the *other* entry point that produces a plan
+    # for a managed instance (draft §69). Both halves are asserted: the refusal, and the fact that a
+    # refused adopt leaves no plan behind ("not decided yet" is provable on the filesystem, §20.3-2).
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(payload),
+        "--mode", "import", "--capability", "not-a-frozen-capability", "--version", "1.0.0",
+    )
+    assert code == 9, document
+    assert document["reason_code"] == "CAPABILITY_NOT_DECLARED"
+    assert "not-a-frozen-capability" in document["message"]
+    plans = Path(cli_root) / "state" / "plans"
+    assert not plans.is_dir() or list(plans.iterdir()) == [], "a refused adopt left a plan behind"
+
+    # The same argument through the *other* plan entry point. `plan` has always refused it; the two
+    # messages must match word for word, or "one boundary" quietly becomes two rules that drift.
+    code, planned = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "not-a-frozen-capability",
+        "--scope", "data-root", "--target", "data-root:dr-env", "--dry-run",
+    )
+    assert code == 9, planned
+    assert planned["reason_code"] == "CAPABILITY_NOT_DECLARED"
+    assert planned["message"] == document["message"], "two entry points, one rule — or two rules"
+
 
 def test_adopt_import_refuses_a_directory_and_a_script_payload(
     capsys, cli_root: Path, data_root: Path

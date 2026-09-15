@@ -9,6 +9,7 @@ would silently widen what AIROOT may touch.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,37 @@ def test_the_shipped_capability_list_is_valid_and_revisioned() -> None:
     assert "python" in frozen.ids()
     assert all(item.kind in {"tool", "runtime"} for item in frozen.capabilities)
     assert all(item.entry for item in frozen.capabilities), "a capability without an entry is unusable"
+
+
+#: Documents that show a *concrete* `--capability <id>` example. A placeholder (`<id>`) is not an
+#: example; a literal id is a promise that this command runs.
+CAPABILITY_EXAMPLE_DOCUMENTS = ("AGENTS.md", "SKILL.md", "agents/airoot.json", "cli/app/airoot/cli.py")
+
+_CAPABILITY_EXAMPLE = re.compile(r"--capability[ \t\"']{1,3}([A-Za-z][A-Za-z0-9._-]*)")
+
+
+def test_every_documented_capability_example_names_a_frozen_capability() -> None:
+    """An example is a promise that the command runs (draft §69).
+
+    AGENTS.md and the CLI's own evidence string both showed `--capability jq` — and `jq` is not in the
+    frozen list. That was harmless while `adopt --mode import` skipped the boundary, and became a
+    command that fails the moment the boundary was enforced. The example is the part a reader copies,
+    so it is the part worth checking (the same rule §68 applied to caveats: they sit where the
+    instruction is).
+    """
+
+    frozen = load_capabilities().ids()
+    repo = Path(__file__).resolve().parents[2]
+    checked = 0
+    for name in CAPABILITY_EXAMPLE_DOCUMENTS:
+        text = (repo / name).read_text(encoding="utf-8")
+        for match in _CAPABILITY_EXAMPLE.finditer(text):
+            checked += 1
+            assert match.group(1) in frozen, (
+                f"{name} shows `--capability {match.group(1)}`, which is not in the frozen list "
+                f"{frozen}; the example would fail with CAPABILITY_NOT_DECLARED"
+            )
+    assert checked, "no concrete capability example was found; this guard is now about nothing"
 
 
 def test_every_whitelist_entry_names_a_frozen_capability() -> None:
