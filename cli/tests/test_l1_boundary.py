@@ -264,3 +264,53 @@ def test_every_shipped_scope_is_a_real_binding_scope() -> None:
     declared = {scope for item in frozen.capabilities for scope in item.scope}
     assert declared, "the frozen list declares no scope at all"
     assert declared <= set(BINDING_SCOPES)
+
+
+def test_the_declared_scope_is_a_declaration_and_not_an_enforcement(monkeypatch) -> None:
+    """ADR-0021 answered §47.5's open question by **not** enforcing the declared scope.
+
+    §47.5 recorded the question ("may a capability that never declares `machine` still be bound at
+    machine level?") without an answer, because enforcing it would change admission and routing
+    semantics. Under the standing 放宽-first policy the answer is no enforcement: the declaration
+    stays a declaration. That is exactly the kind of fact that rots silently, so this rewrites every
+    capability's scope to the minimal legal list and asserts nothing observable moves. Adding
+    enforcement later therefore has to be a decision (and an ADR), not an accident.
+
+    Strength, stated honestly: the admission half is a genuine comparison. The routing half is
+    weaker than it looks — `decide_scope` answers from the discovery whitelist's `kind` first and
+    only falls back to the frozen list, so for a capability that has a whitelist entry the frozen
+    `scope` is not consulted on either path. This test does **not** yet pin "no module reads the
+    declared scope at all" (a source census); admission invariance is the part that is really
+    checked. See ADR-0021's "not done" list.
+    """
+
+    from dataclasses import replace
+
+    from airoot.caps import boundary
+    from airoot.caps.planner import ScopeRequest, decide_scope
+
+    frozen = load_capabilities()
+    # `session` is in the binding vocabulary, so the altered list is legal — just different.
+    altered = replace(
+        frozen,
+        capabilities=tuple(replace(capability, scope=("session",)) for capability in frozen.capabilities),
+    )
+    assert altered != frozen, "the probe did not actually change any declared scope"
+
+    target = Path("D:/not-a-real-object")
+    before_routing = {
+        capability.capability_id: decide_scope(ScopeRequest(capability_id=capability.capability_id)).scope
+        for capability in frozen.capabilities
+    }
+
+    monkeypatch.setattr(boundary, "load_capabilities", lambda *args, **kwargs: altered)
+    for capability in frozen.capabilities:
+        original = check_admission(target=target, capability_id=capability.capability_id, capabilities=frozen)
+        rewritten = check_admission(target=target, capability_id=capability.capability_id, capabilities=altered)
+        assert original.verdict == rewritten.verdict, (
+            f"{capability.capability_id}: admission moved when only its declared scope changed"
+        )
+        after = decide_scope(ScopeRequest(capability_id=capability.capability_id)).scope
+        assert after == before_routing[capability.capability_id], (
+            f"{capability.capability_id}: routing moved when only its declared scope changed"
+        )

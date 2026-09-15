@@ -127,6 +127,45 @@ def test_the_transition_table_and_the_documented_states_are_the_same_set() -> No
     )
 
 
+def test_the_any_stage_exception_rule_is_implemented_and_bounded() -> None:
+    """§4.1 says a transaction may enter the five exception states **from any stage** (ADR-0021).
+
+    §45.5 recorded that the prose is wider than the table and that nothing could decide which was
+    authoritative. ADR-0021 decided it in the wider direction — the prose wins — and this pins the
+    rule rather than the 62 individual edges, so a future narrowing has to be a decision:
+
+    * every non-terminal happy-path stage may enter FAILED / ROLLBACK_PENDING / ROLLED_BACK /
+      RECOVERY_REQUIRED;
+    * `EXPIRED` is held back from the stages that may already have changed the active binding
+      (§4.1 calls it terminal and binding-preserving, §14.2 requires a changed binding to keep a
+      rollback route — so allowing it would strand the binding instead of loosening anything);
+    * the widening added **only** exception targets: the forward discipline is untouched, which is
+      what makes this a loosening of the exception moves rather than of the happy path.
+    """
+
+    from airoot.tx.states import BINDING_CHANGE_STATES, EXCEPTION_STATES, EXPIRY_STATE
+
+    always = ("FAILED", "ROLLBACK_PENDING", "ROLLED_BACK", "RECOVERY_REQUIRED")
+    stages = [state for state in HAPPY_PATH if state not in TERMINAL_STATES]
+
+    for state in stages:
+        for target in always:
+            assert can_transition(state, target), f"§4.1 says {target} is reachable from any stage: {state}"
+        expected_expiry = state not in BINDING_CHANGE_STATES
+        assert can_transition(state, EXPIRY_STATE) is expected_expiry, (
+            f"{state} -> {EXPIRY_STATE}: the boundary is deliberate (ADR-0021), so changing it is a decision"
+        )
+
+    # The widening must not have relaxed the happy path: the only non-exception target of a stage is
+    # the next stage (and nothing at all beyond the end).
+    for state in HAPPY_PATH:
+        forward = {target for target in TRANSITIONS[state] if target not in EXCEPTION_STATES}
+        successor = next_happy_state(state)
+        assert forward == ({successor} if successor else set()), (
+            f"{state} may only move forward to {successor}, found {sorted(forward)}"
+        )
+
+
 def test_every_transition_target_is_a_documented_state() -> None:
     for state, targets in TRANSITIONS.items():
         unknown = sorted(target for target in targets if target not in DOCUMENTED_STATES)

@@ -30,21 +30,33 @@
   "transitions": {
     "ACTIVE_BOUND": [
       "EXPOSED",
-      "ROLLBACK_PENDING"
+      "ROLLBACK_PENDING",
+      "FAILED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "APPROVED": [
       "FETCHED",
       "FAILED",
-      "EXPIRED"
+      "EXPIRED",
+      "ROLLBACK_PENDING",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "COMMITTED": [
       "REGISTERED",
-      "ROLLBACK_PENDING"
+      "ROLLBACK_PENDING",
+      "FAILED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "EXPIRED": [],
     "EXPOSED": [
       "VERIFIED_AGAIN",
-      "ROLLBACK_PENDING"
+      "ROLLBACK_PENDING",
+      "FAILED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "FAILED": [
       "ROLLED_BACK",
@@ -52,12 +64,20 @@
     ],
     "FETCHED": [
       "VERIFIED",
-      "FAILED"
+      "FAILED",
+      "EXPIRED",
+      "ROLLBACK_PENDING",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "FINALIZED": [],
     "PROPOSED": [
       "APPROVED",
-      "FAILED"
+      "FAILED",
+      "EXPIRED",
+      "ROLLBACK_PENDING",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "RECOVERY_REQUIRED": [
       "ROLLED_BACK",
@@ -65,7 +85,10 @@
     ],
     "REGISTERED": [
       "ACTIVE_BOUND",
-      "ROLLBACK_PENDING"
+      "ROLLBACK_PENDING",
+      "FAILED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "ROLLBACK_PENDING": [
       "ROLLED_BACK",
@@ -77,15 +100,25 @@
     "STAGED": [
       "COMMITTED",
       "ROLLBACK_PENDING",
-      "FAILED"
+      "FAILED",
+      "EXPIRED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "VERIFIED": [
       "STAGED",
-      "FAILED"
+      "FAILED",
+      "EXPIRED",
+      "ROLLBACK_PENDING",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ],
     "VERIFIED_AGAIN": [
       "FINALIZED",
-      "ROLLBACK_PENDING"
+      "ROLLBACK_PENDING",
+      "FAILED",
+      "ROLLED_BACK",
+      "RECOVERY_REQUIRED"
     ]
   }
 }
