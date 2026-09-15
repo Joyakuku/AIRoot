@@ -12,9 +12,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-001",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -28,9 +30,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-002",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -42,9 +46,11 @@
       "evidence": "test_l1_registry.py#test_only_one_active_binding_per_key_is_accepted",
       "family": "C",
       "id": "C-003",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -56,9 +62,11 @@
       "evidence": "test_l1_searchindex.py#index.db",
       "family": "C",
       "id": "C-004",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -70,9 +78,11 @@
       "evidence": "test_l1_transaction.py#REGISTERED",
       "family": "C",
       "id": "C-005",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -84,9 +94,11 @@
       "evidence": "test_l1_rebuild.py#audit",
       "family": "C",
       "id": "C-006",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -98,9 +110,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-007",
+      "no_witness_reason": "\u6ca1\u6709 `airoot update` \u8fd9\u4e2a\u547d\u4ee4\uff0c\u4f46\u4e5f\u6ca1\u6709\u4efb\u4f55\u6d4b\u8bd5\u65ad\u8a00\u5b83\u4e0d\u5b58\u5728\uff08`not_implemented` \u6e05\u5355\u91cc\u6ca1\u6709\u5b83\uff0c\u56e0\u4e3a\u90a3\u6761\u6e05\u5355\u7ba1\u7684\u662f**\u5df2\u767b\u8bb0\u7684\u547d\u4ee4\u8def\u5f84**\uff09\u3002\u52a0\u4e00\u6761 `\"update\" not in known_commands()` \u5c31\u80fd\u9020\u51fa\u8bc1\u4eba\u2014\u2014\u672c\u8f6e\u4e0d\u9020\uff0c\u662f\u4e3a\u4e86\u4e0d\u8ba9\u53f0\u8d26\u597d\u770b\u8fd9\u4ef6\u4e8b\u81ea\u5df1\u751f\u51fa\u4e00\u6761\u81ea\u8bc1\u7684\u65ad\u8a00",
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -112,9 +126,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-008",
-      "note": null,
+      "no_witness_reason": null,
+      "note": "`root relocate` \u5728\u672a\u5b9e\u73b0\u6e05\u5355\u91cc\uff1b\u5b9e\u73b0\u4e86\u5b83\uff0c\u8bc1\u4eba\u5c31\u7ea2",
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": "test_l0_consistency.py#test_every_declared_unimplemented_command_is_still_unimplemented"
     },
     {
       "blocked_by": "undesigned",
@@ -126,9 +142,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-009",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": "test_cli_steward.py#test_adopt_import_is_not_implemented"
     },
     {
       "blocked_by": "none",
@@ -140,9 +158,11 @@
       "evidence": "test_cli_env.py#script",
       "family": "C",
       "id": "C-010",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -154,9 +174,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-011",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -168,9 +190,11 @@
       "evidence": "test_l1_desired.py#plan_blocked_by",
       "family": "C",
       "id": "C-012",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -182,9 +206,11 @@
       "evidence": "test_l1_skill.py#SKILL.md",
       "family": "C",
       "id": "C-013",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -196,9 +222,11 @@
       "evidence": "test_l1_extension.py#test_extension_does_not_touch_the_registry",
       "family": "C",
       "id": "C-014",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -210,9 +238,11 @@
       "evidence": "test_l1_desired.py#pin",
       "family": "C",
       "id": "C-015",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -224,9 +254,11 @@
       "evidence": "test_l1_discovery.py#unmanaged",
       "family": "C",
       "id": "C-016",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -238,9 +270,11 @@
       "evidence": "test_l1_planner.py#SCOPE_PROJECT",
       "family": "C",
       "id": "C-017",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -252,9 +286,11 @@
       "evidence": "test_l1_planner.py#SCOPE_DATA_ROOT",
       "family": "C",
       "id": "C-018",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -266,9 +302,11 @@
       "evidence": "test_l1_plan_routing.py#SIZE_ESTIMATE_UNAVAILABLE",
       "family": "C",
       "id": "C-019",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -282,13 +320,17 @@
       "evidence": null,
       "family": "C",
       "id": "C-020",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
-      "blocked_by": "undesigned",
-      "cited_by": [],
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_planner.py"
+      ],
       "defined_in": [
         "docs/AIROOT-v0.3-\u7ba1\u5bb6\u6a21\u578b\u4e0e\u6570\u636e\u6839\u5951\u7ea6\u8349\u6848.md"
       ],
@@ -296,9 +338,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-021",
+      "no_witness_reason": null,
       "note": null,
-      "status": "uncited",
-      "superseded": null
+      "status": "evidenced",
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -310,9 +354,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-022",
-      "note": null,
+      "no_witness_reason": null,
+      "note": "\u6ce8\u8bb0\u6539\u51c6\uff1a\u5b9e\u73b0\u7684\u662f\u300cAIROOT \u6ca1\u6709\u4efb\u4f55\u5199\u5165\u53e3\u300d\uff0c**\u4e0d\u662f**\u300c\u8c01\u5199\u5b83\u5c31\u62d2\u7edd\u300d\u3002\u00a751 \u7684\u666e\u67e5\u9489\u4f4f\u524d\u8005\uff08\u52a0\u4e86\u5199\u5165\u53e3\u5b83\u5c31\u4f1a\u7ea2\uff09\u3002\u8981\u8ba9\u7b2c\u4e09\u65b9\uff08Skill/Agent \u76f4\u63a5\u6539\u6587\u4ef6\uff09\u7684\u5199\u5165\u88ab**\u62d2\u7edd**\uff0c\u524d\u63d0\u662f\u5148\u6709\u4e00\u4e2a\u4f1a\u5199\u5b83\u7684\u901a\u9053\uff0c\u800c\u90a3\u5c5e P2 \u7684\u4eba\u5de5\u6279\u51c6\u901a\u9053\uff08ADR-0004 \u00a712.2\uff09\u2014\u2014\u6240\u4ee5\u8fd9\u6761\u4ecd\u7b97 `undesigned`",
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": "test_l0_consistency.py#test_the_tooling_memory_is_read_only_in_the_code_and_not_just_in_the_prose"
     },
     {
       "blocked_by": "none",
@@ -324,9 +370,11 @@
       "evidence": "test_cli_env.py#test_env_list_reports_what_was_persisted",
       "family": "C",
       "id": "C-023",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -338,9 +386,11 @@
       "evidence": "test_cli_env.py#PERSISTENCE_TARGET_FORBIDDEN",
       "family": "C",
       "id": "C-024",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -352,9 +402,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-025",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -366,9 +418,11 @@
       "evidence": "test_l1_exposure.py#template",
       "family": "C",
       "id": "C-026",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -380,9 +434,11 @@
       "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
       "family": "C",
       "id": "C-027",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -394,9 +450,11 @@
       "evidence": "test_cli_env.py#test_env_forget_dry_run_reports_without_changing_anything",
       "family": "C",
       "id": "C-028",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -408,9 +466,11 @@
       "evidence": "test_cli_env.py#PERSISTENCE_REQUIRES_APPROVAL",
       "family": "C",
       "id": "C-029",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -422,9 +482,11 @@
       "evidence": "test_cli_env.py#script",
       "family": "C",
       "id": "C-030",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -438,9 +500,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-031",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -455,9 +519,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-032",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -471,9 +537,11 @@
       "evidence": null,
       "family": "C",
       "id": "C-033",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -485,9 +553,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-001",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -499,9 +569,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-002",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -513,9 +585,11 @@
       "evidence": "test_l1_toolstate.py#PATH",
       "family": "P",
       "id": "P-003",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -529,9 +603,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-004",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -545,9 +621,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-005",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -561,9 +639,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-006",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -577,9 +657,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-007",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -593,9 +675,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-008",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -607,9 +691,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-009",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -621,9 +707,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-010",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -637,9 +725,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-011",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -651,9 +741,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-012",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -667,9 +759,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-013",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -683,9 +777,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-014",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -697,9 +793,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-015",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -711,9 +809,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-016",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p2-protected-state",
@@ -725,9 +825,11 @@
       "evidence": null,
       "family": "P",
       "id": "P-017",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -739,9 +841,11 @@
       "evidence": "test_l1_registry.py#managed_tool_payload",
       "family": "P",
       "id": "P-018",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -753,9 +857,11 @@
       "evidence": "test_l1_discovery.py#unmanaged",
       "family": "P",
       "id": "P-019",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -767,9 +873,11 @@
       "evidence": "test_l1_toolstate.py#test_verify_refuses_an_unknown_instance",
       "family": "P",
       "id": "P-020",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -781,9 +889,11 @@
       "evidence": "test_cli_steward.py#test_data_root_on_another_volume_is_accepted",
       "family": "P",
       "id": "P-021",
+      "no_witness_reason": null,
       "note": "\u8be5\u884c\u7684\u524d\u534a\uff08UNC / reparse point \u2192 \u62d2\u7edd\uff0c\u9000\u51fa\u7801 8\uff09\u4ecd\u6210\u7acb\uff0c\u7531 test_l0_protocol.py \u7684 UNC_NOT_ALLOWED / REPARSE_POINT_REJECTED \u8986\u76d6\uff1b\u540e\u534a\uff08'\u53e6\u4e00\u4e2a\u5377'\uff09\u5df2\u88ab ADR-0004 \u53d6\u4ee3\uff1acli.py \u660e\u786e\u5199\u7740\u6570\u636e\u6839\u7684\u5377\u8eab\u4efd\u4e0d\u5fc5\u4e0e CLI root \u76f8\u540c\uff0ctest_cli_steward.py \u76f4\u63a5\u65ad\u8a00\u8de8\u5377\u53ef\u63a5\u53d7\u3002",
       "status": "uncited",
-      "superseded": "\u8de8\u5377\u6570\u636e\u6839\u5df2\u6539\u4e3a**\u5141\u8bb8**\uff08ADR-0004\uff09\uff0c\u53ea\u6709 UNC \u4e0e reparse point \u4ecd\u88ab\u62d2\u7edd"
+      "superseded": "\u8de8\u5377\u6570\u636e\u6839\u5df2\u6539\u4e3a**\u5141\u8bb8**\uff08ADR-0004\uff09\uff0c\u53ea\u6709 UNC \u4e0e reparse point \u4ecd\u88ab\u62d2\u7edd",
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -795,9 +905,11 @@
       "evidence": "test_l1_desired.py#desired",
       "family": "S",
       "id": "S-001",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -809,9 +921,11 @@
       "evidence": "test_l1_doctor.py#broken",
       "family": "S",
       "id": "S-002",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -823,9 +937,11 @@
       "evidence": "test_cli_steward.py#discover never adopts",
       "family": "S",
       "id": "S-003",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -837,9 +953,11 @@
       "evidence": "test_l1_toolstate.py#MANIFEST_DIGEST_MISMATCH",
       "family": "S",
       "id": "S-004",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -853,9 +971,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-005",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -867,9 +987,11 @@
       "evidence": "test_l1_where.py#effective",
       "family": "S",
       "id": "S-006",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -881,9 +1003,11 @@
       "evidence": "test_l1_where.py#VERSION_UNSATISFIED",
       "family": "S",
       "id": "S-007",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -895,9 +1019,11 @@
       "evidence": "test_l1_rebuild.py#unmanaged",
       "family": "S",
       "id": "S-008",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -911,9 +1037,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-009",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -927,9 +1055,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-010",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -941,9 +1071,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-011",
-      "note": null,
+      "no_witness_reason": null,
+      "note": "`reconcile` \u5728 agents/airoot.json \u7684\u672a\u5b9e\u73b0\u6e05\u5355\u91cc\uff0c\u90a3\u6761\u5b88\u536b\u65ad\u8a00\u6e05\u5355\u91cc\u7684\u6bcf\u6761\u90fd\u4ecd\u672a\u5b9e\u73b0",
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": "test_l0_consistency.py#test_every_declared_unimplemented_command_is_still_unimplemented"
     },
     {
       "blocked_by": "unchecked-invariant",
@@ -955,9 +1087,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-012",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -969,9 +1103,11 @@
       "evidence": "test_l1_registry.py#payload",
       "family": "S",
       "id": "S-013",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -986,9 +1122,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-014",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1000,9 +1138,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-015",
+      "no_witness_reason": null,
       "note": "\u4e0e S-010 \u662f**\u540c\u4e00\u4e2a\u573a\u666f**\uff08\u91cd\u590d\u767b\u8bb0\uff09\uff1a\u540c\u4e3a'project manifest \u8bf7\u6c42 machine scope'\uff0c\u671f\u671b\u4e5f\u76f8\u540c\uff0c\u53ea\u662f\u63aa\u8f9e\u4e0d\u540c\u3002\u89c4\u8303\u65b9\u5411\u53d6'\u88ab\u6d4b\u8bd5\u5f15\u7528\u7684\u90a3\u4e2a'\uff0c\u5373 test_l1_plan_routing.py \u5f15\u7528\u7684 S-010\u3002",
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1014,9 +1154,11 @@
       "evidence": "test_l1_sources.py#digest",
       "family": "S",
       "id": "S-016",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1028,9 +1170,11 @@
       "evidence": "test_l1_doctor_steward.py#REFERENCE_STALE",
       "family": "S",
       "id": "S-017",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1044,9 +1188,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-018",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1060,9 +1206,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-019",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1076,9 +1224,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-020",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1092,9 +1242,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-021",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1108,9 +1260,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-022",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1122,9 +1276,11 @@
       "evidence": "test_l1_lifecycle.py#retire",
       "family": "S",
       "id": "S-023",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1136,9 +1292,11 @@
       "evidence": "test_l1_lifecycle.py#gc",
       "family": "S",
       "id": "S-024",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1150,9 +1308,11 @@
       "evidence": "test_l1_toolstate.py#test_verify_detects_a_tampered_payload_and_does_not_repair",
       "family": "S",
       "id": "S-025",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1164,9 +1324,11 @@
       "evidence": "test_l1_discovery.py#candidate",
       "family": "S",
       "id": "S-026",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -1178,9 +1340,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-027",
+      "no_witness_reason": "\u6ca1\u6709 `env\\runtimes` \u8fd9\u4e2a\u89c6\u56fe\uff0c\u4e5f\u6ca1\u6709\u4efb\u4f55\u58f0\u660e\u8bf4\u5b83\u5e94\u8be5\u5b58\u5728\uff0c\u6240\u4ee5\u6ca1\u6709\u4efb\u4f55\u6d4b\u8bd5\u4f1a\u56e0\u4e3a'\u5b83\u51fa\u73b0\u4e86'\u800c\u53d8\u7ea2\u3002\u8981\u9020\u4e00\u4e2a\u8bc1\u4eba\uff0c\u5148\u5f97\u51b3\u5b9a\u8fd9\u4e2a\u89c6\u56fe\u5b58\u4e0d\u5b58\u5728\uff08\u90a3\u662f\u8bbe\u8ba1\uff0c\u4e0d\u662f\u5b88\u536b\uff09",
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1192,9 +1356,11 @@
       "evidence": "test_cli_steward.py#digest",
       "family": "S",
       "id": "S-028",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1209,9 +1375,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-029",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "none",
@@ -1223,9 +1391,11 @@
       "evidence": "test_l1_doctor_steward.py#stale",
       "family": "S",
       "id": "S-030",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "undesigned",
@@ -1237,9 +1407,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-031",
-      "note": null,
+      "no_witness_reason": null,
+      "note": "`forget` \u7684\u8f93\u51fa\u91cc\u5c31\u6709 `project_manifest_check: not_implemented_before_p6`\uff0c\u90a3\u6761\u6d4b\u8bd5\u65ad\u8a00\u4e86\u5b83",
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": "test_cli_steward.py#project_manifest_check"
     },
     {
       "blocked_by": null,
@@ -1253,9 +1425,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-032",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1269,9 +1443,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-033",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1285,9 +1461,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-034",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1301,9 +1479,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-035",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1317,9 +1497,11 @@
       "evidence": null,
       "family": "S",
       "id": "S-036",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1331,9 +1513,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-001",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1347,9 +1531,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-002",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1361,9 +1547,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-003",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1375,9 +1563,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-004",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1389,9 +1579,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-005",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1405,9 +1597,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-006",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1421,9 +1615,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-007",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1437,9 +1633,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-008",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1453,9 +1651,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-009",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1470,9 +1670,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-010",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1486,9 +1688,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-011",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1502,9 +1706,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-012",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1516,9 +1722,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-013",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1532,9 +1740,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-014",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": null,
@@ -1548,9 +1758,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-015",
+      "no_witness_reason": null,
       "note": null,
       "status": "evidenced",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1562,9 +1774,11 @@
       "evidence": null,
       "family": "T",
       "id": "T-016",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     },
     {
       "blocked_by": "p4-real-backend",
@@ -1576,14 +1790,16 @@
       "evidence": null,
       "family": "T",
       "id": "T-017",
+      "no_witness_reason": null,
       "note": null,
       "status": "uncited",
-      "superseded": null
+      "superseded": null,
+      "witness": null
     }
   ],
   "schema_version": 1,
   "summary": {
-    "evidenced": 39,
+    "evidenced": 40,
     "families": {
       "C": 33,
       "P": 21,
@@ -1591,6 +1807,6 @@
       "T": 17
     },
     "total": 107,
-    "uncited": 68
+    "uncited": 67
   }
 }

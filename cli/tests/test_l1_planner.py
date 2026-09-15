@@ -220,6 +220,13 @@ def test_decisions_are_deterministic() -> None:
 
 
 def test_recorded_choice_short_circuits_the_question(project: Path) -> None:
+    """C-021: a second install in the same project reads `.ai/tooling.json` and does not ask again.
+
+    Draft §52 found that the ledger had this scenario marked `undesigned` — wrong, and worse than a
+    bad note: the behaviour was already implemented *and already tested here*, it just never named
+    the scenario. Naming it is the fix; the ledger's `status` is a measurement, not a judgement.
+    """
+
     (project / "requirements.txt").write_text("nothing-relevant\n", encoding="utf-8")
     write_memory(project, "node", SCOPE_DATA_ROOT)
 

@@ -1658,6 +1658,25 @@ def test_the_scenario_parser_handles_the_citation_syntaxes_actually_in_use() -> 
     assert _DEFINITION.match(f"| {family}-001 | setup | expectation |") is not None
     assert _DEFINITION.match(f"{family}-003 和 {family}-013 是防止安全口径夸大的测试。") is None
     assert _DEFINITION.match(f"| 说明 | {family}-003 出现在句子里 | 期望 |") is None
+    # A row that *discusses* a scenario is not a definition either (draft §52.2-F4): the first cell
+    # must be exactly the ID, so a disposition table or a bolded/backticked ID does not define one.
+    assert _DEFINITION.match(f"| `{family}-007` | undesigned | a disposition |") is None
+    assert _DEFINITION.match(f"| **{family}-007** | undesigned | a disposition |") is None
+    assert _DEFINITION.match(f"| {family}-007（新） | setup | expectation |") is not None
+
+    # And the load-bearing half: only a table headed `| ID | … |` (draft §52.2-F4). A table that merely
+    # *discusses* scenarios defines none of them, which is how §52.1's disposition table silently
+    # registered eight definitions under the old "first cell is an ID" rule.
+    from scenario_ledger import _definition_rows
+
+    discussion = ["| 编号 | 判断 | 结果 |", "|---|---|---|", f"| {family}-007 | undesigned | a disposition |"]
+    assert _definition_rows(discussion) == [], "a discussion table is not a scenario table"
+    scenario = ["| ID | 场景 | 预期 |", "|---|---|---|", f"| {family}-007（新） | setup | expectation |"]
+    assert [number for number, _match in _definition_rows(scenario)] == [3]
+    # A row before any header, and a row after the table ends, are both outside it.
+    assert _definition_rows([f"| {family}-007 | setup | expectation |"]) == []
+    after_the_table = [*scenario, "", f"| {family}-008 | setup | expectation |"]
+    assert [number for number, _match in _definition_rows(after_the_table)] == [3]
 
     named = citations(REPO)
     for digits in ("005", "006", "007"):
@@ -1794,4 +1813,54 @@ def test_the_tooling_memory_is_read_only_in_the_code_and_not_just_in_the_prose()
     assert writes == [], (
         f"something now writes `.ai/tooling.json` ({writes}); references/confirmation.md still says the "
         "memory is read-only and the write channel is deliberately P2's, so update both or revert"
+    )
+
+
+# --- Guard group 20: an "undesigned" claim needs a witness (draft §52) ---------------------------
+#
+# §49 wrote the ledger's dispositions as **authored judgements** and checked them only for structure —
+# deliberately, because "is this behaviour really exercised?" is not a question a guard can answer.
+# §52 did the thing that decision left open: it took the eight `undesigned` entries and checked them
+# against the code, and **one was wrong** — a scenario the ledger called "the command it needs does not
+# exist yet" was in fact implemented *and already tested*, the test simply never named it. Two lessons,
+# both mechanical:
+#
+#   * `status` is a *measurement* (does any test name this ID?) and `blocked_by` is a *judgement*;
+#     when they disagree, the fix may be to have the existing test name the scenario rather than to
+#     rewrite the judgement;
+#   * "the capability does not exist" is a claim nothing checks, which is how §35's unimplemented list
+#     went stale. So every `undesigned` entry now names a **witness** — the thing that goes red the
+#     moment the missing capability appears — or states why it cannot have one.
+#
+# The witness rules themselves live in `scenario_ledger._undesigned_problems`; this pins them and
+# proves each failure mode is reported.
+
+
+def test_every_undesigned_scenario_names_a_witness_or_says_why_it_cannot() -> None:
+    from scenario_ledger import build_ledger, evidence_problems
+
+    assert evidence_problems(REPO) == [], "; ".join(evidence_problems(REPO))
+
+    entries = build_ledger(REPO)
+    undesigned = [entry for entry in entries if entry["blocked_by"] == "undesigned"]
+    assert undesigned, "no `undesigned` scenarios left; this guard is now about nothing"
+    witnessed = [entry for entry in undesigned if entry["witness"]]
+    assert witnessed, "no `undesigned` entry names a witness; the rule may have been dropped"
+    assert any(entry["no_witness_reason"] for entry in undesigned), (
+        "every `undesigned` entry has a witness — the 'no witness' branch is now untested"
+    )
+
+    # Non-vacuity: each failure mode the helper claims to detect must actually be reported.
+    sample = dict(undesigned[0])
+    provenance_free = {**sample, "witness": None, "no_witness_reason": None}
+    assert any("neither a witness nor a reason" in item for item in evidence_problems(REPO, [provenance_free]))
+    assert any(
+        "pick one" in item
+        for item in evidence_problems(
+            REPO, [{**sample, "witness": f"test_l1_planner.py#{'C'}-021", "no_witness_reason": "also this"}]
+        )
+    )
+    assert any(
+        "does not exist" in item or "does not appear" in item
+        for item in evidence_problems(REPO, [{**sample, "witness": "no_such_file.py#token", "no_witness_reason": None}])
     )
