@@ -31,6 +31,7 @@ from airoot.schema_io import load_schema, schema_names
 REPO = Path(__file__).resolve().parents[2]
 APP = REPO / "cli" / "app" / "airoot"
 AGENTS = REPO / "AGENTS.md"
+PLANNING = REPO / "docs" / "AIROOT-总体方案规划-v0.3.md"
 REASON_TABLE = REPO / "docs" / "AIROOT-v0.3-诊断码与ReasonCode表.md"
 SCHEMA_README = REPO / "docs" / "schema" / "README.md"
 SKILL = REPO / "SKILL.md"
@@ -234,7 +235,7 @@ def implemented_commands() -> set[str]:
 def planning_15_1_commands() -> set[str]:
     """The frozen plan/plan table §15.1 — the CLI surface as designed, not as implemented."""
 
-    planning = (REPO / "docs" / "AIROOT-总体方案规划-v0.3.md").read_text(encoding="utf-8")
+    planning = PLANNING.read_text(encoding="utf-8")
     section = planning.split("### 15.1", 1)[1].split("### 15.2", 1)[0]
     listed: set[str] = set()
     for line in section.splitlines():
@@ -369,13 +370,23 @@ def test_every_file_size_the_repo_map_states_is_the_file_size() -> None:
     )
     assert _file_size_problems(rows) == [], "; ".join(_file_size_problems(rows))
 
-    # Non-vacuity: the exact claim §85 found, restored.
+    # Non-vacuity: the claim §85 found, made stale again — **derived**, not written out. The literal
+    # `主规划（2249 行）` was correct for one round; §86 changed the file and the mutation silently
+    # stopped applying. Same lesson as the count-chain mutation twice over: a mutation copied from
+    # today's text is a mutation that expires.
+    claims = {
+        path: int(match.group(1))
+        for path, description in rows.items()
+        for match in FILE_SIZE_CLAIM.finditer(description)
+    }
+    assert claims, "the map states no file size, so this mutation has nothing to shorten"
     text = AGENTS.read_text(encoding="utf-8")
-    stale = text.replace("主规划（2249 行）", "主规划（2236 行）", 1)
+    sized_path, stated = sorted(claims.items())[0]
+    stale = text.replace(f"（{stated} 行）", f"（{stated - 1} 行）", 1)
     assert stale != text and _file_size_problems(_repo_map_rows(stale)) != [], (
         "a stale file size must be reported"
     )
-    globbed = _repo_map_rows(text.replace("| `docs/AIROOT-总体方案规划-v0.3.md` |", "| `docs/*.md` |", 1))
+    globbed = _repo_map_rows(text.replace(f"| `{sized_path}` |", "| `docs/*.md` |", 1))
     assert _file_size_problems(globbed) != [], "a size claimed for something that is not a file must be reported"
 
 
@@ -444,6 +455,136 @@ def test_the_repo_map_agrees_with_the_sentence_that_delegates_the_stage_records(
     ]
 
 
+# --- Guard group 28: the "not decided yet" lists and the ADR that decided them (draft §86) -------
+#
+# Two documents keep a list of what P1 has not decided: the master plan §23 ("实现前仍需由评审记录
+# 以下选择") and the decision log's own list. §82 annotated the log's list with the ADR-0025 decisions
+# that settled each item — and left the plan's list untouched, under a header that claimed the two
+# lists were the same one. §86 measured it: they never were. Six items in the plan, eight in the log,
+# three in common. The plan's three独有 items (the capability list, Everything, the first real
+# artifact) had been **decided by ADR-0025 and were absent from the log's list entirely**, so a reader
+# following the log would never learn they had been answered.
+#
+# Two rules. The plan's list is layer-3 authority and is now fully answered, so every item must say
+# what settled it. And the nine decisions ADR-0025 took must each be reachable from one of the two
+# lists — a decision nobody can find from the question it answered is a decision filed in a drawer.
+
+#: The sentence that introduces the plan's open choices. Anchored on the sentence, not on `## 23.`,
+#: so renumbering the section cannot make this guard look at the wrong list.
+PLANNING_OPEN_CHOICES = "实现前仍需由评审记录以下选择"
+DECISION_LOG_OPEN_QUESTIONS = "## 尚未决策"
+
+
+def _numbered_items(block: str) -> list[str]:
+    """Numbered items with their **indented** continuation lines joined.
+
+    The annotations live on continuation lines in the log's list (item 4 names its decision three
+    lines down), so an item read as one line would look unanswered.
+    """
+
+    items: list[str] = []
+    for line in block.splitlines():
+        if re.match(r"^\d+\. ", line):
+            items.append(line)
+        elif items and line[:1] in (" ", "\t") and line.strip():
+            items[-1] += " " + line.strip()
+    return items
+
+
+def _decision_ids(text: str) -> set[int]:
+    """Top-level decision numbers: `D8-1` counts as `D8`, and `D10` is not read as `D1`."""
+
+    return {int(value) for value in re.findall(r"\bD([1-9])\b", text)}
+
+
+def _settling_adr_section(text: str) -> str:
+    """ADR-0025's body, located by a **line-anchored** heading.
+
+    Splitting on the bare string finds it inside ADR-0024 first: that entry's "明确不做" bullet names
+    it in backticks. §82's own helper hit the same thing and the same fix applies.
+    """
+
+    match = re.search(r"(?m)^## ADR-0025", text)
+    if match is None:
+        return ""
+    return re.split(r"(?m)^## ", text[match.end() :], maxsplit=1)[0]
+
+
+#: A decision heading. `(?!\\w)` and not `\\b` after the digits: `### D4x` must not read as `### D4`,
+#: which is exactly the mutation this guard's own non-vacuity check applies.
+DECISION_HEADING = re.compile(r"(?m)^### D(\d+)(?!\w)")
+
+
+def _unnamed_open_choices(block: str) -> list[int]:
+    """1-based positions of list items that do not say which decision answered them."""
+
+    return [index for index, item in enumerate(_numbered_items(block), 1) if not _decision_ids(item)]
+
+
+def _unreachable_decisions(blocks: list[str], adr_text: str) -> list[str]:
+    """Decisions the ADR took that no open-question list names, and names with no decision behind."""
+
+    expected = {int(value) for value in DECISION_HEADING.findall(adr_text)}
+    named: set[int] = set()
+    for block in blocks:
+        named |= _decision_ids(block)
+    problems = [f"D{value} is not named by any open-question list" for value in sorted(expected - named)]
+    problems += [f"D{value} is named but ADR-0025 has no such decision" for value in sorted(named - expected)]
+    return problems
+
+
+def test_the_plans_open_choices_each_name_what_settled_them() -> None:
+    """§23 is layer-3 authority, so an item there that nobody answered is a rule with no answer."""
+
+    text = PLANNING.read_text(encoding="utf-8")
+    block = text.split(PLANNING_OPEN_CHOICES, 1)[1].split("\n## ", 1)[0]
+    items = _numbered_items(block)
+    assert len(items) >= 4, f"the plan's open-choices list has {len(items)} items; this guard is about it"
+
+    unnamed = _unnamed_open_choices(block)
+    assert unnamed == [], (
+        f"items {unnamed} of the plan's open-choices list do not name the decision that settled them; "
+        "a list of questions that does not say which ones were answered reads as all-open"
+    )
+
+    adr = _settling_adr_section((REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8"))
+    assert adr, "ADR-0025 is gone; these lists point at a decision that does not exist"
+    settled = {int(value) for value in DECISION_HEADING.findall(adr)}
+    dangling = sorted(_decision_ids(block) - settled)
+    assert dangling == [], f"the plan names decisions ADR-0025 does not have: {dangling}"
+
+    # Non-vacuity: the list §86 found, whose six items named no decision at all, and one item losing
+    # its annotation while the others keep theirs.
+    stripped = re.sub(r"（\*\*D\d+(?:-\d)?\*\*", "（", block)
+    assert stripped != block and len(_unnamed_open_choices(stripped)) == len(items)
+    one = re.sub(r"（\*\*D9\*\*", "（", block, count=1)
+    assert one != block and _unnamed_open_choices(one) == [1]
+
+
+def test_every_decision_is_reachable_from_an_open_question_list() -> None:
+    """A decision filed away from the question it answered is a decision nobody will find."""
+
+    plan = PLANNING.read_text(encoding="utf-8")
+    log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
+    blocks = [
+        plan.split(PLANNING_OPEN_CHOICES, 1)[1].split("\n## ", 1)[0],
+        log.split(DECISION_LOG_OPEN_QUESTIONS, 1)[1],
+    ]
+    adr = _settling_adr_section(log)
+    assert adr and all(block.strip() for block in blocks), "an open-question list is gone"
+
+    assert _unreachable_decisions(blocks, adr) == [], "; ".join(_unreachable_decisions(blocks, adr))
+
+    # Non-vacuity in both directions: a decision whose heading stops being a heading, and a list that
+    # stops naming one.
+    assert _unreachable_decisions(blocks, adr.replace("### D4 ", "### D4x ", 1)) != [], (
+        "a decision with no heading must be reported"
+    )
+    assert _unreachable_decisions([re.sub(r"\bD7\b", "D9", block) for block in blocks], adr) != [], (
+        "an open-question list that stops naming a decision must be reported"
+    )
+
+
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
     """§15.1 lists the CLI surface; every entry must be one of the two, never neither.
 
@@ -470,7 +611,7 @@ def test_every_implemented_command_is_named_in_the_documentation() -> None:
     """
 
     documents = [
-        REPO / "docs" / "AIROOT-总体方案规划-v0.3.md",
+        PLANNING,
         DRAFT,
         DECISION_LOG,
         REPO / "docs" / "AIROOT-v0.3-三大核心契约方案.md",

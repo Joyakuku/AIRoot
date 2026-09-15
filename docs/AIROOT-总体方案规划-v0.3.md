@@ -2204,12 +2204,21 @@ Extension 的实现可以改变，但：
 
 实现前仍需由评审记录以下选择，但不得破坏上述边界：
 
-1. v1 进入核心的 capability 清单；
-2. Everything 只作为性能基准，还是提供显式 adapter；
-3. registry SQLite schema、migration 文件和 event 保留期限；
-4. human approval 的具体 UI/IPC 通道；
-5. 第一个 portable artifact、Windows runner 和故障注入夹具；
-6. Native Search 的用户级 indexer、broker 辅助模式以及不支持 NTFS 卷的 crawl 策略。
+> **§86 复核：这六项已全部裁决（ADR-0025）。** 原文一字未改，裁决位置写在每一项的括号里。
+> 这一节是**权威层级第 3 层**（规划）上的"还没决定"清单，所以它必须与决策日志同进同退——
+> 而 §86 量出来的事实是：**这两份清单从来就不是同一份**（日志那份是八项，其中五项这一节没有；
+> 这一节有三项日志那份没有），而日志的标题却写着"仍属规划 §23 的未冻结项"。
+
+1. v1 进入核心的 capability 清单；（**D9**：ADR-0025 冻结为 `cap-2`，七个能力，`media_probe` 被移除；
+   新增名字仍走 §15.4 的"提议 → 冻结 → 白名单"）
+2. Everything 只作为性能基准，还是提供显式 adapter；（**D7**：只做基准，**不写 adapter**）
+3. registry SQLite schema、migration 文件和 event 保留期限；（**D8-3**：不自动迁移、不自动裁剪审计事件；
+   导出只读。schema 本身在第 1 层（已发布的 migration）里）
+4. human approval 的具体 UI/IPC 通道；（**D1**：维持现状，等 P2 的受保护 broker；今天没有任何生产签发方）
+5. 第一个 portable artifact、Windows runner 和故障注入夹具；（**D8-4**：`build` 是第一个真实 artifact，
+   因为它是冻结清单里唯一有已注册可信来源的能力；runner 仍是 `cli/bin/airoot.cmd`；故障注入只用本地 fixture）
+6. Native Search 的用户级 indexer、broker 辅助模式以及不支持 NTFS 卷的 crawl 策略。（**D6**：形状已定——
+   broker 做初始枚举、索引永远是派生缓存、journal 断档即拒答、非 NTFS 回落 crawl；常驻进程属 P2）
 
 ## 24. 最终架构结论
 
