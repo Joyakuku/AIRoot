@@ -122,8 +122,8 @@
     {
       "question": "take ownership of a portable file I already have",
       "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
-      "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "target.instance_id"],
-      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (ADR-0024 is the pending decision), so the approve/install steps cannot be completed on a real machine"
+      "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "metadata.import.size_bytes", "target.instance_id"],
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (ADR-0024 is the pending decision), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied"
     },
     {
       "question": "what does AIROOT own on this machine",

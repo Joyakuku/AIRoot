@@ -5502,6 +5502,86 @@ ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 i
 5. **顺着例子读一遍**：`AGENTS.md` 与 CLI 证据串里的 `jq` 会被这条检查打死 → 换成冻结能力并写明前置条件；
 6. 加示例守卫，逐个验红；回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
 
+## 70. 第 70 阶段：同一动作的第二个门——`adopt --mode import` 不经过确认闸门
+
+### 70.1 这一阶段要解决什么
+
+§69 的形状是"**一个动作、两个入口，只有一个检查**"，它修的是**能力边界**。这一轮顺着同一条线去量**第二个门**：§12.1 的确认闸门。
+
+§12.1 把三类动作标成**必须确认**（往运行时装包 / 创建环境 / 体积超阈值），`plan` 通过 `decide_scope` 强制它。而 `adopt --mode import` **也**产出受管实例的计划——它**从不调用那个决策**。
+
+### 70.2 实测（两条发现）
+
+**发现一：闸门只在一个入口存在。**
+
+| 入口 | 能力（冻结 `kind`） | 结果 |
+|---|---|---|
+| `plan python --scope data-root --target … --dry-run` | `runtime` | exit **4** `SCOPE_CONFIRMATION_REQUIRED`（`decision=SCOPE_CONFIRMATION_REQUIRED`、`required_approval=scope_confirmation`） |
+| `adopt <file> --mode import --capability python` | 同一个 `runtime` | exit **0** + 一份完整计划，每个 operation 的 `target_scope` 都是 `machine` |
+| `plan archive` / `import archive` | `tool` | 两边都 exit 0——**正确**：这一类本来就不问（§12.1 第 2 行） |
+
+**发现二：计划里看不见体积。** import 的计划**不携带体积**：`metadata.backend.estimated_size` 是 `null`、`source.integrity` 只有摘要、`operations` 里没有字节数。批准一次 250 MB 拷贝的人**看不到它有多大**——而这条命令**刚刚读完整个文件算完 sha256**。`plan` 那一边的体积是进 routing 块的（`size_estimate_bytes`）。
+
+### 70.3 修法
+
+1. `caps/planner.py` 加一个**有名字的接缝**：
+
+   ```python
+   def import_scope_decision(capability_id, *, source_bytes, threshold_bytes=DEFAULT_SIZE_THRESHOLD_BYTES)
+   ```
+
+   它只接**这条命令真能观察到的事实**：它已经量过的体积，加上（在 `decide_scope` 内部的）冻结 `kind`。`plan` 的两个声明式旗标（`--creates-environment`、`--requires-cuda-or-native`）**故意没有对应物**——正要复制 payload 的那条命令不该有权把自己的风险声明掉。用接缝而不是内联调用，是为了让"超阈值"那条在**不写 300 MB 文件**的前提下可测。
+2. `_adopt_import` 调用它；`confirmation_required` 时**拒绝**（exit 4），证据里给四件事：路由层自己的 `high_risk` 理由、固定的三选项、**实测**体积与阈值、以及两条出路（用 `plan` 回答那个问题，或用 `--mode reference` 只登记不拥有）。
+3. 计划记录 `metadata.import.size_bytes` + `size_source: "measured-from-the-file"` + 路由结论；人读的那一行也印出体积。
+
+**为什么是"拒绝"而不是"绕过"**：import 固定绑机器级（§15.5 把它定义为复制进 `tools`），没有 `--scope` 可问；`plan` 自己也没有回答这个问题的旗标——确认是**人类的交互步骤**（而 `.ai/tooling.json` 的记忆写入属 P2）。所以 import 既不能问、也不能答。§12.1 的设计注解把后果说得更直接：确认一旦可以随手跳过，高风险确认会**一起**失效。
+
+**这条限制不是新发明。** §12.1 表格第 2 行就是"单文件通用 CLI（jq / rg / ffmpeg / 7z）→ 装到数据根，**不询问**"——那正是 import 服务的那一类；runtime 是第 3 行"必须确认"。修完之后 import 覆盖的**正好是它所属的那一行**。
+
+### 70.4 连带影响：两个既有测试在无边界状态下工作
+
+随修法一起改：`test_adopt_import_plans_and_installs_a_script_free_file`（原来 import 一个 `python.exe`）与 `test_l1_agent_read_fields.py` 的 import 场景，都改成 `archive`。这**不是**"为了让测试通过而改测试"：`python` 在冻结清单里是 `runtime`（"任何 CPython 兼容的解释器目录"），把它当成单文件 portable payload 本来就与它声明的种类不符。
+
+### 70.5 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 关掉确认闸门（`if False`） | 危险 | **红** |
+| 不再把实测体积传进决策 | 危险 | **红** |
+| 给接缝加一个 `creates_environment` 参数 | 危险 | **红**（"签名恰好是这三项"的断言） |
+| 计划里去掉 `size_bytes` | 危险 | **红** |
+
+### 70.6 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S70.1 量出闸门只在一个入口存在 | ✅ | 70.2 的表：`plan` exit 4、import exit 0，同一个 `runtime` |
+| S70.2 量出计划不携带体积 | ✅ | `metadata.backend.estimated_size=null`、`source.integrity` 只有摘要、`operations` 无字节数 |
+| S70.3 有名字的接缝 + 只接可观察事实 | ✅ | `caps/planner.import_scope_decision`；`test_l1_planner.py#test_import_routing_asks_about_the_two_facts_an_import_can_observe`（含参数集恰好为三项） |
+| S70.4 import 过闸门并拒绝 | ✅ | `cli.py` 的 `_adopt_import`；`test_cli_steward.py#test_adopt_import_refuses_a_high_risk_class_the_routing_gate_asks_about`（两个入口同一 reason code、被拒时不落盘、lane note 里带边界） |
+| S70.5 批准者看得见体积 | ✅ | `metadata.import.size_bytes` / `size_source` / `routing`；端到端测试断言等于文件真实大小；`agents/airoot.json` 的 lane 多一条 `read` 路径 |
+| S70.6 计数与语料 | ✅ | 测试 **783 → 785**；审计检查 **74 不变**；台账计数**不变**；无需重生语料（没有改动已发布 JSON 的形状） |
+
+### 70.7 如实记录的边界
+
+1. **这一阶段收紧了一条路径**（runtime / 超阈值的 import 现在被拒），与 ADR-0021 的"放宽优先"方向相反。理由见 70.3：§12.1 把那三类定为**必须确认**，而 import 既不能问也不能答——门留在这条路上、却在另一条路上开着，等于把它变成装饰。这属于 §7 所说的"放宽会摧毁一条更强的规则"那一类，因此**不机械照搬放宽**，而是如实报出来。
+2. **超阈值那条只测到接缝。** 守卫证明"实测体积确实进了决策、阈值判定正确、超阈值要确认"，但**没有**写一个 300 MB 文件的集成测试（写它会拖慢套件并占磁盘）。集成侧测的是 runtime 那条——它不需要大文件。
+3. **`plan` 对 runtime 今天同样是死路**（exit 4，没有旗标能回答它；记忆文件只读属 P2）。这不是这一轮造成的，而是同一个"缺人类批准通道"（ADR-0024 家族）。import 现在与它**一致**，而不是比它更宽。
+4. **没有新增 reason code 或退出码**：用的是既有的 `SCOPE_CONFIRMATION_REQUIRED`(4)，也没有动码表与不变量目录。
+5. **计划里记的是路由结论，不是完整 routing 文档。** `metadata.import.routing` 有 `reason_code`/`origin`/`scope`/`threshold_bytes`；不搬 `evidence` 是因为 `metadata` 是自由对象，而 routing 的完整形状是 `plan --dry-run` 的对外契约——复制一份就会变成第二处需要同步的拼写（§66 的同一条理由）。
+6. **台账计数不变**：C-009 仍等 `recreate` 那一半。`agents/airoot.json` 的 import lane 多了一条 `read` 路径，由 `test_l1_agent_read_fields` 逐个解析验证。
+
+### 70.8 实施顺序
+
+1. 先量两个入口对**同一个**能力的回答（70.2 第一条）——先确认差异存在，再找它该不该存在；
+2. 读 §12.1 的表格与它的设计注解，确认"必须确认"不是建议，并确认 import 属于哪一行；
+3. 再量**计划里能看见什么**（70.2 第二条）——同一份计划里少体积这件事，是批准者的信息缺口，与闸门是两个独立缺陷；
+4. 写有名字的接缝，**参数集恰好等于可观察事实**；
+5. import 过闸门并拒绝，消息与 `plan` 同一 reason code；计划补上体积与路由结论；
+6. 改两个在无边界状态下工作的测试，补新测试，逐个验红；回写计数与文档，跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

@@ -412,6 +412,38 @@ def require_decidable(decision: ScopeDecision) -> None:
         )
 
 
+def import_scope_decision(
+    capability_id: str,
+    *,
+    source_bytes: int,
+    threshold_bytes: int = DEFAULT_SIZE_THRESHOLD_BYTES,
+) -> ScopeDecision:
+    """The routing decision for ``adopt --mode import`` (draft §70).
+
+    `plan` and `adopt --mode import` both produce a plan for a managed instance, and §69 showed what
+    happens when only one of two entry points runs a gate. This is the second gate: §12.1 makes
+    confirmation mandatory for the high-risk classes, and the import path never consulted it.
+
+    Only the facts this command can actually observe are passed: the **measured** size of the file it
+    already hashed, and (inside ``decide_scope``) the frozen ``kind``. The two declarable flags of
+    `plan` — ``--creates-environment`` and ``--requires-cuda-or-native`` — have no import equivalent
+    on purpose: a caller must not be able to declare the risk away in the command that is about to
+    copy the payload.
+
+    A named seam rather than an inline call, so the over-threshold trigger is testable without
+    writing a 300 MB file.
+    """
+
+    return decide_scope(
+        ScopeRequest(
+            capability_id=capability_id,
+            intent="install",
+            declared_size_bytes=source_bytes,
+        ),
+        threshold_bytes=threshold_bytes,
+    )
+
+
 __all__ = [
     "CONFIRMATION_OPTIONS",
     "DEFAULT_SIZE_THRESHOLD_BYTES",
@@ -425,6 +457,7 @@ __all__ = [
     "TOOLING_MEMORY_RELATIVE",
     "declared_capabilities",
     "decide_scope",
+    "import_scope_decision",
     "manifest_fingerprint",
     "manifest_paths",
     "memory_choice",

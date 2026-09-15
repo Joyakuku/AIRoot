@@ -159,7 +159,10 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     record("adopt <path> --mode reference", "adopt", str(data_root / "python"), "--mode", "reference")
     # `import` is a different question and a different document (a plan, not a reference), so it gets
     # its own recorded scenario. A real PE file is the input: the backend refuses script payloads.
-    import_source = tmp_path / "imported-python.exe"
+    # The capability is a frozen *tool* on purpose — since §70 the routing gate refuses the high-risk
+    # classes (a frozen `runtime`, or a payload over the confirmation threshold) exactly as `plan`
+    # does, and `python` is a runtime.
+    import_source = tmp_path / "imported-7z.exe"
     shutil.copy2(PE, import_source)
     record(
         "adopt <file> --mode import --capability <id>",
@@ -168,9 +171,9 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         "--mode",
         "import",
         "--capability",
-        "python",
+        "archive",
         "--version",
-        "3.11.11",
+        "24.09",
     )
 
     # A persisted record has to be seeded through the module API with an *injected* store: the CLI

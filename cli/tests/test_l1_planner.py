@@ -277,6 +277,45 @@ def test_memory_file_location_is_project_local(project: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_import_routing_asks_about_the_two_facts_an_import_can_observe() -> None:
+    """`adopt --mode import` must ask what `plan` asks, from the facts it actually has (draft §70).
+
+    A named seam rather than an inline call, so the over-threshold trigger is testable without
+    writing a 300 MB file — and so "what an import is allowed to know" is one thing to read.
+    """
+
+    import inspect
+
+    from airoot.caps.planner import import_scope_decision
+
+    # A generic single-file tool under the threshold: the row import belongs to (§12.1 row 2 —
+    # "single-file generic CLI -> the data root, never ask").
+    tool = import_scope_decision("archive", source_bytes=1_000)
+    assert tool.confirmation_required is False
+    assert tool.scope == SCOPE_DATA_ROOT
+
+    # A frozen runtime: high risk, because *where it lives* is a real choice.
+    runtime = import_scope_decision("python", source_bytes=1_000)
+    assert runtime.confirmation_required is True
+    assert runtime.reason_code == "SCOPE_CONFIRMATION_REQUIRED"
+    assert any("runtime" in item["detail"] for item in runtime.evidence)
+
+    # Over the threshold, decided with a tiny threshold so the test needs no 300 MB file.
+    big = import_scope_decision("archive", source_bytes=11, threshold_bytes=10)
+    assert big.confirmation_required is True
+    assert any("exceeds" in item["detail"] for item in big.evidence)
+
+    # The seam deliberately exposes no way to *declare* the risk away: the measured size and the
+    # frozen kind are the only inputs. If someone later adds a `creates_environment` flag here, this
+    # assertion is the place that says why it was left out — the command that copies the payload must
+    # not be the command that grades its own risk.
+    assert set(inspect.signature(import_scope_decision).parameters) == {
+        "capability_id",
+        "source_bytes",
+        "threshold_bytes",
+    }
+
+
 def test_cli_decides_project_isolation_and_exits_zero(capsys, registry, project: Path) -> None:
     (project / "pyproject.toml").write_text('dependencies = ["python"]\n', encoding="utf-8")
 

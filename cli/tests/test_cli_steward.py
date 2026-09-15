@@ -324,14 +324,19 @@ def test_adopt_import_plans_and_installs_a_script_free_file(
 
     code, plan = run(
         capsys, "--json", "--root", str(cli_root), "adopt", str(source),
-        "--mode", "import", "--capability", "python", "--version", "3.11.11",
+        "--mode", "import", "--capability", "archive", "--version", "24.09",
     )
     assert code == 0, plan
     assert plan["metadata"]["backend_id"] == "portable_file"
     assert plan["metadata"]["import"]["version_source"] == "declared-by-caller"
-    assert plan["target"]["capability_id"] == "python"
-    assert plan["target"]["version"] == "3.11.11"
+    assert plan["target"]["capability_id"] == "archive"
+    assert plan["target"]["version"] == "24.09"
     assert plan["source"]["kind"] == "local_file"
+    # The size is measured from the file (draft §70): it is the one fact the approver needs in order
+    # to judge a copy, and before §70 no field in the plan carried it.
+    assert plan["metadata"]["import"]["size_bytes"] == len(before)
+    assert plan["metadata"]["import"]["size_source"] == "measured-from-the-file"
+    assert plan["metadata"]["import"]["routing"]["reason_code"] == "SUCCESS"
     # The digest pins these bytes. It is not provenance, and the plan says so in as many words — v1
     # verifies digests and never signatures, so a publisher here would be an invention.
     assert plan["source"]["provenance"]["publisher"] is None
@@ -369,6 +374,49 @@ def test_adopt_import_plans_and_installs_a_script_free_file(
     assert code == 0
     assert [item["instance_id"] for item in listed["instances"]] == [instance_id]
     assert listed["instances"][0]["lifecycle_status"] == "active"
+
+
+def test_adopt_import_refuses_a_high_risk_class_the_routing_gate_asks_about(
+    capsys, cli_root: Path, data_root: Path
+) -> None:
+    """The second gate, found the way §69 found the first one (draft §70).
+
+    `plan` refuses a frozen runtime with `SCOPE_CONFIRMATION_REQUIRED` because "where it lives is a
+    real choice". `adopt --mode import` produced a plan for the same capability and bound machine
+    scope — the class §12.1 marks 必须确认, arriving through the entry point that never asks. A
+    confirmation that can be skipped by choosing the other command is not a confirmation.
+    """
+
+    add_root(capsys, cli_root, data_root)
+    payload = place_pe(data_root / "loose", "jq.exe")
+
+    code, refused = run(
+        capsys, "--json", "--root", str(cli_root), "adopt", str(payload),
+        "--mode", "import", "--capability", "python", "--version", "3.11.11",
+    )
+    assert code == 4, refused
+    assert refused["reason_code"] == "SCOPE_CONFIRMATION_REQUIRED"
+    assert any("runtime" in item for item in refused["evidence"]), refused["evidence"]
+    assert any("reference" in item for item in refused["evidence"]), "the refusal must name a way out"
+    plans = Path(cli_root) / "state" / "plans"
+    assert not plans.is_dir() or list(plans.iterdir()) == [], "a refused import left a plan behind"
+
+    # `plan` refuses the same capability for the same reason: two entry points, one gate.
+    code, planned = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "python",
+        "--scope", "data-root", "--target", "data-root:dr-env", "--dry-run",
+    )
+    assert code == 4, planned
+    assert planned["reason_code"] == refused["reason_code"]
+
+    # §68's rule: the lane that prescribes a command carries its boundaries, so an agent reading the
+    # metadata alone does not have to discover the refusal by running it.
+    lanes = json.loads((Path(__file__).resolve().parents[2] / "agents" / "airoot.json").read_text(encoding="utf-8"))
+    importing = [
+        entry["notes"] for entry in lanes["invocation"] if "approve it and run install" in entry.get("notes", "")
+    ]
+    assert importing, "the import lane is gone; this guard is about nothing"
+    assert all("SCOPE_CONFIRMATION_REQUIRED" in note for note in importing)
 
 
 def test_adopt_import_needs_an_explicit_capability_and_refuses_a_path_shaped_one(

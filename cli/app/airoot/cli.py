@@ -631,6 +631,32 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
         )
     assert_script_free(target)
 
+    # §70: `plan` and `adopt --mode import` both produce a plan for a managed instance, and §12.1
+    # makes confirmation *mandatory* for the high-risk classes. The import path never consulted that
+    # gate, so a frozen runtime (or an over-threshold payload) went straight to a machine-scope
+    # binding — the class the routing layer refuses until a human answers "where should it live".
+    # Import has no way to ask: it binds machine scope by definition (§15.5), and the answer is an
+    # interactive human step this build cannot take yet (the memory channel is read-only until P2).
+    # So it refuses, exactly as `plan` does, instead of making the gate decorative for the class the
+    # contract singles out as high-risk. The size is *measured* here, not estimated: the file is
+    # already on disk.
+    from .caps.planner import import_scope_decision
+
+    source_bytes = target.stat().st_size
+    routing = import_scope_decision(capability, source_bytes=source_bytes)
+    if routing.confirmation_required:
+        raise AirootError(
+            "SCOPE_CONFIRMATION_REQUIRED",
+            f"importing {capability} needs confirmation before a plan may be produced",
+            evidence=[
+                *[item["detail"] for item in routing.evidence if item["kind"] == "high_risk"],
+                "options: " + " / ".join(routing.options),
+                f"measured size={source_bytes} bytes (threshold={routing.threshold_bytes})",
+                "import binds machine scope and cannot ask which scope you want; answer the question "
+                "through `plan`, or record the object without owning it via --mode reference",
+            ],
+        )
+
     registry = context.registry()
     try:
         version = str(args.version or "unversioned")
@@ -659,6 +685,18 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             "origin": "local_file",
             "version": version,
             "version_source": "declared-by-caller" if args.version else "no-version-in-the-file",
+            # The size is a fact this command already has (it hashed every byte). It used to appear
+            # nowhere in the plan — `metadata.backend.estimated_size` was null and `source.integrity`
+            # carries digests only — so the person approving a 250 MB copy could not see its size
+            # (draft §70.2).
+            "size_bytes": source_bytes,
+            "size_source": "measured-from-the-file",
+            "routing": {
+                "reason_code": routing.reason_code,
+                "origin": routing.origin,
+                "scope": routing.scope,
+                "threshold_bytes": routing.threshold_bytes,
+            },
             "note": (
                 "supplied by the caller; the sha256 pins these bytes and attests no origin "
                 "(v1 verifies digests, never signatures)"
@@ -684,6 +722,7 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             f"import plan {plan['plan_id']} -> {plan_file}",
             f"  artifact {target}",
             f"  digest {plan['source']['integrity']['artifact_digest']} (pins these bytes; attests no origin)",
+            f"  size {source_bytes} bytes (measured; the confirmation threshold is {routing.threshold_bytes})",
             *(
                 ["  no version in the file: recorded as 'unversioned'; pass --version to name it"]
                 if not args.version
