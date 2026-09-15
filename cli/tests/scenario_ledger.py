@@ -76,6 +76,13 @@ MISSING_CAPABILITIES: tuple[str, ...] = (
     # The invariant is documented (sometimes even implemented) but nothing drives
     # it, and writing that test is possible today — this value is the ledger's
     # honest name for test debt, as opposed to work that is actually blocked.
+    #
+    # **Currently unused, and deliberately kept.** §49 added it because of one entry, and §55/§56/§57
+    # have since closed every entry that used it. The category is not gone — "the rule is written down,
+    # the code implements it, and no test watches it" is a shape that recurs, and one audit found three
+    # instances in a single pass. Removing the value now would remove the vocabulary's ability to name
+    # the next one honestly (it would have to be filed as `undesigned` or `none`, both of which would be
+    # false), and would erase why a fifth member was ever needed.
     "unchecked-invariant",
 )
 BLOCKED_BY_VALUES: tuple[str, ...] = MISSING_CAPABILITIES + ("none",)
@@ -344,7 +351,15 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
         "witness": "test_l0_consistency.py#test_every_declared_unimplemented_command_is_still_unimplemented",
         "note": "`reconcile` 在 agents/airoot.json 的未实现清单里，那条守卫断言清单里的每条都仍未实现",
     },
-    "S-012": {"blocked_by": "unchecked-invariant"},
+    # S-012 used to sit here as `unchecked-invariant` — the entry §49 created that value *for*, and
+    # the last one left after §55 and §56 closed theirs. §57 verified it was genuine test debt (the
+    # guard exists on two paths and no test called either) and wrote the tests, so the disposition is
+    # deleted rather than rewritten. `status` is a measurement and flips on its own.
+    #
+    # With this, **no entry uses `unchecked-invariant` any more**. The value stays in
+    # `MISSING_CAPABILITIES`: the category recurs (one audit found three instances of "documented,
+    # implemented, unwatched" at once), and deleting the value would also delete the record of why
+    # the vocabulary ever needed a fifth member. See the note on `MISSING_CAPABILITIES`.
     "S-013": {
         "blocked_by": "none",
         "evidence": "test_l1_registry.py#test_adding_the_same_instance_twice_is_idempotent",

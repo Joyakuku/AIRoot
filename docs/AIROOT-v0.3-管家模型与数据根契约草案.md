@@ -4357,6 +4357,83 @@ machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` �
 5. 写测试：两半放**同一个**测试里（任一半单独都会放过一条错规则）。
 6. 删处置、重生语料、核对**外科式**、验红、跑全量 + 旧切片 + 真机验收、回写计数、提交。
 
+## 57. 第 57 阶段：关掉最后一个 `unchecked-invariant`——root 卷身份漂移（S-012）
+
+### 57.1 这一阶段要解决什么
+
+`S-012` 是 §49 造出 `unchecked-invariant` 这个词汇值的**原因**：
+
+> 第 5 个词汇值 `unchecked-invariant` 是被数据逼出来的：`S-012` 的卷身份检查**代码里已经存在**（`doctor.py`），
+> 不属于"缺能力"，也不属于"没设计"——它是**测试债**，词汇必须能如实说出这件事。
+
+§52 复核了 8 条 `undesigned`、§53 复核了 41 条 `none`，**两次都绕过了它**（§52.4 写明"不假装核对了另外 41 条"，
+而 `S-012` 在那 41 条之外）。§55 关掉 `C-026`、§56 关掉 `S-006` 之后，它是台账里**最后一个** `unchecked-invariant`。
+
+### 57.2 实测（复核，不读自己的注记）
+
+期望（验证方案）："root volume 身份改变 → 原 registry 进入 recovery required，**不自动接管新目录**"。两半分别复核：
+
+| 半边 | 实现 | 有没有测试 |
+|---|---|---|
+| **不接管** | `root.py::open_root` 卷身份不符即抛 `VOLUME_IDENTITY_MISMATCH`（`exits.py` 映射到退出码 **6**）。**它是真路径**：`cli.py:63` **每条命令**都调用它——卷被换掉之后，所有命令都会拒绝，而不是接管现在躺在这个路径上的任何目录 | **没有**：全树**没有任何一处**调用 `open_root` |
+| **recovery required** | `doctor.py` 报 `severity=critical` + `remediation=recover`，`doctor.py:756` 把这个码映射成 `recovery_required` | **没有**：最近的一条 `test_missing_root_marker_requires_recovery` 测的是 **marker 缺失**，不是卷漂移 |
+
+唯一碰过"坏序列号"的测试是 `test_l0_protocol.py::test_relative_refs_resolve_against_common`，
+它测的是 **schema 的格式规则**（`volume_serial` 必须匹配 `^[A-Fa-f0-9-]{1,128}$`），与漂移行为是两件事。
+所以 §49 的判断成立，而且比它写得更具体：**行为在两条路上都在，看着它的测试一条都没有。**
+
+**顺带一处实测**：`open_root` 有一个 `verify_volume: bool = True` 参数，**全仓库没有任何调用方传它**
+（只有定义处）。本轮**不动**它，但把它记下来——一个没人用、又能关掉身份守卫的开关，值得有人知道它存在。
+
+### 57.3 判据
+
+1. **用有效的另一个序列号制造漂移**，不是格式错误——否则测的是 schema，不是守卫。做法是从真实序列号
+   **翻转一个字符**（`0`↔`1`），保证既合法又必然不同。
+2. **断言两半都发生**：`doctor` 的 `status`/`severity`/`remediation`，以及 `open_root` 的拒绝与退出码。
+3. **"不接管"要可核对**：断言 doctor 之后 **registry 与 marker 一个字节没变**（"doctor 不变更任何东西"
+   是项目里已有的规则，`test_corrupt_registry_is_broken_and_never_rebuilt_implicitly` 就是这么写的）。
+4. **evidence 要能回答"为什么"**：断言 evidence 里同时出现 marker 值与实际值——否则答案只说"身份变了"，
+   不说"从什么变成什么"。这与 §57 要守的那条"失败即数据"是一回事。
+5. **负向对照**：把真实序列号写回去之后，**同一个 root 又能被打开**。没有这一条，"一律拒绝"也会通过，
+   而那会让 AIROOT 在任何机器上都拒绝启动。
+
+### 57.4 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S57.1 两半都测 | ✅ | `test_l1_doctor.py::test_S012_…`：`doctor` → `recovery_required`（退出码 6）/ `critical` / `recover`；`open_root` → `VOLUME_IDENTITY_MISMATCH`（退出码 6） |
+| S57.2 不接管可核对 | ✅ | 断言 doctor 之后 registry 与 marker **逐字节未变** |
+| S57.3 evidence 说清"从什么变成什么" | ✅ | 断言 evidence 同时含漂移值与实际值 |
+| S57.4 负向对照 | ✅ | 写回真实序列号后 `open_root` 成功返回该 root |
+| S57.5 台账 | ✅ | `S-012` 处置删除、`status` 自翻 `evidenced`（43 → **44**）；`unchecked-invariant` 用量 **1 → 0** |
+| S57.6 测试 + 回写 | ✅ | `pytest cli/tests` 750 → **751 项** |
+
+**守卫确实会红**：把 `open_root` 的卷校验短路（`verify_volume` 强制 False）→ 测试在 `pytest.raises` 处报
+`DID NOT RAISE`；把 `doctor.py` 的那条诊断注释掉 → status 不再是 `recovery_required`。验完立刻还原。
+
+**一处必须写下来的后果：`unchecked-invariant` 这个词汇值现在**没有条目在用**了。**
+它**留在** `MISSING_CAPABILITIES` 里，理由写进那份词汇的注释：**这个类会复发**（"不变量写在文档里、
+代码里有、没人看着"是一种会反复出现的形状，§53 一次就抓到三条），而 §49 已经写明了当初为什么要造这个值。
+删掉它反而是错的——那会把"我们曾经需要第五个词汇值"这件事也删掉。
+
+### 57.5 明确不做
+
+1. **不测 `verify_volume=False`**。它没有调用方；为它写测试等于把一个**没人用的开关**升格成契约。
+   它记在 57.2 里，作为"有人知道它存在"。
+2. **不构造"另一个卷"**（那需要第二块卷）。翻转序列号是等价的、确定性的，而且**更精确地**测到守卫的判据
+   （判据是"序列号不同"，不是"物理上是另一块盘"）。
+3. **不顺手改 `open_root` 的签名**（例如删掉那个没人用的参数）——那是 API 变更，需要单独裁决。
+
+### 57.6 实施顺序
+
+1. 先复核：把期望拆成两半，各自找实现，再各自找测试（结论是"两半都有实现、都没有测试"）。
+2. 写本节（先规划）。
+3. 确认序列号格式（schema 的 pattern）与真实格式（`paths.py` 的 `{:08x}`），据此造一个**合法但不同**的值。
+4. 写测试：两半 + 不接管 + evidence + 负向对照。
+5. 验红两个方向、删处置、重生语料、核对**外科式**、跑全量 + 旧切片 + 真机验收、回写计数、提交。
+
 
 
 

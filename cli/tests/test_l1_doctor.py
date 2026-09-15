@@ -6,6 +6,7 @@ case, evidence, and a re-check after repair) and the security-honesty test P-013
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -14,7 +15,9 @@ import pytest
 import fake_issuer
 from airoot import schema_io
 from airoot.caps.doctor import DIAGNOSTIC_CODES, INVARIANTS, diagnostics_by_code, doctor, status_exit_code
+from airoot.exits import AirootError
 from airoot.registry import Registry
+from airoot.root import open_root
 from airoot.tx import create_plan, repair
 from airoot.tx.simulate import SimulationRunner
 
@@ -110,6 +113,76 @@ def test_corrupt_registry_is_broken_and_never_rebuilt_implicitly(root, registry)
     assert "REGISTRY_INTEGRITY_FAILED" in codes(document)
     assert diagnostics_by_code(document)["REGISTRY_INTEGRITY_FAILED"]["remediation"] == "rebuild"
     assert Path(registry.path).read_bytes() == b"not a database", "doctor must not modify anything"
+
+
+def test_S012_a_changed_root_volume_identity_requires_recovery_and_is_not_adopted(
+    root, registry
+) -> None:
+    """S-012: a changed root volume identity needs recovery, and the directory is not adopted.
+
+    Draft §49 created the ledger's `unchecked-invariant` value *because of this scenario*, and §57
+    verified why it still applied: the guard exists on **two** paths and neither had ever been
+    exercised.
+
+    * `root.py::open_root` raises `VOLUME_IDENTITY_MISMATCH` when the marker's serial is not the
+      volume's. This one is load-bearing rather than decorative — `cli.py` calls it for **every**
+      command, so a swapped volume makes every invocation refuse instead of adopting whatever now
+      sits at that path.
+    * `doctor` reports it `critical` + `recover`, which is what turns the status into
+      `recovery_required`.
+
+    No test in the tree called `open_root` at all, and the nearest test on the doctor side
+    (`test_missing_root_marker_requires_recovery`) covers a **missing** marker, not drift. The only
+    test that ever touched a bad serial checks the schema's *format* rule, which is a different
+    question.
+
+    The dangerous direction is adoption — answering "yes, this is my root" to a stranger's directory
+    — so the assertions are about refusal, and the negative control proves the guard keys on identity
+    rather than refusing roots in general.
+    """
+
+    marker_path = Path(root.path) / "state" / "root.json"
+    original = json.loads(marker_path.read_text(encoding="utf-8"))
+    real = str(original["volume_serial"])
+
+    # A *valid* serial that is necessarily not this one: the schema accepts `[A-Fa-f0-9-]{1,128}`,
+    # so flipping a character keeps the document schema-valid and faults only the identity check.
+    drifted_serial = ("0" if real[0] != "0" else "1") + real[1:]
+    assert drifted_serial != real, "the drift must actually change the serial"
+    marker_before = marker_path.read_text(encoding="utf-8")
+    registry_before = Path(registry.path).read_bytes()
+    marker_path.write_text(json.dumps(dict(original, volume_serial=drifted_serial)), encoding="utf-8")
+
+    # Half 1 — the diagnosis, with a severity and a remediation that say what to do about it.
+    document = doctor(root.path, registry=registry)
+    assert document["status"] == "recovery_required", document["status"]
+    assert status_exit_code(document["status"]) == 6
+    assert "VOLUME_IDENTITY_MISMATCH" in codes(document)
+    entry = diagnostics_by_code(document)["VOLUME_IDENTITY_MISMATCH"]
+    assert entry["severity"] == "critical", entry
+    assert entry["remediation"] == "recover", entry
+    # Evidence has to say *from what to what*; "identity changed" alone cannot be acted on.
+    assert any(drifted_serial in item for item in entry["evidence"]), entry["evidence"]
+    assert any(real in item for item in entry["evidence"]), entry["evidence"]
+
+    # Half 2 — not adopted: nothing was rewritten on the way to that verdict.
+    assert Path(registry.path).read_bytes() == registry_before, "doctor must not modify anything"
+    assert marker_path.read_text(encoding="utf-8") != marker_before, "the drift was really written"
+    assert json.loads(marker_path.read_text(encoding="utf-8"))["volume_serial"] == drifted_serial
+
+    # Half 3 — the guard on the real command path refuses too, with the recovery exit code.
+    with pytest.raises(AirootError) as caught:
+        open_root(root.path)
+    assert caught.value.reason_code == "VOLUME_IDENTITY_MISMATCH"
+    assert caught.value.exit_code == 6
+    assert any(real in item for item in caught.value.evidence), caught.value.evidence
+
+    # Negative control: restoring the real serial makes the same root acceptable again. Without this,
+    # "refuse every root" would satisfy everything above — and that would refuse to start anywhere.
+    marker_path.write_text(marker_before, encoding="utf-8")
+    reopened = open_root(root.path)
+    assert reopened.path == Path(root.path)
+    assert reopened.marker["volume_serial"] == real
 
 
 # --------------------------------------------------------------------------- #

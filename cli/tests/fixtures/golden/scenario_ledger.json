@@ -1084,8 +1084,10 @@
       "witness": "test_l0_consistency.py#test_every_declared_unimplemented_command_is_still_unimplemented"
     },
     {
-      "blocked_by": "unchecked-invariant",
-      "cited_by": [],
+      "blocked_by": null,
+      "cited_by": [
+        "test_l1_doctor.py"
+      ],
       "defined_in": [
         "docs/AIROOT-v0.3-\u9a8c\u8bc1\u4e0e\u6d4b\u8bd5\u65b9\u6848.md"
       ],
@@ -1095,7 +1097,7 @@
       "id": "S-012",
       "no_witness_reason": null,
       "note": null,
-      "status": "uncited",
+      "status": "evidenced",
       "superseded": null,
       "witness": null
     },
@@ -1805,7 +1807,7 @@
   ],
   "schema_version": 1,
   "summary": {
-    "evidenced": 43,
+    "evidenced": 44,
     "families": {
       "C": 33,
       "P": 21,
@@ -1813,6 +1815,6 @@
       "T": 17
     },
     "total": 107,
-    "uncited": 64
+    "uncited": 63
   }
 }
