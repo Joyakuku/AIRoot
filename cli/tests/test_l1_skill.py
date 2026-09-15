@@ -362,6 +362,10 @@ def test_the_skill_points_at_the_field_value_table_it_now_depends_on() -> None:
     assert "references/field-values.md" in text
     assert DAGGER in text, "the entry document has to explain what a daggered value means"
     assert "三套 `scope`" in text
+    # §77: not every label a response carries comes from a schema, and the two code-like fields of
+    # `where` are the place an agent is most likely to look one up in the other's table.
+    assert "evidence[].kind" in text and "selection_reason" in text
+    assert "自由字符串" in text
 
 
 def test_the_skill_explains_the_zone_vocabulary_its_responses_carry() -> None:

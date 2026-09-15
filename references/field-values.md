@@ -153,6 +153,67 @@
 
 ---
 
+## schema 没有枚举的标签（判据在代码里）
+
+有两组取值是**代码自由写的字符串**：schema 只声明 `type: string`／`type: [string, null]`，**没有枚举**。于是"合法取值"这件事没有 schema 可查，这一节的权威只能是**代码**——判据是"这个 build 真的会写出哪些值"，`cli/tests/test_l1_label_vocabularies.py` 每次跑测试把两边对一遍（**两个方向**都查）。
+
+带 **∘** 的值表示它**同时**是注册过的 reason code（`cli/app/airoot/exits.py` 的映射表），遇到它可以再去 `references/reason-codes.md` 查；不带 ∘ 的只在本节有解释。
+
+### `evidence[].kind`
+
+每个命令的响应都带 `evidence[]`：`detail` 是人话，`kind` 说明这行是哪一类证据。**27 个值**：
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `query` | 这次查询/请求的条件本身（`where` 的 capability/version/scope，`plan` 的 scope/project） | `caps/where.py`, `caps/planner.py` |
+| `whitelist` | 能力白名单里没有这个条目，所以落到规则判断 | `caps/planner.py` |
+| `memory` | `.ai/tooling.json` 里记录过这个能力的 scope 声明 | `caps/planner.py` |
+| `project_manifest` | 由项目清单声明 —— 因此项目内隔离、**不询问** | `caps/planner.py` |
+| `source` | `source resolve` 取不到可信来源：只能 reference/import，不能装 | `caps/planner.py` |
+| `high_risk` | 命中高风险三类（装包 / 建环境 / 超阈值），**必须确认** | `caps/planner.py` |
+| `generic_tool` | 命中了"单文件通用 CLI"规则：装到数据根，**不询问** | `caps/planner.py` |
+| `fallback` | 没有规则能证明这是显然情况 —— 所以按"需要看"处理，而不是硬猜 | `caps/planner.py` |
+| `discovery` | 白名单发现时的观测（例如入口点在对象根之下几层） | `caps/discovery.py`, `cli.py` |
+| `pe_static` | 只读 PE 静态探测到的元数据（不执行它） | `caps/discovery.py` |
+| `version_set` | 对象内观测到的版本集合（用来判断"有满足约束的版本但未激活"） | `caps/discovery.py`, `caps/where.py` |
+| `weak_evidence` | 证据弱（例如只靠名字匹配）—— 所以版本/身份只能说"未知" | `caps/discovery.py`, `caps/where.py` |
+| `junction_target` | reparse point 指向哪里（这是它可疑、要被隔离的原因） | `caps/discovery.py` |
+| `binding` | 选中的绑定与它的 generation | `caps/where.py` |
+| `registry` | 声明/registry 侧的事实，含"声明了但不健康"与"没有满足约束的候选" | `caps/where.py` |
+| `layout` | 布局问题：payload 标记不在该在的地方 | `caps/where.py` |
+| `external_reference` | 引用侧的观测：观测时间与 management，或"记录的入口点不见了" | `caps/where.py` |
+| `policy` | 生效的选择策略（precedence / revision） | `caps/where.py` |
+| `effective` | 有效事实复核：新进程看到的与当前进程看到的可能不同 | `caps/where.py` |
+| `search_roots` | 这次搜索**实际**用的 root 列表 | `caps/search.py` |
+| `search_policy` | 生效的搜索策略 revision 与 `consistency` | `caps/search.py` |
+| `search_source` | 答案来自**索引**还是**实时遍历**（以及索引 generation） | `caps/search.py` |
+| `search_index` | 索引自己的读数：`built_at` / `records` / `coverage` | `caps/search.py` |
+| `search_scope` | root 是从哪来的（显式 `--search-root`，还是注册的数据根） | `cli.py` |
+| `manifest` | 这个扩展是从已发布 schema 载入的（假扩展用它证明通信协议） | `ext/fake.py` |
+| `self_test` | 假扩展的自检：不碰任何外部状态 | `ext/fake.py` |
+| `failure` | 失败清理项（模拟事务留下的） | `tx/simulate.py` |
+
+### `where.selection_reason`
+
+`where` 的响应里有**两个像码的字段**：`reason_code`（注册词表里的码）与 `selection_reason`（这一节）。**它们不是同一套词表**：`selection_reason` 只回答"为什么选了它 / 为什么没选"，12 个值里只有 3 个同时也注册为 reason code（下表带 ∘ 的那三个）。别再把这 12 个当成 `reason_code` 的取值去查表。
+
+| 取值 | 含义 | 本版谁写出 |
+|---|---|---|
+| `PROJECT_MANAGED_HEALTHY` | 项目内有绑定 —— 项目优先（冻结的先后） | `caps/where.py` |
+| `SESSION_MANAGED_HEALTHY` | 会话内有绑定（仅次于项目） | `caps/where.py` |
+| `STEWARD_REFERENCE_HEALTHY` | 选中的是一个**健康的外部引用**（steward-first 的正常结果） | `caps/where.py` |
+| `MACHINE_MANAGED_HEALTHY` | 机器级 owned payload 健康，且策略默认 `steward` | `caps/where.py` |
+| `MACHINE_MANAGED_HEALTHY_BY_POLICY` | 同上，但策略显式把 owned 排在引用前面 | `caps/where.py` |
+| `CURRENT_SOURCE_DEGRADED`∘ | owned payload 坏了，**正常降级**到健康引用 —— **不是失败**（退出码见 `reason-codes.md` 的同名条目，本表不重复记它） | `caps/where.py` |
+| `MANAGED_NOT_HEALTHY` | 机器级 owned 被声明了但 health 不健康，且没有引用能顶上 | `caps/where.py` |
+| `VERSION_UNSATISFIED`∘ | 有候选，但不满足版本约束 | `caps/where.py` |
+| `VERSION_AVAILABLE_BUT_INACTIVE` | 对象里有满足约束的版本，但它不是活跃版本 —— **切不切是用户的决定** | `caps/where.py` |
+| `REFERENCE_NOT_USABLE` | 引用存在但不可用（入口点缺失等） | `caps/where.py` |
+| `UNMANAGED_ONLY` | 只有没登记的东西可指 | `caps/where.py` |
+| `NOT_FOUND`∘ | 没有候选 | `caps/where.py` |
+
+---
+
 ## 不在这张表里的 schema
 
 | schema | 为什么不列 |

@@ -6218,4 +6218,93 @@ new check names_token(agents, 'decision') -> True
 4. **3 个变异逐个验红**，其中一个是"把守卫改回旧写法"——只有 AST 那条能抓到它；被否掉的猜疑也跑一遍并记下来；
 5. 回写计数（含审计检查 75 → 76）、跑全量 + 旧切片 + 两种验收模式、确认 golden 语料未动、提交。
 
+## 77. 第 77 阶段：schema 没枚举的标签——`evidence[].kind` 与 `where.selection_reason`
+
+### 77.1 这一阶段要解决什么
+
+§74 查的是 **schema 枚举过**的字段取值。这一轮问题换了：**schema 根本没枚举、但代码天天在写的标签怎么办？** schema 只说 `type: string`，于是"合法取值"这件事**没有 schema 可查**——权威只能是代码。这正是它一直没人量的原因，也是它比前两轮更危险的地方：一个查不到手册的词，agent 只能自己编一个意思。
+
+候选恰好有两个，而且都在 agent 最先读的位置上：
+
+- `evidence[].kind`：每个命令的响应都带 `evidence[]`，`detail` 是人话、`kind` 是**分类标签**；
+- `where` 的 `selection_reason`：回答"为什么选了它/为什么没选"。
+
+### 77.2 实测
+
+**发现一：`evidence[].kind` 有 27 个值，其中 14 个在任何 agent 文档里一次都没出现。**
+
+| 分类 | 例子 | 文档 |
+|---|---|---|
+| 搜索 | `search_roots` / `search_policy` / `search_source` / `search_index` / `search_scope` | **全部零命中** |
+| 计划/分流 | `whitelist` / `memory` / `project_manifest` / `source` / `high_risk` / `generic_tool` / `fallback` | `high_risk`/`memory`/`whitelist`/`project_manifest`/`generic_tool` 零命中 |
+| 发现/选择 | `junction_target` / `weak_evidence` / `version_set` / `layout` / `effective` | `junction_target`/`weak_evidence`/`effective` 零命中 |
+
+剩下那些"有命中"的也**不能算解释过**：`binding` / `registry` / `policy` / `query` / `fallback` 是**常见词**，命中来自别的意思（§74 的"同名词假覆盖"在这一族里更严重——因为这里连 schema 枚举都没有，没人被迫去数）。
+
+**发现二（核心）：`where` 有**两个像码的字段**，而它们不是同一套词表。**
+
+| 字段 | 词表 | 注册在 `exits.py`？ |
+|---|---|---|
+| `reason_code` | 95 个注册码 | 是（权威表 + `reason-codes.md`） |
+| `selection_reason` | **12 个值** | **只有 3 个**（`CURRENT_SOURCE_DEGRADED` / `VERSION_UNSATISFIED` / `NOT_FOUND`） |
+
+`SKILL.md` 早先的 `where` 小节把这些值**和 reason code 混在同一个 bullet 列表里**讲；`test_l1_skill.py` 的"参考里不许出现假码"守卫只查 `reason-codes.md`，而 `test_every_reason_code_the_app_can_raise_is_registered` 只扫 `AirootError(`/`"reason_code":` 这两种写法——`_selection_reason_for` 用的是 `return "PROJECT_MANAGED_HEALTHY"`，**两条守卫都看不见它**。于是：一个 agent 拿到 `selection_reason: MACHINE_MANAGED_HEALTHY_BY_POLICY`，去 reason code 表里查——查不到，而表里也没有任何东西告诉它"你查错表了"。
+
+**发现三：量法本身要小心。** 第一版脚本用"`{kind, detail}` 相邻"来认 `evidence` 行，正确排除了 `operations[].kind`（那些是 `{kind, description}`）与 registry 行的 `kind`；第一版 `selection_reason` 提取却把 `CONFLICT_MANAGED_BROKEN`（模块里的另一个常量）也算了进来——**是守卫第一次跑红把它暴露出来的**，随后把提取器收紧成"只读决定这个字段的两个位置"（`_selection_reason_for` 的返回 + `where()` 里的赋值，常量跟到字面量）。
+
+### 77.3 做了什么
+
+1. **`references/field-values.md` 新增《schema 没有枚举的标签（判据在代码里）》**：两节，27 + 12 行，每行仍然带"**本版谁写出**"这一列（证据指针）。取值列里的 **∘** 表示"这个值**同时**是注册过的 reason code"——只有 3 个 `selection_reason` 带它。开头写明：这一节的权威是**代码**，不是 schema。
+2. **`SKILL.md`** 的《看到不认识的取值》加一条：这两组是自由字符串、也在那张表里，并点名"`where` 有两个像码的字段，**别拿一个去查另一个的表**"；权威段补上 `test_l1_label_vocabularies.py`。
+3. **新增 `cli/tests/test_l1_label_vocabularies.py`**：5 条守卫（见 77.4），解析文档自己的表，与**代码里真的会写出的值**双向对账。
+4. 顺手修 `test_l1_skill.py` 里那条守卫，让它同时要求入口文档提到这两组标签。
+
+### 77.4 守卫与验红
+
+| 守卫 | 盯什么 |
+|---|---|
+| `test_the_section_this_guard_reads_is_the_one_it_thinks_it_is` | 那一节还在、两小节都在、都有行（节被改名会红） |
+| `test_the_evidence_kinds_the_app_writes_are_exactly_the_documented_ones` | **双向**：代码写的 27 个必须有行；文档里的每个值都必须真的会被写出 |
+| `test_the_selection_reasons_the_app_writes_are_exactly_the_documented_ones` | 同上，判据只读决定这个字段的两处代码（返回语句 + 赋值语句，常量跟到字面量） |
+| `test_a_selection_reason_marked_as_a_reason_code_really_is_one` | ∘ ⟺ 在 `exits.REASON_EXIT` 里；并断言这个标记**不是空的**（否则整条说明是空话） |
+| `test_every_documented_label_names_a_writer_that_exists` | "本版谁写出"指向的文件必须存在 |
+
+**6 个变异逐个验红**：
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 文档删掉一个 evidence kind | 红 | ✅ 红 |
+| 文档编一个不存在的 evidence kind | 红 | ✅ 红 |
+| 文档删掉一个 selection reason | 红 | ✅ 红 |
+| **实现里新写一个 evidence kind** | 红 | ✅ 红 |
+| 给一个**不是**注册码的 selection reason 打上 ∘ | 红 | ✅ 红 |
+| **实现里改一个 selection reason 的字面量** | 红 | ✅ 红 |
+
+### 77.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **809 → 814**（新文件 5 条） |
+| 审计检查（`test_l0_consistency.py` 的 `^def test_`） | **76 不变** |
+| 场景台账 / schema | 108 / 19 **不变**（又是没动 schema 的一轮：这一轮的结论恰恰是"schema 本来就没枚举它们"） |
+| golden 语料 | **未重生** |
+| 一处**被守卫拦下来的**改动 | 新表里我写了"（退出码 2，不是失败）"，`test_every_unbound_exit_number_is_a_census_and_not_a_silence` 立刻红：那会多出一个**没有相邻码**的退出码声明（census 8 → 9）。**没有去改 census**，而是把那句话改成指向 `reason-codes.md` 的同名条目——同一个事实不在两处记两遍 |
+
+### 77.6 如实记录的边界
+
+1. **这一节的权威只能是代码，所以"文档对代码"是它唯一能有的守卫形状**：它保证两边一致，**不保证含义写对**（与前两轮同一条边界）。schema 仍然是"这个字段允许任何字符串"，本轮**没有**去给它加枚举——把 27 个 evidence kind 写进已发布 schema 是一次契约变更（改枚举＝新 schema id，ADR-0003），而它们**本来就只是给人看的证据标签**，收紧它没有收益。这是判断，不是遗漏。
+2. **∘ 只标"也是注册码"**，不标"哪个字段会用哪个词"：`selection_reason` 与 `reason_code` 的取值**至今有 3 个重叠**。重叠本身不是缺陷（同一个事实在两侧出现是合理的），但它是"两个词表"这件事必须写在文档里的理由。
+3. **`evidence[].kind` 的判据是"`{kind, detail}` 相邻"**：将来若有人写成 `{"detail": ..., "kind": ...}`（顺序反过来）或先构造再 append，这个提取器会漏。**漏的后果是"新 kind 不被守卫发现"**，所以这一条值得记住；补法应该是把判据改成"evidence 数组里的元素"而不是字面相邻——本轮没做。
+4. **没有枚举 `warnings[]`**：它是自由**句子**（不是标签），给句子做词表没有意义。这一条写在 SKILL 之外、留在本记录里。
+5. **`data.fallback.kind` 只写 `crawl` 一个值**，§74 已经在 `search-response` 那节用散文说明了它（"非 `null` 时它的 `kind` 恒为 `crawl`"），所以本轮没有再为它单开一节。
+
+### 77.7 实施顺序
+
+1. 先问"schema 没枚举的字段有哪些"，再挑出**每个响应都带、且 agent 要读**的两个；
+2. 量：`{kind, detail}` 相邻取 evidence 行；`selection_reason` 只从决定它的两处代码取；
+3. 写文档两节（27 + 12 行，各带证据指针），把"两个词表"这件事写在节首；
+4. 写 5 条守卫；**6 个变异逐个验红**（含"实现里新写一个标签"与"实现里改一个标签"）；
+5. 被既有守卫拦下的那一处（未绑定的退出码声明）按它的指示**改文档而不是改 census**；
+6. 回写计数、跑全量 + 旧切片 + 两种验收模式、确认 golden 语料未动、提交。
+
 

@@ -170,9 +170,13 @@ airoot root adopt|relocate   # 需要完整的 copy/verify/switch 规则
 - `null` 只在 `含义` 里解释（空值不是字符串，不参与 † 的判定）。
 - **三套 `scope` 不要混**：绑定的 `system|machine|session|project`、环境变量持久化的 `user|machine`、
   依赖分流的 `project|data-root`。拼写相同，意思不同，看它出现在哪个字段里。
+- **`evidence[].kind` 与 `where` 的 `selection_reason` 是自由字符串**（schema 没枚举），它们也在那张表里，
+  权威是**代码**而不是 schema。特别注意：`where` 有**两个像码的字段**——`reason_code`（注册词表）与
+  `selection_reason`（另一套，12 个值里只有 3 个也是注册码），**别拿一个去查另一个的表**。
 
 取值**域**的权威是 `cli/schema/*.schema.json`（这张表逐行从 schema 解析出来，一致性由
-`cli/tests/test_l1_field_values.py` 守着）；取值**语义**的权威是核心契约。
+`cli/tests/test_l1_field_values.py` 守着）；schema 没有枚举的那两组，权威是写它们的代码，由
+`cli/tests/test_l1_label_vocabularies.py` 守着；取值**语义**的权威是核心契约。
 
 ## 退出码（详见 references/reason-codes.md）
 
