@@ -4001,6 +4001,10 @@ if token not in path.read_text(encoding="utf-8"):
 → 改判 `unchecked-invariant`，并在注记里写明：补 `zone` 过滤会**改变 `where` 的选择语义**，
 属单独决策，本轮**不擅自做**；它能被证伪的那一刻是"出现一个写 `zone="W"` 的生产者"。
 
+> **§56 已关闭这一条**：ADR-0022 做了那次决策（"`where` 不得机器级发现 Zone W"），机器级槽位加了执行点，
+> `test_l1_where.py` 有一条点名 `S-006` 的测试，处置删除。注意本段最后那句判断**没有完全应验**——
+> 真正让它能被证伪的不是"出现一个写 W 的生产者"（测试直接写 registry 就够了），而是**有人去写那条测试**。
+
 ### 53.5 修法
 
 1. **改判 3 条**：`C-028` → `undesigned`（+ `no_witness_reason`）、`C-026` → `unchecked-invariant`、
@@ -4278,6 +4282,80 @@ if token not in path.read_text(encoding="utf-8"):
 3. 写两条测试：`C-026` 一条（五种取值 + 负向对照）、`C-024` 一条（两条路）。
 4. 删掉两条过期处置，重生台账，确认 `status` 自己翻。
 5. 验红三个方向、跑全量 + 旧切片 + 真机验收、回写计数、提交。
+
+## 56. 第 56 阶段：给"Zone W 不参与机器级发现"一个执行点（ADR-0022）
+
+### 56.1 这一阶段要解决什么
+
+§53 复核时抓到的**最严重**一条（`F3`）：`AGENTS.md` §4 与 §5.8 里写着的恒定式"**Zone W 永不进入
+machine PATH**"**没有任何执行点**——`where.py::_managed_candidates` 只按 `scope` 过滤、**从不读 `zone`**，
+而两个 `Binding(...)` 生产者都硬编码 `"R"`。结论是六个字：**不可达，但未强制执行**。
+§53 把它记成 `unchecked-invariant`，并写明"补 `zone` 过滤会改变 `where` 的选择语义，属单独决策"。
+
+> **§56 已关闭这一条**：ADR-0022 做了那次决策，过滤器落地，`test_l1_where.py` 里有一条点名 `S-006`
+> 的测试，台账处置删除（`evidenced` 42 → **43**）。
+
+### 56.2 这一阶段**没有**发明规则
+
+规则本来就在文档里，而且写了**四遍**（ADR-0022 里逐条抄了原文）：规划 §3.2 分区表、
+规划 §5（:603）、三大核心契约（:466）、验证方案 `P-002`。四处措辞一致，**并且两条边界都写下来了**：
+
+* W **不进**默认 `where` 结果；
+* W **可以**通过**显式** session/project activation 执行。
+
+所以本阶段的产物不是一条新规则，而是一个**执行点**，外加一条**负向对照**（见 56.3-2）。
+
+### 56.3 决策与修法
+
+决策记在 **ADR-0022**（它是决策记录，本节是阶段记录；两边不互相抄）。要点：
+
+1. `where` 的**机器级槽位**（steward / machine）不得选中 `zone == "W"` 的绑定——承重的一条，
+   因为契约说的是"发现"，而发现发生在**读者这一侧**；
+2. **只**动机器级槽位：槽位 1–2（project/session）本来就要求 `identity_match`，那正是"显式激活"；
+3. **不新增 reason code**（没有出错，回落到 `NOT_FOUND` 是诚实的；发明一个码等于声称违规）；
+4. **不标 `usable: false`**（那会经由 `owned_unusable` **凭空制造一次 `DEGRADED_TO_REFERENCE`**）；
+5. **让排除可见**：`candidates[]` 每行新增**可选** `machine_discoverable`。
+
+四个被否掉的替代方案（准入处拒绝、新增码、从 `candidates[]` 删掉、`usable: false`）连同理由写在 ADR-0022。
+
+### 56.4 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S56.1 ADR-0022 | ✅ | 决策记录新增一节：背景、四处契约原文、5 条决策、5 个被否方案、后果、明确不做 |
+| S56.2 `where` 执行点 | ✅ | `_Candidate.machine_discoverable`（由 `zone` 推导）+ 机器级槽位跳过 + `_candidate_document` 投影 |
+| S56.3 Schema（minor） | ✅ | `where-response.schema.json` 的 `candidates[]` 增加**可选** `machine_discoverable`；`docs/schema/README.md` 按规则 2 记录 |
+| S56.4 测试（含负向对照） | ✅ | `test_l1_where.py::test_S006_…`：机器级**不**发现 W（且候选行 `usable: true`／`health: healthy`，说明拒的是 **zone** 不是健康），同一个 W 绑定在**显式 session 激活**下**能**被选中 |
+| S56.5 台账 + 语料 | ✅ | `S-006` 处置删除、`status` 自翻 `evidenced`（42 → **43**、`unchecked-invariant` 2 → **1**）；语料**外科式**重生：`scenario_ledger.json` + 5 个 `where_*.json`（候选行各多一个字段），`index.json` 未动 |
+| S56.6 测试 + 回写 | ✅ | `pytest cli/tests` 749 → **750 项** |
+
+**守卫确实会红**：把机器级槽位那两行 `continue` 短路（`and False`）→ 点名 `S-006` 的测试报
+`assert True is False`（`found` 变成 True，即 W 被机器级发现了）。验完立刻还原。
+
+**为什么本阶段**没有**新增一组守卫**：代码与 Schema 的一致性**已经**由运行期自校验守着——
+`where()` 在返回前调用 `validate_self("where-response", document)`，而候选行是
+`additionalProperties: false`，所以 `_candidate_document` 多一个或少一个键，**每一次**跑 `where` 的测试
+都会红。再加一条"比对键集合"的守卫会是**恒真式**（§50 的教训）。**这一条是判断，不是省略**：本阶段新增的
+跨工件一致性面（Schema ↔ 代码）已有覆盖，而唯一没被覆盖的那一面（契约 ↔ 行为）由 S56.4 的测试覆盖。
+
+**两处如实记录的边界**：
+
+1. **W 依然是不可达的**（两个生产者仍写 `"R"`）。本阶段的成果是**执行点**，不是"新的 W 来源"；
+   测试为了构造 W 绑定而**直接写 registry**，这正是 ADR-0022 说的"历史数据 / 迁移 / 直接写库"那条路径。
+2. **`search` / `inventory` / `effective` 仍然不过滤 `zone`**，这是有意的：它们报告的是**事实**
+   （W 绑定存在、某个引用指向 W 路径），不是机器级发现。ADR-0022 把这一点列进"明确不做"，
+   因为 `search` 是**显式查询**——把它一起改是一次单独的裁决。
+
+### 56.5 实施顺序
+
+1. 先读四处契约原文（不是读自己的注记），把规则的**两条边界**抄下来——负向对照就是从第二条来的。
+2. 写 ADR-0022（先决策，再动手）。
+3. 读 `where.py` 的槽位循环与 `owned_unusable`，确认"标 `usable: false`"会制造假降级——这是决策 4 的来源。
+4. 改 `where.py`（字段 + 跳过 + 投影）、改 Schema（可选属性）、改 `docs/schema/README.md`。
+5. 写测试：两半放**同一个**测试里（任一半单独都会放过一条错规则）。
+6. 删处置、重生语料、核对**外科式**、验红、跑全量 + 旧切片 + 真机验收、回写计数、提交。
 
 
 

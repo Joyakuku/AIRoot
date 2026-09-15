@@ -33,6 +33,7 @@
           "health": { "$ref": "common.schema.json#/$defs/health" },
           "usable": { "type": "boolean" },
           "source": { "type": "string" },
+          "machine_discoverable": { "type": "boolean" },
           "evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/evidence" } }
         }
       }

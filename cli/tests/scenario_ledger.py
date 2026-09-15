@@ -320,17 +320,12 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
             "但那条测的是 machine 绑定，不是 digest 漂移后的同一条链"
         ),
     },
-    "S-006": {
-        "blocked_by": "unchecked-invariant",
-        "note": (
-            "复核时发现这条**比'没点名'更严重**：'W 不参与机器级发现'这条冻结不变量**没有任何执行点**。"
-            "`where.py::_managed_candidates` 只按 `scope` 过滤，**不按 `zone`**；而今天也不可能出现 W——"
-            "唯一的两个 binding 生产者（`tx/simulate.py`、`tx/artifact.py`）都硬编码 `\"R\"`。"
-            "所以它是**不可达但未强制执行**：今天没有测试能红，因为先得有代码去违反它。"
-            "补 `zone` 过滤会改变 `where` 的选择语义（属单独决策，本轮不擅自做）；"
-            "它能被证伪的那一刻是：出现一个写 `zone=\"W\"` 的生产者"
-        ),
-    },
+    # S-006 used to sit here as `unchecked-invariant` — §53's most serious finding: the frozen
+    # constant "Zone W 永不进入 machine PATH" had no execution point at all, so it was unreachable
+    # *and* unenforced. ADR-0022 decided it and §56 landed the filter plus a test that names the
+    # scenario, so the disposition is **deleted rather than rewritten** (same treatment as C-021 in
+    # §52 and C-024/C-026 in §55): leaving a "nothing checks this" note beside a test that now checks
+    # it is the kind of record that reads as information while carrying none.
     "S-007": {
         "blocked_by": "none",
         "evidence": "test_l1_where.py#test_multiple_versions_coexist_but_only_one_is_active",

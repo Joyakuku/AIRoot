@@ -740,6 +740,79 @@ policy，生成新的 generation plan，**不能直接改 launcher**"。
 
 ---
 
+## ADR-0022：`where` 不得机器级发现 Zone W——把一条恒定式落到执行点
+
+**背景**：§53 复核场景台账时发现，`AGENTS.md` §4 与 §5.8 里写着的恒定式"**Zone W 永不进入 machine PATH**"
+**没有任何执行点**：
+
+* `where.py::_managed_candidates` 遍历绑定后只按 **`scope`** 过滤，**从不读 `zone`**；
+* `Binding(...)` 的生产者只有两个（`tx/simulate.py`、`tx/artifact.py`），**都硬编码 `"R"`**。
+
+所以这个状态今天**不可达**，但**没有被强制执行**——没有代码能违反它（因为没有代码产生 W），
+也没有代码阻止它被违反（因为没有过滤器）。§53 把它记成 `unchecked-invariant`，并写明
+"补 `zone` 过滤会改变 `where` 的选择语义，属单独决策"。本 ADR 就是那次决策。
+
+**契约怎么说**（本 ADR 不发明规则，只把它落到执行点）。四处措辞一致，而且**两条边界都写下来了**：
+
+| 出处 | 原文 |
+|---|---|
+| 规划 §3.2 分区表 | `\| W \| 用户可写执行上下文 \| cache、session env、共享环境 \| 不允许进入 machine PATH \|` |
+| 规划 §5（:603） | "AIROOT 不会把这些路径加入 machine PATH、stable launcher 或**默认 `where` 结果**；如果用户显式提供绝对路径，执行责任由用户和调用方承担" |
+| 三大核心契约（:466） | "W 可以执行，但**只能通过显式 session/project activation**，不参与机器级发现" |
+| 验证方案 `P-002` | "允许写入，但**不能被 machine `where` 或 machine PATH 发现**" |
+
+即：W **不进默认 `where` 结果**；W **可以**通过**显式** session/project activation 执行。
+
+**决策**：
+
+1. **`where` 的机器级槽位（steward / machine）不得选中 `zone == "W"` 的绑定。** 这条是承重的：
+   契约说的是"发现"，而发现发生在**读者这一侧**。
+2. **W 仍然可以通过显式 project/session 激活被选中**——槽位 1–2 本来就要求 `identity_match`
+   （即调用方给了匹配的 `--project` / `--session`），那正是"显式激活"。所以修法**只**动机器级槽位。
+3. **不新增 reason code。** 一个健康的 W 绑定被机器级 `where` 跳过时，没有任何东西出错：它合法、健康，
+   只是**不参与机器级发现**。回落到既有的 `found: false` + `NOT_FOUND` 是诚实的；
+   为此发明一个诊断码等于**声称这里有一次策略违规**，而这里没有。
+4. **不把它标成 `usable: false`。** 那会经由 `where.py` 的 `owned_unusable` 把一个正常的 reference
+   结果说成 `DEGRADED_TO_REFERENCE`——**凭空制造一次降级**。
+5. **让排除可见。** `where` 响应的 `candidates[]` 每行新增**可选**布尔
+   `machine_discoverable`（`= zone != "W"`）。否则一个健康、`usable: true` 的候选行被跳过而
+   **读者看不到原因**，那正是本项目最反对的静默。按 `AGENTS.md` §7，新增**可选**属性是 minor 兼容。
+
+**被否掉的替代方案（连同理由）**：
+
+| 方案 | 为什么不做 |
+|---|---|
+| 只在**绑定准入**处拒绝 `scope=machine` + `zone=W` | 拒掉的是"制造矛盾状态"，不是"发现"。§53 的发现恰恰是**读者侧**没有过滤；一行历史数据、一次迁移或直接写库都会绕过准入。准入检查可以以后再加，但它替不了这一条 |
+| 新增一个 reason code（如 `ZONE_NOT_MACHINE_DISCOVERABLE`） | 见决策 3：没有出错，却要付"码表 + 退出码表 + `references/reason-codes.md`（守卫第五组要求每个码被点名）+ 语料重生"的代价 |
+| 把 W 候选从 `candidates[]` 里整个删掉 | 删掉的是读者**唯一**能看出"为什么没选它"的地方；排除必须可见 |
+| 给 W 候选 `usable: false` | 见决策 4：会凭空制造 `DEGRADED_TO_REFERENCE` |
+| 顺手让 `search --managed-only` 也排除 W 路径 | 那是一次**单独的**裁决：`search` 是显式查询，不是"机器级默认发现"；本轮不扩大范围 |
+
+**本轮落地**：
+
+1. `where.py`：`_Candidate` 增加 `machine_discoverable`（由 `zone` 推导），机器级槽位跳过不可发现的候选，
+   `_candidate_document` 投影该字段。
+2. `where-response.schema.json` 的 `candidates[]` 增加**可选** `machine_discoverable`；
+   `docs/schema/README.md` 记录这次 minor 变更；`where` 的 golden 语料按规则重生。
+3. `test_l1_where.py` 新增两项：机器级 `where` **不**选中 W 绑定（且候选行说明原因），
+   以及**显式** session 激活**能**选中同一个 W 绑定。后一半是**负向对照**——没有它，
+   "W 永远不可用"这种过度收紧也会通过，而那是**另一条**规则。
+4. 台账 `S-006` 由 `unchecked-invariant` 转 `evidenced`（测试点名它），处置删除。
+
+**后果**：恒定式第一次有了执行点；`zone` 从"只被携带和上报"变成一个**参与判定**的字段。
+`where` 的候选行多一个字段，Rust 版按语料对齐即可。W 依然不可达（生产者仍写 `"R"`）——
+本轮给的不是"新的 W 来源"，而是"如果 W 出现，它会被挡住"。
+
+**明确不做（本轮）**：
+
+- **不**动 `Binding(...)` 的两个生产者（它们本来就写 `"R"`；让它们产生 W 是**新功能**，不是本 ADR 的事）；
+- **不**让 `search` / `inventory` / `effective` 过滤 `zone`：那些面报告的是**事实**
+  （W 绑定存在、某个引用指向 W 路径），不是机器级发现；
+- **不**新增 reason code、退出码或码表条目；
+- **不** CLAIM "W 现在不可达"作为本轮的成果——它本来就不可达；本轮的成果是**执行点**。
+
+---
+
 ## 尚未决策（仍属规划 §23 的未冻结项）
 
 以下 P1 明确**没有**自行发明算法或语义，需要单独决策：

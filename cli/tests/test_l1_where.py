@@ -341,3 +341,67 @@ def test_where_response_is_json_serialisable_and_stable(registry, clock, root) -
     first = json.dumps(run(registry, root), sort_keys=True)
     second = json.dumps(run(registry, root), sort_keys=True)
     assert first == second, "field order and content must be deterministic for a fixed state"
+
+
+# --------------------------------------------------------------------------- #
+# Zone W: not machine-discoverable, still reachable by explicit activation (ADR-0022)
+# --------------------------------------------------------------------------- #
+
+
+def test_S006_zone_w_is_not_machine_discoverable_but_answers_explicit_activation(
+    registry, clock, root
+) -> None:
+    """S-006: Zone W takes no part in machine-level discovery, but explicit activation reaches it.
+
+    Draft §53 found this frozen constant with **no execution point at all**: `where` filtered on
+    `scope` and never read `zone`, while both `Binding(...)` producers hardcode `"R"`. The invariant
+    was therefore unreachable *and* unenforced — "no code can violate it, and no code prevents
+    violating it". ADR-0022 lands it, and this is the execution point's evidence.
+
+    Both halves belong in one test, because either alone is satisfied by a wrong rule. Drop the first
+    and "W is machine-discoverable" survives; drop the second and "W is never selectable" survives —
+    which is a **different** rule. The contract permits W through explicit activation: "W 可以执行，
+    但只能通过显式 session/project activation，不参与机器级发现" (三大核心契约 :466), and the master
+    plan names the same two boundaries ("不会把这些路径加入 machine PATH、stable launcher 或默认 `where`
+    结果").
+    """
+
+    plan = commit_version(registry, clock, root, "1.0.0")
+    instance_id = plan["target"]["instance_id"]
+    session_id = "sess-w"
+    session_key = binding_key(CAPABILITY, "session", session_id=session_id)
+    generation = registry.generation + 1
+
+    with registry.write(expected_generation=registry.generation, bump=True) as connection:
+        # One payload, two bindings, both in Zone W: a machine-level one and one tied to a session.
+        registry.bind_active(
+            connection, Binding(KEY, instance_id, "machine", "W", "none", generation, True)
+        )
+        registry.bind_active(
+            connection,
+            Binding(session_key, instance_id, "session", "W", "session_env", generation, True),
+        )
+
+    # Half 1 — machine-level discovery must not reach W, and must say why rather than go quiet.
+    machine = run(registry, root)
+    assert machine["found"] is False, machine
+    assert machine["reason_code"] == "NOT_FOUND", machine
+    assert machine["selection_reason"] == "NOT_FOUND", machine
+    assert machine["zone"] is None, "nothing was selected, so no zone may be reported"
+    excluded = [item for item in machine["candidates"] if not item["machine_discoverable"]]
+    assert excluded, machine["candidates"]
+    # The refusal is about the zone, not about health: claiming otherwise would be a different bug.
+    assert excluded[0]["usable"] is True, excluded[0]
+    assert excluded[0]["health"] == "healthy", excluded[0]
+    # ...and it is a *machine-level* refusal, so it must not be dressed up as a degradation or a fault.
+    assert machine["reason_code"] not in {"BROKEN", "CURRENT_SOURCE_DEGRADED", "VERSION_UNSATISFIED"}
+
+    # Half 2 — the same Zone W binding answers when the caller names the session explicitly.
+    activated = run(registry, root, session_id=session_id, scope="session")
+    assert activated["found"] is True, activated
+    assert activated["scope"] == "session", activated
+    assert activated["zone"] == "W", "explicit activation is allowed to reach Zone W"
+    assert activated["selection_reason"] == "SESSION_MANAGED_HEALTHY", activated
+    assert activated["reason_code"] == "SUCCESS", activated
+    # The machine-level binding is still in the candidate list, still marked non-discoverable.
+    assert any(not item["machine_discoverable"] for item in activated["candidates"])

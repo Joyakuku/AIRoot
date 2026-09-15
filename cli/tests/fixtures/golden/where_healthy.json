@@ -14,6 +14,7 @@
         }
       ],
       "health": "healthy",
+      "machine_discoverable": true,
       "management": "managed",
       "path": "<BASE>\\catalogue\\root\\store\\fake-tool\\fake-tool\\1.0.0\\win-x64\\fake-tool.bin",
       "source": "registry",

@@ -16,6 +16,14 @@ a second-class citizen behind something AIROOT installed (ADR-0004, ADR-0006).
 When the owned payload is unusable and a healthy reference takes over, that is a **normal
 degradation** (``CURRENT_SOURCE_DEGRADED``, exit 2), not a conflict. ``CONFLICT_MANAGED_BROKEN``
 was the old managed-first answer; it is no longer emitted on this path.
+
+**Steps 3 and 4 are machine-level discovery, so Zone W never takes part in them** (ADR-0022). The
+contract says it in four places — "不允许进入 machine PATH" (规划 §3.2), "不会把这些路径加入 machine
+PATH、stable launcher 或默认 `where` 结果" (规划 §5), "只能通过显式 session/project activation，不参与
+机器级发现" (三大核心契约 :466), "不能被 machine `where` 发现" (验证方案 `P-002`). Steps 1 and 2 stay
+open to W on purpose: those slots already require an explicit project/session identity, which is
+exactly the "显式 activation" the contract permits. See ``machine_discoverable`` below for why the
+exclusion is reported rather than silent.
 """
 
 from __future__ import annotations
@@ -68,6 +76,11 @@ class _Candidate:
     slot: str | None = None
     # Set when the object *contains* a satisfying version that is not the active one.
     version_available_but_inactive: str | None = None
+    # Whether this candidate may answer **machine-level** discovery (steps 3 and 4). False for
+    # Zone W: "W 可写但不参与机器级发现" (ADR-0022). Carried on the candidate, and reported in the
+    # response, because a healthy-looking row that is passed over with no visible reason is the
+    # kind of silence this project treats as a defect.
+    machine_discoverable: bool = True
     evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -109,6 +122,7 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
             continue
         entrypoints = [str(item) for item in load_json(instance["entrypoints_json"], [])]
         scope = str(row["scope"])
+        zone = str(row["zone"])
         identity_match = True
         if scope == "project":
             identity_match = query.project_id is not None and query.project_id == row["project_id"]
@@ -123,7 +137,7 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                 binding_key=str(row["binding_key"]),
                 instance_id=str(instance["instance_id"]),
                 scope=scope,
-                zone=str(row["zone"]),
+                zone=zone,
                 version=str(instance["version"]),
                 health=str(instance["health"]),
                 management="managed",
@@ -132,6 +146,7 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                 usable=healthy,
                 version_ok=_version_ok(str(instance["version"]), query.version),                identity_match=identity_match,
                 slot=scope,
+                machine_discoverable=zone != "W",
                 evidence=[
                     {"kind": "binding", "detail": f"{row['binding_key']} active at generation {row['generation']}"},
                     {
@@ -257,6 +272,7 @@ def _candidate_document(candidate: _Candidate) -> dict[str, Any]:
         "health": candidate.health,
         "usable": bool(candidate.usable and candidate.version_ok),
         "source": candidate.source,
+        "machine_discoverable": bool(candidate.machine_discoverable),
         "evidence": candidate.evidence,
     }
 
@@ -318,12 +334,16 @@ def where(
         if selected is not None:
             break
 
-    # Slots 3 and 4: the steward/owned machine-level pair, ordered by policy.
+    # Slots 3 and 4: the steward/owned machine-level pair, ordered by policy. A candidate that is
+    # not machine-discoverable (Zone W, ADR-0022) is skipped here and only here — the project and
+    # session slots above stay open to it, because those require an explicit identity.
     if selected is None:
         by_slot = {"steward": external, "machine": managed}
         for slot_name in _slot_order(selected_policy):
             for candidate in by_slot[slot_name]:
                 if candidate.slot != slot_name or not candidate.identity_match:
+                    continue
+                if not candidate.machine_discoverable:
                     continue
                 if not candidate.version_ok:
                     version_failures.append(candidate)
