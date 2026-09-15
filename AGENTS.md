@@ -28,9 +28,9 @@ AIROOT
 
 **已实现（协议级，Python 3.11）**：**P1 最小 Core**（root 解析与卷身份守卫、SQLite registry 与迁移、只读 JSON 投影、`where` 确定性选择、`doctor` D1–D10、模拟事务与 journal 驱动恢复、CLI 与 golden 语料）；**管家域的全部步骤 1–9、11–12**（数据根注册与只读 PE 静态探测、能力白名单发现、`adopt --mode reference` 非拥有式登记、依赖分流与 `scope` 决策、会话激活与 **user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、**steward-first `where`** 与数据根/reference 重观测诊断、**删除分级**（只删 AIROOT 自己装的，reference 永不 `uninstall`）、**能力边界**）；**Skill 适配层**（`SKILL.md` + `agents/airoot.json` + `references/`，带漂移守卫）；**可信来源清单与 Install Backend**；**`rebuild`**（派生状态可重建、权威不可自重建）；以及 **`search` 的协议面与 crawl 建的持久索引**（**它不是 USN 索引**：`freshness.current` 只表示"这份清单是最近一次遍历建立的"，与 journal 的"游标没断档"不是一回事）。**756 项测试通过**（含 70 项常驻跨工件一致性检查 `cli/tests/test_l0_consistency.py`）。
 
-**逐阶段的实现记录**（`§31`–`§58`：每一阶段做了什么、发现什么缺陷、加了哪组守卫、怎么验红、哪些边界没有做）**全部在 `docs/AIROOT-v0.3-管家模型与数据根契约草案.md` 的对应小节里**；本文只保留当前状态、仓库地图与操作面。这是**有意**的：本文是**入口文档**，必须能被读者**完整**载入，而逐阶段细节曾让它长到超过读取预算并被**静默截断**（见 §54）——把细节留在这里，等于让读者拿到半份规则；转写到草案里则**不丢任何信息**（§1 里原来的 23 段在草案里各有一节，实测零独有，见 §54.2）。
+**逐阶段的实现记录**（`§31`–`§59`：每一阶段做了什么、发现什么缺陷、加了哪组守卫、怎么验红、哪些边界没有做）**全部在 `docs/AIROOT-v0.3-管家模型与数据根契约草案.md` 的对应小节里**；本文只保留当前状态、仓库地图与操作面。这是**有意**的：本文是**入口文档**，必须能被读者**完整**载入，而逐阶段细节曾让它长到超过读取预算并被**静默截断**（见 §54）——把细节留在这里，等于让读者拿到半份规则；转写到草案里则**不丢任何信息**（§1 里原来的 23 段在草案里各有一节，实测零独有，见 §54.2）。
 
-**尚未实现**：ACL、UAC、elevated broker、named-pipe、machine PATH 写入、**machine 级环境变量持久化**（`--scope machine` 现在报 `PRIVILEGE_REQUIRED`）、`exposure\bin` launcher、**签名/来源证明**（TUF / Sigstore 级；来源清单与摘要校验已就绪，v1 只做 digest）、**真实工具的下载与验证**（机制已通，尚未对真实上游执行过）、**`file_search` 的 Native Index**（USN journal / NTFS 元数据 / 常驻索引器；协议面 §31 与 crawl 建的持久索引 §32 已可用）、Everything adapter、内容搜索、跨用户 ACL 过滤、`reconcile`、`path backup\|restore`、`root adopt\|relocate`（已按命令路径登记在 `agents/airoot.json`）、真实 Ed25519 签名、`.ai/tooling.json` 的写入。管家域 §3–§15 的**全部步骤 1–9、11–12 均已落地**；只剩依赖 P2 的 machine 级环境变量（步骤 10），以及 **ACL 的写一侧**——`doctor` 侧的**观测与漂移发射已落地**（§58 / ADR-0023：`caps/acl.py` 只读 DACL，无需提权），仍缺的是把基线**强加**回目录（`WRITE_DAC` + broker）。
+**尚未实现**：ACL、UAC、elevated broker、named-pipe、machine PATH 写入、**machine 级环境变量持久化**（`--scope machine` 现在报 `PRIVILEGE_REQUIRED`）、`exposure\bin` launcher、**签名/来源证明**（TUF / Sigstore 级；来源清单与摘要校验已就绪，v1 只做 digest）、**真实工具的安装**（**下载与摘要验证已经对真实上游跑过**——§59：从 `static.rust-lang.org` 取到 **12 721 664 字节**的 `rustup-init.exe`，SHA256 与上游发布的校验和一致；**`stage`/`commit` 没跑过**，因为 P1 没有生产批准签发方，唯一的签发方是 `cli/tests/fake_issuer.py`。所以这里不再写"机制已通"这种关于代码的话，而是写**哪几步跑过、哪几步没跑**）、**`file_search` 的 Native Index**（USN journal / NTFS 元数据 / 常驻索引器；协议面 §31 与 crawl 建的持久索引 §32 已可用）、Everything adapter、内容搜索、跨用户 ACL 过滤、`reconcile`、`path backup\|restore`、`root adopt\|relocate`（已按命令路径登记在 `agents/airoot.json`）、真实 Ed25519 签名、`.ai/tooling.json` 的写入。管家域 §3–§15 的**全部步骤 1–9、11–12 均已落地**；只剩依赖 P2 的 machine 级环境变量（步骤 10），以及 **ACL 的写一侧**——`doctor` 侧的**观测与漂移发射已落地**（§58 / ADR-0023：`caps/acl.py` 只读 DACL，无需提权），仍缺的是把基线**强加**回目录（`WRITE_DAC` + broker）。
 
 **禁止把本项目描述成“已实现 AIROOT”或“已具备 Everything 级性能”。** 允许的说法见 §8。
 
@@ -229,6 +229,7 @@ python -m airoot --root <root> search java --max-staleness-ms 1 --json  # 索引
 
 # 真机验收（步骤 5-6 + 8-9 + 31-32 全路径；对真实 D:\env 只读，临时 root 自清理，不写 HKCU）
 python cli\tests\real_machine_acceptance.py
+python cli\tests\real_machine_acceptance.py --online   # 外加 §59：对真实上游解析 + 下载 + 摘要校验（不跑 stage/commit）
 ```
 
 `pytest` 由 `cli/tests/conftest.py` 注入 `cli/app` 到 `sys.path`；直接 `python -m airoot` 需要自行设置 `PYTHONPATH=cli/app`（或走 `cli\bin\airoot.cmd`）。

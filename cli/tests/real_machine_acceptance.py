@@ -3,6 +3,11 @@
 Run it by hand on a machine that has data roots to look at:
 
     python cli/tests/real_machine_acceptance.py
+    python cli/tests/real_machine_acceptance.py --online   # also acquires from a real upstream
+
+Without ``--online`` nothing touches the network, and the online step reports itself as **not run**
+rather than passing quietly. ``--online`` is the only part that reaches an upstream, so the pytest
+suite stays hermetic.
 
 It is **not** a pytest module (the suite must not depend on the host's real `D:\\env`).
 It never writes HKCU: the persisted path stops at the no-token / dry-run boundaries.
@@ -27,6 +32,13 @@ from airoot.root import init_root  # noqa: E402
 
 DATA_ROOT = Path(r"D:\env")
 OBJECT = DATA_ROOT / "java"
+
+#: Opt-in. See the draft §59 block at the end of `main_run` for why the network is not the default.
+ONLINE = "--online" in sys.argv
+
+#: The version asked of `rust-toolchain`. Its artifact URL is not version-templated (`rustup-init.exe`
+#: is the rolling installer), so this only labels the resolution; the digest is what identifies it.
+RUST_VERSION = "1.83.0"
 
 ROOT = Path(tempfile.mkdtemp(prefix="airoot-acceptance-")) / "root"
 
@@ -391,6 +403,66 @@ def main_run() -> int:
         "whatever the machine says, the build still reports the native index as unavailable",
         native.get("available") is not True or probe.get("native_index_available") is True,
     )
+
+    # ---- draft §59: the real acquisition path, when asked for online ----------
+    #
+    # Everything above runs offline and hermetic. This block is the one place that talks to the
+    # network, so it is **opt-in**: the pytest suite must never depend on an upstream being up.
+    # When it is not requested it says so rather than passing quietly, because "not checked" and
+    # "checked and fine" must not look alike (draft §50's lesson, applied to a real machine).
+    #
+    # It stops **before** stage/commit on purpose. Those live behind the transaction's approval
+    # token, and P1 has no production issuer — the only issuer is `cli/tests/fake_issuer.py`. So a
+    # real install cannot be *approved* on this machine, and inventing a token here to make the run
+    # look complete would be exactly the fake this project refuses. Download and verification are
+    # separate units that need no approval, and those are what this step proves.
+    if not ONLINE:
+        print(f"{'online acquisition (draft 59)':<46} not run (pass --online)")
+    else:
+        from airoot.caps.backends.https_artifact import HttpsArtifactBackend
+        from airoot.caps.sources import resolve_source
+
+        resolved = resolve_source(capability_id="rust-toolchain", version=RUST_VERSION)
+        source = resolved.to_document()
+        show(
+            "source resolve (online, real upstream)",
+            0,
+            source,
+            ("artifact_url", "expected_digest", "backend_id"),
+        )
+        check("resolution is online, not against a local file", source.get("offline") is False)
+        check(
+            "the expected digest came from the published checksum file, not from the artifact",
+            str(source.get("expected_digest", "")).startswith("sha256:"),
+        )
+
+        destination = ROOT.parent / "rustup-init.exe"
+        backend = HttpsArtifactBackend()
+        try:
+            artifact = backend.fetch(locator=str(source["artifact_url"]), destination=destination)
+            result = backend.verify(artifact, expected_digest=str(source["expected_digest"]))
+            print(
+                f"    fetched {artifact.size} bytes -> {artifact.path.name} "
+                f"digest={artifact.digest[:23]}"
+            )
+            show(
+                "https_artifact fetch + verify",
+                0,
+                {"verified": result.ok, "size": result.size, "problems": result.problems},
+                ("verified", "size"),
+            )
+            check("the published digest verifies against the downloaded bytes", result.ok is True)
+            check("what came back is a plausible executable, not an error page", artifact.size > 500_000)
+            check(
+                "the digest is computed from the bytes, so it cannot match itself",
+                result.digest == artifact.digest,
+            )
+            print(
+                "    boundary: stage/commit need an approval token, and P1 has no production "
+                "issuer (only cli/tests/fake_issuer.py) - reported, not faked"
+            )
+        except Exception as exc:  # noqa: BLE001 - an acceptance run reports, it does not explode
+            check(f"online acquisition failed: {type(exc).__name__}: {exc}", False)
 
     # Leaving the registry clean, then removing the scratch root --------------
     registry = Registry.open(ROOT)

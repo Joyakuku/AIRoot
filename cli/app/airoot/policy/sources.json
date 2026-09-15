@@ -11,7 +11,9 @@
     "`provenance` and `integrity` are separate on purpose (§4.4:368). v1 does no signature",
     "verification: `signature` stays null, and a digest is never described as a signature.",
     "Growth path: only hosts and capabilities that were actually verified end up here. An entry",
-    "that has never been resolved successfully must not be added 'for completeness'."
+    "that has never been resolved successfully must not be added 'for completeness'. Each entry's",
+    "notes carry its own verification status: 'verified online' means a resolution and a download",
+    "actually ran against the live upstream (draft §59), and an entry that has not says so."
   ],
   "allowed_hosts": [
     "static.rust-lang.org",
@@ -31,7 +33,7 @@
       },
       "filename": "rustup-init.exe",
       "publisher": "The Rust Project",
-      "notes": "ADR-0001: acquired through AIROOT's own plan/approval/fetch/verify/digest path, no admin, --no-modify-path"
+      "notes": "ADR-0001: acquired through AIROOT's own plan/approval/fetch/verify/digest path, no admin, --no-modify-path. Verified online in draft §59: resolution, a 12721664-byte download through https_artifact, and a SHA256 match against this entry's published checksum file. stage/commit were NOT exercised: P1 has no production approval issuer."
     },
     {
       "capability_id": "build",
@@ -44,7 +46,7 @@
       },
       "filename": "cmake-{version}-windows-x86_64.zip",
       "publisher": "Kitware",
-      "notes": "a portable archive with no installer script; the checksum file lists the archive by name"
+      "notes": "a portable archive with no installer script; the checksum file lists the archive by name. Verified online in draft §59: this is the `sha256sums` name-matching path, and it resolved a real digest for the real filename. The artifact itself was not downloaded."
     },
     {
       "capability_id": "archive",
