@@ -1,0 +1,49 @@
+{
+  "data": {
+    "fallback": null,
+    "freshness": {
+      "coverage": "partial",
+      "lag_ms": 2000,
+      "last_indexed_at": "2024-01-01T00:05:12Z",
+      "state": "current"
+    },
+    "implementation_id": "airoot-native-search-crawl",
+    "next_cursor": null,
+    "query": "python",
+    "results": [],
+    "stats": {
+      "index_records_examined": 1,
+      "matched": 0,
+      "returned": 0
+    }
+  },
+  "elapsed_ms": 2000,
+  "evidence": [
+    {
+      "detail": "<BASE>\\search\\root",
+      "kind": "search_roots"
+    },
+    {
+      "detail": "srch-4 (source=file); consistency=bounded_staleness",
+      "kind": "search_policy"
+    },
+    {
+      "detail": "index (generation=crawl-index:2024-01-01T00:05:12Z:1)",
+      "kind": "search_source"
+    },
+    {
+      "detail": "built_at=2024-01-01T00:05:12Z records=1 coverage=partial",
+      "kind": "search_index"
+    }
+  ],
+  "extension_id": "airoot-native-search-extension",
+  "finished_at": "2024-01-01T00:05:15Z",
+  "operation": "search",
+  "reason_code": "SEARCH_INDEX_DEGRADED",
+  "schema_version": 1,
+  "started_at": "2024-01-01T00:05:13Z",
+  "status": "degraded",
+  "warnings": [
+    "the walk stopped at this implementation's record or depth bound; the answer is partial"
+  ]
+}

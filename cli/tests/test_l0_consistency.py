@@ -752,46 +752,69 @@ def test_every_machine_readable_outcome_has_a_fixture() -> None:
     assert _outcome_coverage_problems(documents, statuses, reason_codes | {"TELEPORT_FAILED"}) != []
 
 
-def _search_status_coverage_problems(
-    documents: dict[str, dict[str, Any]], statuses: set[str], daggered: set[str]
+#: The two `search` result fields with an enum the corpus can cover. Both are **conclusions**, and
+#: both live in a fixture, so "does the corpus show this value" is a question the corpus can answer.
+#: `status` is the verdict; `data.freshness.coverage` says how much of the roots the answer rests on —
+#: a truncated index build is `partial` while the status stays `degraded`, which is why the two are
+#: checked separately (draft §95).
+SEARCH_RESULT_FIELDS: dict[str, Any] = {
+    "status": lambda document: document.get("status"),
+    "data.freshness.coverage": lambda document: (
+        (document.get("data") or {}).get("freshness") or {}
+    ).get("coverage"),
+}
+
+
+def _search_field_coverage_problems(
+    documents: dict[str, dict[str, Any]], path: str, values: set[str], daggered: set[str]
 ) -> list[str]:
-    """Every `search` status needs a fixture, unless the field table says nothing writes it."""
+    """Every value of `path` needs a fixture, unless the field table says nothing writes it."""
 
-    seen = {doc["status"] for name, doc in documents.items() if name.startswith("search_")}
-    return [f"no search fixture reports status {value}" for value in sorted(statuses - seen - daggered)]
+    extract = SEARCH_RESULT_FIELDS[path]
+    seen = {extract(doc) for name, doc in documents.items() if name.startswith("search_")}
+    return [f"no search fixture reports {path} = {value}" for value in sorted(values - seen - daggered)]
 
 
-def test_every_search_status_has_a_fixture_or_a_written_exception() -> None:
-    """The §88 rule, extended to `search`, with the exceptions read from `field-values.md`.
+@pytest.mark.parametrize("path", sorted(SEARCH_RESULT_FIELDS))
+def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: str) -> None:
+    """The §88/§89 rule, one level deeper: the verdict *and* how much of the roots it rests on.
 
-    §14 asked this of `where`/`doctor`; `search` states the same kind of result and had the same kind
-    of gap — `timed_out` is producible (`caps/search.py`, `reason_code=SEARCH_TIMEOUT`, exit 2) and had
-    no fixture, while `error`/`cancelled` genuinely have no writer and carry a dagger in
-    `references/field-values.md`. This guard takes the *exceptions* from that document rather than
-    from a list in here, so the two cannot drift: a value that loses its dagger must gain a fixture.
+    §89 asked this of `search-response.status`; `data.freshness.coverage` states the same kind of
+    conclusion and had the same kind of gap — `partial` is producible (an index build that stopped at
+    its record bound) and had no fixture at all. The *values* and the exceptions both come from
+    `references/field-values.md`, whose own guard ties them to the schema, so a value that loses its
+    dagger has to gain a fixture and vice versa.
     """
 
     from test_l1_field_values import ROWS
 
+    row = next(
+        (item for item in ROWS if item.schema == "search-response" and item.path == path), None
+    )
+    assert row is not None, f"field-values.md no longer documents {path}"
+    values, daggered = set(row.values), set(row.daggers)
+    assert values, f"{path} has no documented values; this guard is about nothing"
+
     documents = _golden_documents()
-    statuses = set(load_schema("search-response")["properties"]["status"]["enum"])
-    daggered = {
-        value
-        for row in ROWS
-        if row.path == "status" and row.schema == "search-response"
-        for value in row.daggers
-    }
-    assert statuses and daggered, "the status vocabulary or its daggers came back empty"
-
-    assert _search_status_coverage_problems(documents, statuses, daggered) == [], "; ".join(
-        _search_status_coverage_problems(documents, statuses, daggered)
+    assert _search_field_coverage_problems(documents, path, values, daggered) == [], "; ".join(
+        _search_field_coverage_problems(documents, path, values, daggered)
     )
 
-    # Non-vacuity in both directions: an uncovered status, and daggers that stop being an excuse.
-    assert _search_status_coverage_problems(documents, statuses | {"wat"}, daggered) != []
-    assert _search_status_coverage_problems(documents, statuses, set()) != [], (
-        "the dagger list has to be load-bearing, or this guard is really about nothing"
-    )
+    # Non-vacuity, one mutation per direction: an uncovered value, and a corpus that answers nothing.
+    assert _search_field_coverage_problems(documents, path, values | {"wat"}, daggered) != []
+    assert _search_field_coverage_problems({}, path, values, set()) == [
+        f"no search fixture reports {path} = {value}" for value in sorted(values)
+    ], "an empty corpus has to report every value"
+    if daggered:
+        # Only meaningful where the document actually excuses a value: dropping the daggers must
+        # reveal that the corpus does not carry them either.
+        assert _search_field_coverage_problems(documents, path, values, set()) != [], (
+            "the dagger list has to be load-bearing, or this guard is really about nothing"
+        )
+    else:
+        assert _search_field_coverage_problems(documents, path, values, set()) == [], (
+            f"{path} has no daggered value, so the corpus must already carry all of them"
+        )
 
 
 # --- Guard group 32: printed documents and acceptance fixtures are the same set (draft §90) ------

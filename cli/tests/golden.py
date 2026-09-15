@@ -537,6 +537,33 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "exit_code": timeout_code,
     }
 
+    # ---- search: the index itself only partly covers the roots (draft §95) -- #
+    # `data.freshness.coverage` has three values and one of them — `partial` — had no fixture: it is
+    # written when the **index build** was truncated or ran out of time (`searchindex.py`: a build that
+    # stopped at its record bound says `partial`, never `complete_for_roots`), which is a different
+    # statement from `status`. The bound is data, so it can be injected: one record is enough to stop
+    # the build, and the answer then comes from that incomplete index — `status=degraded`,
+    # `reason_code=SEARCH_INDEX_DEGRADED`, exit 2, and `next_cursor=null` for the same reason a timed
+    # out crawl has none (a page over a partial list would read as page one of a whole one).
+    from dataclasses import replace as _replace
+
+    truncating = _replace(policy, index={**policy.index, "max_records": 1})
+    partial_root = base / "search" / "partial-index"
+    searchindex.build_index(partial_root, roots=[str(search_root)], policy=truncating, clock=clock)
+    partial_document, partial_code = execute_search(
+        request,
+        roots,
+        extension_id="airoot-native-search-extension",
+        implementation_id="airoot-native-search-crawl",
+        policy=truncating,
+        index_root=partial_root,
+        clock=clock,
+    )
+    documents["search_truncated_index_response"] = {
+        "document": _normalize_search(partial_document),
+        "exit_code": partial_code,
+    }
+
     # ---- the reason-code table itself ------------------------------------- #
     documents["reason_code_table"] = {
         "document": {

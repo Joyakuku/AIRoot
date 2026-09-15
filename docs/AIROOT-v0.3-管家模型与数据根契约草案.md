@@ -7928,3 +7928,86 @@ if token["approval_mode"] == "human" and not token.get("approved_by_sid"):   # �
 5. 写守卫：主检查并入"真跑一遍"的循环，另加双向合成检查与散文数字绑定；
 6. 用**真实错误声明**验红，再补合成方向；
 7. 回写计数（`AGENTS.md`：3 处计数 + §7 一句；审查报告 2 处）；跑全量 + 旧切片 + 真机验收；提交。
+## 95. 第 95 阶段：`search` 的覆盖率那一格，和它自带的一个"数量陷阱"
+
+### 95.1 这一阶段要解决什么
+
+§89 给 `search-response.status` 立了一条覆盖率规则：**每个取值要么有 fixture，要么在字段取值表里带 †**。它当时在记录的边界里写下了两件没做的事，其中一件是：
+
+> **`search` 的 `freshness.state`（`current`/`stale`/`degraded`/`rebuilding`/`unknown`）与 `coverage`（`complete_for_roots`/`partial`/`none`）也有枚举，这一轮没有给它们做覆盖率检查**——它们是**子字段**……要不要逐个覆盖，是一次**新的判断**，不该顺手加。
+
+这一轮做那次判断，并按 §89 的同一个形状把它做完。
+
+### 95.2 实测：`coverage` 的三个取值里有一个没有语料
+
+把语料里每份 `search_*` fixture 的 `data.freshness.coverage` 列出来：
+
+| 取值 | 有 fixture 吗 | 谁写它 |
+|---|---|---|
+| `none` | ✅ 两条（`search_response` 的 crawl 回落、`search_timeout_response`） | crawl 路径（没有索引可谈覆盖率） |
+| `complete_for_roots` | ✅ 两条（`search_index_response`、`search_stale_index_response`） | 索引路径，**构建没有被截断** |
+| **`partial`** | **❌ 一条都没有** | 索引路径，**构建被截断或超时** |
+
+`partial` 不是纸上取值：`caps/searchindex.py` 的 `IndexState.coverage` 就是
+`"complete_for_roots" if not (self.truncated or self.timed_out) else "partial"`，而它进的是**响应**（`freshness_for` 把它放回信封），所以它是 agent 真的会看到的一个结论。**顺带发现同一格里的第二个空白**：那条路径的 `reason_code` 是 `SEARCH_INDEX_DEGRADED`，这个码**没有任何 fixture 覆盖**——§14 那条"记录的退出码必须等于它自己文档推出的那个"从没在它身上跑过。
+
+### 95.3 怎么把它做出来：边界是数据，所以可以注入
+
+`index` 的记录上限来自 policy（`index.max_records`，回落到 `crawl.max_records`），而 `execute_search` 与 `build_index` 都收 `policy=`。于是**把上限设成 1** 就能确定性地造出"索引只覆盖了一部分"：构建停在第一条记录、标记 `truncated=true`，随后的查询读这份不完整的索引。**不是去造 25 万条记录，是把判据说小。**
+
+产出的 fixture 正好是契约描述的那种结果：
+
+```json
+"status": "degraded", "reason_code": "SEARCH_INDEX_DEGRADED",
+"data": {"freshness": {"coverage": "partial", "state": "current"},
+         "next_cursor": null, "stats": {"index_records_examined": 1}}
+```
+
+`next_cursor` 是 `null`，理由与 `timed_out` 那条一样（`search.py:947`）：**一份不完整的清单不给出游标**，否则第二页会被当成完整答案的第一页。`warnings` 里带着那句话。
+
+**它放在 `search_timeout_response` 之后是有意的**（§89 的教训）：`execute_search` 会读共享的 `FakeClock`，多插一次调用会把后面每一次调用都推后。重生成之后 diff 只有 `index.json` 加新文件——**既有 32 个 fixture 逐字节不变**。
+
+### 95.4 做了什么
+
+1. **补 `search_truncated_index_response` fixture**（语料 32 → 33），在 `SCHEMA_FOR_FIXTURE` 里注册为 `search-response`。
+2. **把覆盖率守卫从"一个字段"推广成"一类字段"**：`SEARCH_RESULT_FIELDS` 是"**结论型**、有枚举、且落在 fixture 里"的字段表——`status` 与 `data.freshness.coverage`。取值与例外**都**从 `references/field-values.md` 读（那张表自己由另一组守卫双向钉住），所以取值丢了 † 就必须补 fixture，反之亦然。
+3. **两条守卫各自的双向验红都补上**：有 † 的字段用"去掉 † 就报出来"验，**没有 † 的字段**（`coverage` 没有 †）改用"空语料必须报出全部取值"验——原来那句 `daggers` 变异对没有 † 的字段是**恒真的**，等于什么都没测（这一点是跑出来的，见 95.6-2）。
+
+### 95.5 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| **把 `search_truncated_index_response` 从语料里移走**（回到这一阶段发现的状态） | 红 | ✅ 红：`no search fixture reports data.freshness.coverage = partial` |
+| 给枚举加一个没有 fixture 的取值（`wat`） | 红 | ✅ 红（两个字段各一次） |
+| 空语料 | 红 | ✅ 红——每个取值都必须被报出来 |
+| 去掉 `status` 的 † | 红 | ✅ 红（`error`/`cancelled` 语料里没有） |
+| `coverage`（**没有 †**）也套那句 † 变异 | —— | ❌ **不红**，因为它本来就没有 †；这一条当场把新守卫自己的空转暴露出来（下面记着） |
+
+### 95.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **852 → 853**（覆盖率守卫由 1 条变成 2 条参数化用例，净 +1） |
+| 审计检查（`test_l0_consistency.py`） | **95 → 95**（见 95.7-1：这个数按**测试函数**数，不是 pytest 收集数） |
+| golden fixture | **32 → 33**（`search_truncated_index_response`） |
+| 语料重生 | 是；**既有 32 个 fixture 逐字节不变，只有 `index.json` 变** |
+| schema / 代码 / policy | **一个字节没动**（注入的是**测试**构造的 policy 对象，不是改 policy 文件） |
+
+### 95.7 如实记录的边界
+
+1. **"审计检查 95 项"这个数是模块里的测试函数数，不是 pytest 收集数。** 这一轮把一条守卫变成两条参数化用例，pytest 收集数 95 → 96，而那个守卫要的数**仍然是 95**——我先把文档改成 96，守卫当场红了，改回 95 才绿。**这不是缺陷，是口径**：那个数说的是"有多少条常驻检查"，不是"有多少个用例"；但它值得写下来，因为下一个人会踩同一脚。
+2. **新的"双向验红"里有一条本来是空转的。** 原来的写法是"把 † 全去掉，必须报出来"——对有 † 的字段成立，对**没有 †** 的字段（`coverage`）恒为真，**等于没测**。跑出来才发现，改成"按有没有 † 分两种验法"。**这是本轮最值得记的一条**：同一条变异套在不同字段上，可能一个是真检查、一个是装饰。
+3. **覆盖率规则的适用范围仍然是"结论型、有枚举、落在 fixture 里"的字段。** `freshness.state`（5 个取值）**这一轮没有纳入**：它由 `state`（索引新鲜度）与请求的 `max_staleness_ms` 一起决定，取值与 `coverage` 正交，纳入它是**下一次判断**——不是顺手加（§89 的边界 1 还在）。
+4. **`SEARCH_RESULT_FIELDS` 是**手写的**字段表，不是推出来的。** 它只有两项，且两项都要在字段取值表里有对应的行（守卫会 assert 那行存在），所以它不会静默过期；但"哪些字段属于这一类"仍然是判断，不是推导——**第三个这样的字段出现时，没有任何东西会提醒你加进去**。
+5. **那条 fixture 的 `state=current`** 是"索引是最近建的"，与 `coverage=partial` 并不矛盾：**新鲜**与**完整**是两件事，这也正是两个字段要分开覆盖的原因。
+6. **`SEARCH_INDEX_DEGRADED` 现在有 fixture 了，但"每个有写者的 reason code 都要有 fixture"这条规则我没有立**：注册的码有上百个，硬立会让语料变成一份码表。§75 那条是**反方向**的（注册了但没人写），两条不对称是有意的。
+
+### 95.8 实施顺序
+
+1. 读 §89 留下的边界，选"`coverage` 的覆盖率检查"这件它明确说"是一次新的判断"的事；
+2. 先量语料：`coverage` 三个取值里 `partial` 一条 fixture 都没有（顺带发现 `SEARCH_INDEX_DEGRADED` 也没被任何 fixture 覆盖）；
+3. 找**可注入的判据**——上限来自 policy，`execute_search`/`build_index` 都收 `policy=`，所以把 `index.max_records` 设成 1，不造数据；
+4. 把新 fixture 放在 `search_timeout_response` **之后**，重生成后确认 diff 是外科式的（既有 32 个逐字节不变）；
+5. 把守卫从"一个字段"推广成"一类字段"，取值与例外都从字段取值表读；
+6. 逐个验红，**发现"去掉 †"这条变异对没有 † 的字段是装饰**，按有没有 † 分成两种验法；
+7. 回写计数——并发现"审计检查数"是测试函数数（不是收集数），改回 95；跑全量 + 旧切片 + 真机验收；提交。
