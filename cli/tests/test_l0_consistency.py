@@ -524,13 +524,19 @@ def test_every_golden_fixture_is_known_to_the_golden_test() -> None:
     assert orphans == [], f"golden fixtures no test references: {orphans}"
 
 
-def test_the_documented_test_count_is_the_same_everywhere() -> None:
-    """Prose counts drift silently; they must at least be internally consistent.
+def test_the_documented_test_count_is_the_same_everywhere(request: pytest.FixtureRequest) -> None:
+    """Prose counts drift silently; they must at least be internally consistent — and true.
 
     `AGENTS.md` is the current-state document, so every total it states must be the *same* number.
     The contract draft's totals are per-stage historical records (§17.5, §18.6, …): they are
     allowed to differ, but none may **exceed** the current total — a historical record cannot have
     been written against a bigger tree than exists now.
+
+    Draft §54 closed the other half, which had been open the whole time: **nothing compared that
+    number with the tree**. Three documents could agree on a total that had been stale for rounds,
+    and the only thing that ever moved it was someone noticing. The tell was the asymmetry right
+    next to it — the *audit-check* count is derived from source (`_audit_check_count`), while the
+    number an agent actually quotes back to a user was checked against nothing but its own copies.
     """
 
     def totals(path: Path) -> list[int]:
@@ -547,6 +553,23 @@ def test_the_documented_test_count_is_the_same_everywhere() -> None:
     # per-stage history — so its total must be the current one, not merely not-ahead-of it.
     review = set(totals(REVIEW))
     assert review == {now}, f"{REVIEW.name} states {sorted(review)} tests; the current total is {now}"
+
+    # ...and "the current total" has to mean the count this session actually collected.
+    #
+    # Guarded for partial runs: `pytest cli/tests/test_l0_consistency.py` collects one module, and
+    # comparing a whole-suite number against it would be nonsense. Rather than silently passing, a
+    # partial run says so.
+    modules = {path.stem for path in (REPO / "cli" / "tests").glob("test_*.py")}
+    collected_modules = {item.path.stem for item in request.session.items}
+    if not modules <= collected_modules:
+        pytest.skip(
+            f"partial run: {len(collected_modules)} of {len(modules)} test modules collected, "
+            "so the documented total cannot be compared with this session"
+        )
+    assert len(request.session.items) == now, (
+        f"the documents say {now} tests and this session collected {len(request.session.items)}; "
+        "update AGENTS.md, the review report (and SKILL.md if it states one) in the same change"
+    )
 
 
 def test_selection_policy_values_match_the_code_constants() -> None:
@@ -1095,7 +1118,13 @@ _ANY_EXIT_WORDS = re.compile(r"退出码\s*\*{0,2}(\d)")
 #: (`` `CODE`，退出码 N ``) rather than a real digit. A digit there is not a claim about any code, so
 #: counting it would inflate the census with something that says nothing — and it is cheaper to write
 #: the shape accurately than to explain a number that moved for no behavioural reason.
-UNBOUND_EXIT_WORDS = 9
+#:
+#: 9 -> 8 in draft §54: shrinking the entry document deleted the §8b stage-log sentence ("需要确认或
+#: scope 提升时以退出码 4 停下"), which was one of the census entries. The *fact* is untouched and still
+#: agent-facing — `SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码 4）is stated in SKILL.md, is bound in
+#: references/confirmation.md (guard group 19) and appears as the `(4)` marker on the `plan build`
+#: invocation in AGENTS §6. So this is a deliberate census move, not a claim that stopped being checked.
+UNBOUND_EXIT_WORDS = 8
 
 
 def _exit_word_claims(text: str) -> list[tuple[int, int, int]]:
@@ -1955,3 +1984,92 @@ def test_the_old_substring_rule_could_not_go_red_and_the_new_one_does() -> None:
     for sample in (_POINTER_SAMPLE, _POINTER_ACCIDENTAL):
         reported = _evidence_pointer_problems(REPO, "SYNTHETIC", sample)
         assert reported and "is not a test function name" in reported[0], (sample, reported)
+
+
+# --- Guard group 22: the entry document must be loadable in full (draft §54) ---------------------
+#
+# `AGENTS.md` is the onboarding document: an agent reads it first and then acts on it. In this
+# deployment the workspace-instruction budget is 65 536 bytes, and exceeding it is **silent** — the
+# loader truncates the file, so the agent receives a shorter document with no marker that anything is
+# missing. §53 hit that wall for real: appending one paragraph took the file to 65 840 bytes, and what
+# got cut was §8's last paragraph and the whole of §9. Nothing in the file said so.
+#
+# That is the same family as §48 (a document denying what it delivered) with a nastier shape: here the
+# author wrote nothing false — the document was simply never read whole. Since the *consequence* lands
+# on this project (an agent acting on half the rules cannot tell that it is), the project adopts the
+# deployment's number as its own bound. The number's provenance is written down rather than implied,
+# and it is not smeared into the assertion as a literal.
+#
+# Two checks, because the fix for a size problem has two ways to go wrong:
+#   * growing past the budget again — silent, and nothing else in this file would notice;
+#   * shrinking by deleting detail and leaving no route to it — which would turn the entry document
+#     into a dead end, the opposite failure of the one being fixed.
+
+ENTRY_DOC_BUDGET_BYTES = 65536
+
+#: The document that holds the stage-by-stage implementation record (§31…§54).
+STAGE_RECORD = DRAFT
+
+#: The phrase by which the entry document delegates the stage-by-stage record. Deliberately a stable
+#: contract phrase, so this guard expires if someone deletes the sentence rather than rewording it.
+STAGE_RECORD_MARKER = "逐阶段的实现记录"
+
+
+def test_the_entry_document_fits_the_reader_budget() -> None:
+    size = len(AGENTS.read_bytes())
+    assert size <= ENTRY_DOC_BUDGET_BYTES, (
+        f"AGENTS.md is {size} bytes and the reader budget is {ENTRY_DOC_BUDGET_BYTES}; exceeding it "
+        "truncates the document **silently**, so its reader loses the tail with no marker at all. "
+        "Move detail into the draft (draft §54) rather than growing the entry document."
+    )
+    # Not vacuous: a file that fits because it is nearly empty would satisfy the assertion above while
+    # meaning nothing. The entry document has real work to do, so it has a floor as well as a ceiling.
+    assert size > 10_000, "AGENTS.md is suspiciously small; the ceiling check above is now meaningless"
+
+
+def _stage_record_delegation(text: str) -> list[str]:
+    """Lines that hand the per-stage record off: the marker **and** the document name, together.
+
+    Both halves are required, and requiring them on the *same line* is the point: a document that
+    mentions the draft somewhere and says "stage record" somewhere else has not told a reader where
+    to go. Separated out so the three failure modes can be exercised without touching `AGENTS.md`.
+    """
+
+    return [
+        line
+        for line in text.splitlines()
+        if STAGE_RECORD_MARKER in line and STAGE_RECORD.name in line
+    ]
+
+
+def test_the_entry_document_says_where_the_stage_record_lives() -> None:
+    """Shrinking must not turn the entry document into a dead end (draft §54.4-2b).
+
+    This is the guard for the *fix itself*. Deleting thirty kilobytes of per-stage detail is only
+    honest while the record stays reachable; without that, the next reader cannot find §31–§54 at all
+    and the information is gone in practice even though it still exists on disk.
+    """
+
+    delegating = _stage_record_delegation(AGENTS.read_text(encoding="utf-8"))
+    assert delegating, (
+        f"no line of AGENTS.md both says {STAGE_RECORD_MARKER!r} and names {STAGE_RECORD.name!r}; "
+        "the entry document must say where the per-stage detail went (draft §54)"
+    )
+    # The delegation must name the *range* it hands off, not merely the file: a reader has to be able
+    # to tell that the record continues where this document stops.
+    assert "§31" in delegating[0] and "§54" in delegating[0], (
+        f"the delegation must name the section range it hands off: {delegating[0].strip()[:160]}"
+    )
+
+    # Non-vacuity: all three ways to fail must actually be reported, on synthetic input — so the
+    # guard's red direction does not depend on anyone remembering to break the real document.
+    name = STAGE_RECORD.name
+    assert _stage_record_delegation(f"{STAGE_RECORD_MARKER}见草案 §31–§54") == [], (
+        "naming no document must not count as a delegation"
+    )
+    assert _stage_record_delegation(f"细节在 {name} 里") == [], (
+        "naming the document without saying what is in it must not count"
+    )
+    assert _stage_record_delegation(f"{STAGE_RECORD_MARKER}在 {name} 的 §31–§54 里") == [
+        f"{STAGE_RECORD_MARKER}在 {name} 的 §31–§54 里"
+    ], "a line carrying both halves must count"
