@@ -870,6 +870,92 @@ policy，生成新的 generation plan，**不能直接改 launcher**"。
 
 ---
 
+## ADR-0024：生产批准签发方——**提案，待裁决**（P1 只能验、不能签）
+
+**状态：提案。本条目记录的是一个尚未做出的决定，以及它今天挡住的每一个执行点。**
+它不是一条已生效的决策，所以**不要**按"已经定了"来读；正文里的"今天"指的是提交
+`§67` 时的工作树状态。
+
+### 背景：批准在 P1 是"只能验、不能签"
+
+三大核心契约 §8.5 与 broker 方案 §5 把**签发**批准这件事放在受保护一侧，`AGENTS.md` §7 把它
+写成一条硬规则：
+
+> `test_hmac_sha256` 只允许出现在测试/模拟路径；核心只做**校验**，签名实现放在
+> `cli/tests/fake_issuer.py`，**`airoot approve` 永远不能凭空制造批准**。
+
+P1 如实照做：核心只有验证侧（`tx/approval.py`），唯一的签发方是
+`cli/tests/fake_issuer.py`（测试用），受保护 issuer 属 P2。于是**每一个"要批准才能做"的动作，
+在真机上都走不到底**——不是"少一个算法"，而是**少一个信任根**。
+
+`state/test-keyring.json` 里的密钥是**测试**签发方的密钥，就写在 root 内：任何能写这个 root 的
+进程都能签出"有效"token。它作为测试签发方完全够用（它要证的恰恰是消费侧会拒绝伪造、重放、
+过期、跨 root 的 token），但它**不能**被升格成生产签发方——那样"批准"就退化成"任何同用户进程
+都能做的事"，而这正是这套设计存在的理由。`security_mode=policy_only` 这个诚实口径也据此保留。
+
+### 今天被它挡住的东西（实测，不是推断）
+
+每一条的失败点都是同一个 `load_keyring()`（`tx/approval.py`）**或**它的 `ed25519` 分支；
+只要 root 里没有测试 keyring，或 token 用的是 `ed25519`，就到此为止。两类拒绝在 §67 之后都带同一句
+`no production approval issuer exists in this build (ADR-0024 is the pending decision)`，
+所以下表只列各自**不同的前半句**——成因不同，下一步动作也不同。
+
+（表里写的是**函数名**而不是行号：行号会被任何一次无关改动作废，而入口的名字不会。
+代价是读者要自己 grep 一次；收益是这张表不会在两周后悄悄变成假话。）
+
+| 执行点 | 到达签发方的路径 | 前半句 | 结果 |
+|---|---|---|---|
+| `approve <plan> --token-file <t>` | `cli.py` 的 `cmd_approve` | `no approval keyring is installed` | `PROVENANCE_FAILED`(7) |
+| `install <plan> --token-file <t>` | `cmd_install` → `runner.commit()` → `tx/artifact.py` / `tx/simulate.py` 的 `keyring()` 回退 | 同上（同一个 `load_keyring`） | 同上 |
+| `env persist <ref> --token-file <t>` | `cli.py` 的 `cmd_env_persist` | 同上 | 同上 |
+| `tool gc --apply --token-file <t>` | `cmd_tool_gc` → `caps/lifecycle.py` 的 `apply_gc_plan` | 同上 | 同上 |
+| `uninstall <owned-instance> --token-file <t>` | `cmd_uninstall` → `caps/lifecycle.py` 的 `apply_gc_plan` | 同上 | 同上 |
+| 任何 `ed25519` token（有 keyring 也一样） | `tx/approval.py` 的 `verify_signature` 算法分支 | `ed25519 approval verification is not implemented` | 同上 |
+
+台账侧同样对得上（`cli/tests/scenario_ledger.py`）：**P-012**（policy 批准**没有生产者**）、
+**P-015**（撤销那一半）、**P-017**（没有 issuer 身份证据）都是 `undesigned`，**C-022**
+（人类批准通道）是 `undesigned` 且注明属 P2。它们今天**不能**被判成 `evidenced`，
+因为要证的那件事缺少生产侧的一半。
+
+**注意"没跑过"与"跑不通"是两件事**：§59 已经对真实上游跑过解析 + 下载 + 摘要校验
+（`rustup-init.exe`，12 721 664 字节，SHA256 与上游发布值一致），但 `stage`/`commit` 这两步
+**没跑过**，原因就是这条：真机上没有能签发批准的东西。`policy/sources.json` 的注解里
+已经如实记着这一点。
+
+### 三条路
+
+| 选项 | 是什么 | 解锁什么 | 代价 / 风险 |
+|---|---|---|---|
+| **A 维持现状**（默认）：生产签发方等 P2 的受保护 broker | 不新增任何东西；要批准的五条路径在真机上继续不可完成 | 无 | **不新增任何风险**，也不新增任何假保证；代价是"AIROOT 能装东西/能持久化环境"这句话在真机上始终不成立（§8 已如实这么写） |
+| **B 本地人类通道**：`approve --interactive` 在同机提示人类，签发 `approval_mode=human` 的 token（密钥仍由 root 内文件承载，安全级别等同今天的 `test_hmac_sha256`） | 真机可用；`human` 模式语义真实（`approved_by_sid` 有来源） | 那五条路径在真机可走完；C-022 的写入通道有落点 | **需要一次契约文本裁决**：`AGENTS.md` §7 的字面规则禁的是"`approve` 凭空制造批准"，而 B 让 `approve` 在**有人在场**时签发——这是把规则读成"不得在**没有人在场**时制造批准"。密钥可写 ⇒ 同用户仍可伪造，所以 B **不提供任何对抗同用户的保证**，`security_mode=policy_only` / `enforcement=same_user_can_bypass` 一个字都不能改 |
+| **C 现在就做真实 `ed25519` 签发**：私钥放受保护位置或由用户显式提供，`ed25519` 校验落地 | `ed25519` 分支不再报未实现；签名成为真的**来源证明** | 同 B，且来源证明向前一步 | 私钥放哪、由谁保护，正是 P2 broker 要解决的问题。在没有受保护存储的机器上做 C，等于把"私钥就放在 root 里"变成事实上的设计——**它比 B 更糟**，因为它给同一件事披上"已签名"的外衣 |
+
+**推荐：A 为默认，B 是唯一"今天能落地且不新增假保证"的选项，但它以一次契约文本裁决为前提；
+C 应等 P2 的受保护存储。** 这条推荐不改变任何代码行为——它只是把 A 明确下来，
+免得读者以为"迟早会有人补上"。
+
+**为什么 B 也需要裁决，而不是照"放宽优先"（ADR-0021）自动落地**：ADR-0021 的四类豁免里，
+"图层级"与"诚实规则"两类在这里同时被触发——B 会改动一条 layer-2 级规则（`AGENTS.md` §7 的
+批准语义）的**读法**。按 §7 最后一段，放开一条规则时若会摧毁一条更强的规则（这里是
+"批准必须来自人类，而不是来自 Agent 能自己跑的命令"），不能机械照做，而要如实报出来。
+本条目就是那份"报出来"。
+
+### 后果（无论选哪条）
+
+- 两条拒绝消息今天**措辞不一致**（一条说"没有 keyring"，一条说"`ed25519` 未实现"），
+  读者看不出它们是同一件事；§67 让它们**说同一件事**并把读者指向本 ADR，且用测试钉住这个指针；
+- `references/confirmation.md` 的"批准的形状"第 3 步（人工批准 `plan_hash`）在这个 build 里
+  **没有可用实现**；§67 把这一点写进该文件，免得 Agent 对用户描述一个走不通的流程；
+  注意第 1、2 步（`plan --dry-run` / `plan`）**是**可用的，别把整条路径一起说成不可用；
+- 上面四条台账条目在裁决之前**保持 `undesigned`**——不能因为"我们讨论过了"就改判成已证据。
+
+### 明确不做
+
+- **不在本条目里实现任何签发方**（它是提案，不是决策）；
+- **不把测试 keyring 升格成生产 keyring**，也不放宽 `test_hmac_sha256` 只许出现在测试路径的规则；
+- **不让 `approve` 在没有裁决的情况下开始签发**；
+- **不把"措辞统一"当成"问题解决"**：§67 只让拒绝消息诚实且一致，它不解锁任何执行点。
+
 ## 尚未决策（仍属规划 §23 的未冻结项）
 
 以下 P1 明确**没有**自行发明算法或语义，需要单独决策：
@@ -879,6 +965,8 @@ policy，生成新的 generation plan，**不能直接改 launcher**"。
 2. registry SQLite migration 工具、event 保留期、`logs/audit` 导出协议；
 3. 根定位的卷标扫描（P1 只支持 `--root` 与 `AIROOT_HOME`，且失败即关闭）；
 4. 受保护 issuer 的真实签名（P1 只有 `test_hmac_sha256`，`ed25519` 校验显式未实现）；
+   **已升级成一条独立的待裁决项，见上一条 ADR-0024**——它挡住的不只是签名算法，而是
+   `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 这五条路径在真机上的完成；
 5. `exposure\bin` 中的 launcher（P1 的 `EXPOSED` 是"通过一次全新的 registry 读取观察到
    新 binding"，尚未写任何 launcher 文件）；
 6. Native Search 的进程模型与 `file_search` capability 清单；

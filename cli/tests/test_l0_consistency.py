@@ -2030,6 +2030,28 @@ def test_the_tooling_memory_is_read_only_in_the_code_and_not_just_in_the_prose()
     )
 
 
+def test_the_confirmation_reference_does_not_offer_a_step_this_build_cannot_perform() -> None:
+    """The reference's approval shape used to end at a step with no implementation behind it.
+
+    It lists four steps; steps 1-2 run today, steps 3-4 need an approval token and **nothing in
+    this build can mint one**. That is a statement about the implementation, so it belongs to the
+    same class as the read-only claim above (draft §48: a document may not assert what the code no
+    longer — or never did — do). The dangerous direction is the honest block being deleted while the
+    four-step shape stays, so both halves are asserted.
+    """
+
+    from airoot.tx.approval import ISSUER_PENDING
+
+    text = CONFIRMATION_REFERENCE.read_text(encoding="utf-8")
+    assert "--token-file" in text, "the approval shape vanished; this guard is now about nothing"
+    assert ISSUER_PENDING in text, (
+        "references/confirmation.md presents `install --token-file` without saying that this build "
+        "cannot produce a token; an agent reading it will describe a flow that cannot run"
+    )
+    assert "ADR-0024" in text, "the honest block must point at the pending decision, not just apologise"
+    assert "提案" in text, "ADR-0024 is a proposal, not a decision; the reference must not overstate it"
+
+
 # --- Guard group 20: an "undesigned" claim needs a witness (draft §52) ---------------------------
 #
 # §49 wrote the ledger's dispositions as **authored judgements** and checked them only for structure —

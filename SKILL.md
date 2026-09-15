@@ -98,6 +98,12 @@ cancel             取消
 - `airoot approve` 只**消费**批准，永远不会凭空制造它；你也不得把"我调用了 approve"
   解释成"用户批准了"。
 - 没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户。
+- **这个 build 里没有任何东西能签发批准**：核心只校验，唯一的签发方是测试用的
+  `cli/tests/fake_issuer.py`。所以上一条在当前版本里**走不到底**——`install` / `env persist` /
+  `tool gc --apply` / `uninstall` 带 `--token-file` 时会返回 `PROVENANCE_FAILED`（退出码 7），
+  消息里带这一句：`no production approval issuer exists in this build (ADR-0024 is the pending decision)`。
+  裁决与三条路见 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：提案）；
+  **不要**试图自己造一个 token（伪造正是消费侧要拒绝的东西）。
 
 ## 绝不做的清单（§16.2）
 

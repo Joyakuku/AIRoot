@@ -123,7 +123,7 @@
       "question": "take ownership of a portable file I already have",
       "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
       "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "target.instance_id"],
-      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null"
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (ADR-0024 is the pending decision), so the approve/install steps cannot be completed on a real machine"
     },
     {
       "question": "what does AIROOT own on this machine",

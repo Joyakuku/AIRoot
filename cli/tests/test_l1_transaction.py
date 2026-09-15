@@ -18,6 +18,7 @@ from airoot.clock import FakeClock
 from airoot.exits import AirootError
 from airoot.registry import Registry
 from airoot.tx import create_plan, repair
+from airoot.tx.approval import ISSUER_PENDING
 from airoot.tx.journal import TransactionJournal, classify
 from airoot.tx.simulate import (
     PAYLOAD_NAME,
@@ -36,6 +37,8 @@ from airoot.tx.states import (
     next_happy_state,
     require_transition,
 )
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 class Tamper:
@@ -592,6 +595,9 @@ def test_ed25519_tokens_are_not_accepted_in_p1(registry: Registry, clock, root) 
     with pytest.raises(AirootError) as err:
         SimulationRunner(registry, clock=clock).commit(plan, production)
     assert err.value.reason_code == "PROVENANCE_FAILED"
+    # Both refusals caused by the absent issuer must name the pending decision (draft §67).
+    assert ISSUER_PENDING in err.value.message
+    assert err.value.evidence, "a refusal must say why it refused"
 
 
 def test_missing_keyring_is_reported(registry: Registry, clock, root) -> None:
@@ -600,6 +606,48 @@ def test_missing_keyring_is_reported(registry: Registry, clock, root) -> None:
     with pytest.raises(AirootError) as err:
         SimulationRunner(registry, clock=clock).commit(plan, token)
     assert err.value.reason_code == "PROVENANCE_FAILED"
+    assert ISSUER_PENDING in err.value.message
+    assert err.value.evidence, "a refusal must say why it refused"
+
+
+def test_both_issuer_refusals_name_the_same_pending_decision(registry: Registry, clock, root) -> None:
+    """The two ways to hit the missing issuer used to explain themselves differently.
+
+    "no keyring is installed" and "ed25519 is not implemented" read like two unrelated gaps.
+    They are one decision nobody has taken yet (ADR-0024), and a reader who hits either path
+    has to be able to tell. The dangerous direction of this guard is the shared sentence
+    being emptied out or the pointer losing its target, so both halves are asserted:
+    the sentence must name ADR-0024, and that ADR must exist.
+    """
+
+    plan = create_plan(registry, version="16.0.0", clock=clock)
+    issued = fake_issuer.issue(plan, clock=clock)
+    production = dict(issued)
+    production["signature"] = {"algorithm": "ed25519", "key_id": "prod-key", "value": "base64:AAAA"}
+
+    messages = []
+    # No keyring yet: the token never gets as far as its signature algorithm.
+    with pytest.raises(AirootError) as err:
+        SimulationRunner(registry, clock=clock).commit(plan, issued)
+    assert err.value.reason_code == "PROVENANCE_FAILED"
+    messages.append(err.value.message)
+
+    # Keyring installed: the ed25519 token is refused for the other reason.
+    fake_issuer.install_keyring(root.path)
+    with pytest.raises(AirootError) as err:
+        SimulationRunner(registry, clock=clock).commit(plan, production)
+    assert err.value.reason_code == "PROVENANCE_FAILED"
+    messages.append(err.value.message)
+
+    assert "ADR-0024" in ISSUER_PENDING, "the shared sentence lost its pointer"
+    assert all(ISSUER_PENDING in message for message in messages), messages
+    assert messages[0] != messages[1], "distinct causes still need distinct first halves"
+
+    decision_log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
+    assert "## ADR-0024" in decision_log, (
+        "the refusal points at ADR-0024 but the decision log has no such entry; either write it "
+        "or update ISSUER_PENDING — a pointer to nothing is worse than no pointer"
+    )
 
 
 # --------------------------------------------------------------------------- #

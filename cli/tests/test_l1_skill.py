@@ -218,6 +218,49 @@ def test_the_reason_code_reference_only_lists_real_codes() -> None:
     assert unknown == [], f"the reference names unregistered reason codes: {unknown}"
 
 
+def test_the_skill_does_not_offer_an_approval_it_cannot_obtain() -> None:
+    """SKILL.md tells the agent to hand the plan and hash to the user — and then stops.
+
+    That hand-off presumes a channel that can approve, and this build has none: the core only
+    verifies, the sole issuer is the test one. An agent following the Skill as written would ask
+    the user for an approval the user has no way to give (draft §67). Same class as the read-only
+    claim in guard group 19: a document may not present an unavailable step as available.
+    """
+
+    from airoot.tx.approval import ISSUER_PENDING
+
+    text = skill_text()
+    assert "plan 文件路径与 hash 交给用户" in text, "the approval hand-off is gone; this guard is about nothing"
+    assert ISSUER_PENDING in text, (
+        "SKILL.md tells the agent to hand the plan to the user for approval without saying that this "
+        "build cannot mint a token; the agent will describe a step that cannot be performed"
+    )
+    assert "ADR-0024" in text, "the honest block must point at the pending decision"
+    assert "提案" in text, "ADR-0024 is a proposal, not a decision; the Skill must not overstate it"
+
+
+def test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain() -> None:
+    """The third document with the same defect, and the one the agent reads *first*.
+
+    `agents/airoot.json` is the machine-readable lane map; its import lane ended at "approve it
+    and run install" — the same unavailable step SKILL.md pointed at. The guard is deliberately
+    narrow: the caveat must sit in the *same note* that presumes approval, not merely somewhere in
+    the file, or a reader of that lane is still sent to a step nobody can perform (draft §67).
+    """
+
+    from airoot.tx.approval import ISSUER_PENDING
+
+    presuming = [
+        entry.get("notes", "")
+        for entry in agents_document()["invocation"]
+        if "approve it and run install" in entry.get("notes", "")
+    ]
+    assert presuming, "no lane presumes approval any more; this guard is about nothing"
+    for note in presuming:
+        assert ISSUER_PENDING in note, f"lane note presumes approval without the boundary: {note!r}"
+        assert "ADR-0024" in note, "the boundary must point at the pending decision"
+
+
 def test_the_reference_set_is_present() -> None:
     for name in ("reason-codes.md", "confirmation.md"):
         assert (REFERENCES / name).is_file(), f"missing on-demand reference: {name}"

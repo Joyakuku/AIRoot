@@ -11,6 +11,12 @@ the broker plan §5). P1 therefore implements verification only:
 
 The signing side intentionally does not exist in the core: it lives in the test
 issuer (``cli/tests/fake_issuer.py``) so the CLI can never manufacture consent.
+
+Consequence, stated plainly: **this build cannot produce an approval.** Every path
+that consumes one (``approve``, ``install``, ``env persist``, ``tool gc --apply``,
+``uninstall``) therefore stops at :func:`load_keyring`, and an ``ed25519`` token stops
+at :func:`verify_signature`. Both refusals carry :data:`ISSUER_PENDING` so that any one
+of those paths tells the reader the same thing and names the pending decision (ADR-0024).
 """
 
 from __future__ import annotations
@@ -31,6 +37,13 @@ KEYRING_RELATIVE = "state/test-keyring.json"
 TEST_ALGORITHM = "test_hmac_sha256"
 PRODUCTION_ALGORITHM = "ed25519"
 
+#: The one sentence every refusal caused by the absent production issuer must contain.
+#: Five different commands reach it, and they used to explain themselves two different ways
+#: ("no keyring" vs "ed25519 not implemented"), which reads like two unrelated gaps rather
+#: than one decision that has not been taken. ADR-0024 is that decision brief; a test pins
+#: this pointer so it cannot rot silently.
+ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 is the pending decision)"
+
 
 def keyring_path(root: Path) -> Path:
     return Path(root) / KEYRING_RELATIVE
@@ -50,8 +63,12 @@ def load_keyring(root: Path) -> dict[str, bytes]:
     if not path.is_file():
         raise AirootError(
             "PROVENANCE_FAILED",
-            "no approval keyring is installed; production issuers are not implemented in P1",
-            evidence=[str(path)],
+            f"no approval keyring is installed; {ISSUER_PENDING}",
+            evidence=[
+                str(path),
+                "the only issuer is the test one (cli/tests/fake_issuer.py); the core verifies but never mints",
+                "approve/install/env persist/tool gc --apply/uninstall cannot complete on a real machine until this is decided",
+            ],
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -76,8 +93,11 @@ def verify_signature(token: dict[str, Any], keyring: Mapping[str, bytes]) -> Non
     if algorithm == PRODUCTION_ALGORITHM:
         raise AirootError(
             "PROVENANCE_FAILED",
-            "ed25519 approval verification is not implemented in P1",
-            evidence=["the protected approval issuer belongs to P2"],
+            f"ed25519 approval verification is not implemented; {ISSUER_PENDING}",
+            evidence=[
+                "the protected approval issuer is P2 (caps/acl.py observes but never writes)",
+                "a test_hmac_sha256 token proves the consumption side only",
+            ],
         )
     if algorithm != TEST_ALGORITHM:
         raise AirootError("INVALID_APPROVAL", f"unsupported signature algorithm: {algorithm}")

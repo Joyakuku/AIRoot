@@ -5228,6 +5228,116 @@ S-027 的台账理由是这样写的：
 6. 写一个点名测试跑三张面（含"声明"与"没人声明"两种形状），逐个验红；
 7. 文档三处（退出码行、D4 行、agent 面参考）+ 台账 + 计数 + 语料，跑全量 + 切片 + 两种验收模式，提交。
 
+## 67. 第 67 阶段：把"缺一个签发方"量清，并让它有出处（ADR-0024）
+
+### 67.1 这一阶段要解决什么
+
+§59 记了一条边界（`stage`/`commit` 没跑过），§65.6 pt 4 记了一条边界（只对 `fake_issuer` 造的 token 实测过），§66 又记了一条（§59 同源）。**它们是同一件事**：P1 没有生产批准签发方。
+
+每一处单独读都写得对。合起来读不出**规模**——一个读者很容易以为那只是"`ed25519` 还没实现"，也就是一个算法的事。把每一条要批准的路径逐条走一遍之后，事实是：
+
+> **这个 build 里没有任何一条"要批准才能做"的路径能在真机上走完。**
+
+这不是少一个算法，是**少一个信任根**。`state/test-keyring.json` 里的密钥就写在 root 内，任何能写这个 root 的进程都能签出"有效"token。它作为**测试**签发方完全够用——它要证的恰恰是消费侧会拒绝伪造、重放、过期、跨 root 的 token；但它**不能**升格成生产签发方，否则"批准"就退化成"任何同用户进程都能做的事"，而那正是这套设计存在的理由。
+
+所以这一阶段**不实现签发方**（那是裁决，不是实现）。它做三件事：
+
+1. **把挡住的东西量清并写下来**——不是散在三个阶段的"边界"里，而是一张表 + 一份决策简报（**ADR-0024**，状态**提案**，含三条路、各自代价与推荐）；
+2. **让两条拒绝消息说同一件事、指向同一份裁决**：今天它们分别说"没有 keyring"和"`ed25519` 未实现"，读起来像两个互不相干的缺口，而它们是同一条待裁决项的两面；
+3. **改掉三份文档里不成立的承诺**：`references/confirmation.md` 把"人工批准 `plan_hash`"列成第 3 步；`SKILL.md` 的《批准》一节告诉 Agent"没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户"；`agents/airoot.json` 的 `adopt --mode import` 通道以"approve it and run install"收尾——**三份文档都在描述一条走不通的流程**，而这个 build 里第 3、4 步没有实现。文档不能对 Agent 描述一条走不通的流程，尤其不能让它向用户这么说。
+
+### 67.2 今天到底挡住什么（实测，不是推断）
+
+每一条的失败点都是同一个 `load_keyring()`（`tx/approval.py`）**或**它的 `ed25519` 分支。只要 root 里没有测试 keyring，或 token 用的是 `ed25519`，就到此为止——**五条路径没有一条能绕过**。两类拒绝在 §67 之后都带同一句 `ISSUER_PENDING`，所以下表只列各自**不同的前半句**：
+
+| 执行点 | 到达签发方的路径 | 前半句 |
+|---|---|---|
+| `approve <plan> --token-file <t>` | `cli.py` 的 `cmd_approve` | `no approval keyring is installed` |
+| `install <plan> --token-file <t>` | `cmd_install` → `runner.commit()` → `tx/artifact.py` / `tx/simulate.py` 的 `keyring()` 回退 | 同上（同一个 `load_keyring`） |
+| `env persist <ref> --token-file <t>` | `cli.py` 的 `cmd_env_persist` | 同上 |
+| `tool gc --apply --token-file <t>` | `cmd_tool_gc` → `caps/lifecycle.py` 的 `apply_gc_plan` | 同上 |
+| `uninstall <owned-instance> --token-file <t>` | `cmd_uninstall` → `caps/lifecycle.py` 的 `apply_gc_plan` | 同上 |
+| 任何 `ed25519` token（有 keyring 也一样） | `tx/approval.py` 的 `verify_signature` 算法分支 | `ed25519 approval verification is not implemented` |
+
+全部是 `PROVENANCE_FAILED`（退出码 7）。**表里写函数名而不是行号**：行号会被任何一次无关改动作废，读者 grep 一次名字就能定位；这条取舍本身也记在 ADR-0024 里。
+
+**关键性质**：五条路径全部收敛到**同一个函数**。这让修法可以只有一处（67.3），也让"漏掉一条"这种错误不可能悄悄发生——如果将来多出第六条要批准的路径，它要么走这个函数（自动带上那句话），要么就是**绕过了批准检查**（那是另一个更严重的问题，会被批准侧测试抓到）。
+
+台账侧同样对得上：**P-012**（policy 批准没有生产者）、**P-015**（撤销那一半）、**P-017**（没有 issuer 身份证据）、**C-022**（人类批准通道）四条都是 `undesigned`。它们今天不能被判成 `evidenced`，因为要证的那件事缺少生产侧的一半。
+
+**"没跑过"与"跑不通"是两件事**：§59 已经对真实上游跑过解析 + 下载 + 摘要校验（`rustup-init.exe`，12 721 664 字节，SHA256 与上游发布值一致），`stage`/`commit` 这两步没跑过——原因就是这一条。而 `plan --dry-run` / `plan` 这两步是**能跑**的，说"整条路径不可用"同样不准确。
+
+### 67.3 修法：一个共享句子，一个指针，一处文档
+
+**一个共享句子。** `tx/approval.py` 新增模块级常量：
+
+```python
+ISSUER_PENDING = "no production approval issuer exists in this build (ADR-0024 is the pending decision)"
+```
+
+两处拒绝消息（`load_keyring` 的缺 keyring、`verify_signature` 的 `ed25519`）都带上它。**只改这两处，五条路径就都带上了**——因为它们都经过这两个函数之一。这不是"分别在五个命令里加提示"，那会把同一句话写五份，然后等着某一份漂移。
+
+**各自的前半句保留。** "没有 keyring"与"`ed25519` 未实现"要修的是不同的事（一个要装签发方，一个要落地校验），所以测试同时断言**两条消息各自不同**——把它们合并成一句会丢掉"该修哪个"这个信息。
+
+**指针必须可校验。** 新测试断言 `ISSUER_PENDING` 里写着 `ADR-0024`，**并且那份日志里真有 `## ADR-0024` 这一节**。指向一个不存在的东西比不指更糟：读者会去找，然后什么也找不到，于是"文档又过时了"变成默认预期。
+
+**一处文档。** `references/confirmation.md` 的《批准的形状》底下新增《这个 build 里第 3、4 步没有可用实现》，明说第 1、2 步**可用**、第 3、4 步**没有实现**、以及不要试图自己造 token。守卫组 19 加第七十四项检查：那份参考里必须同时出现 `--token-file`、`ISSUER_PENDING`、`ADR-0024` 与"提案"——少一个就红。
+
+**同一处缺陷还有第二、第三份文档。** 找第一处时顺手读了 Skill 入口，`SKILL.md` 的《批准》一节写着"没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户"——这句话假定**存在一条能批准它的通道**，而这个 build 里没有。它比 `confirmation.md` 更要紧：那是 Agent **每次**遇到需要批准的动作时照着做的一节。改法与参考文档相同（同一句 `ISSUER_PENDING`、同一个指针、明说"提案"），守卫加在 `test_l1_skill.py`——Skill 的漂移守卫就住在那里。
+
+再顺着"Agent 还会读哪一份"往下：`agents/airoot.json`（机器可读的通道表，按 `AGENTS.md` §2 是"问题 → 命令 → 该读哪些字段"）的 `adopt --mode import` 通道写着 `"produces an install plan (nothing is copied yet); approve it and run install…"`——**同一个缺陷的第三份**，而且它是最先被读到的一份。它的边界句必须落在**同一条 `notes` 里**，不能只是"文件里某处提过"：读者看的是那一条通道。守卫因此断言"含 `approve it and run install` 的那条 note 自己带着 `ISSUER_PENDING` 与 `ADR-0024`"。三处守卫都同时断言原文仍在，所以它们不会靠"功能被删掉"而通过。
+
+**ADR-0024 写进决策日志**（放在"尚未决策"之前），并把那份清单里的第 4 项升级成对它的交叉引用：原来那句"P1 只有 `test_hmac_sha256`，`ed25519` 校验显式未实现"读起来只像一个算法缺口。
+
+**真机验收报告也说同一句话。** `real_machine_acceptance.py --online` 在跑完 `https_artifact` 之后会打印一条边界行，本来就说"`stage`/`commit` 需要批准 token，而 P1 没有生产签发方"——§67 给它补上同一个指针。三张面（拒绝消息 / 参考文档 / 验收报告）因此都指向同一份裁决，而不是各自说一件"差不多的事"。
+
+### 67.4 红了才算数
+
+| 变异 | 方向 | 结果 |
+|---|---|---|
+| 把 `ISSUER_PENDING` 清空 | 危险 | **红**（两条消息都不再指向裁决） |
+| 从 `load_keyring` 的拒绝消息里去掉共享句 | 危险 | **红** |
+| 把 `ed25519` 分支的消息改回旧文本 | 危险 | **红** |
+| 从决策日志里删掉 `## ADR-0024` 这一节 | 危险 | **红**（指针失去目标） |
+| 从 `references/confirmation.md` 删掉那一节 | 危险 | **红**（守卫组 19 第七十四项） |
+| 从 `SKILL.md` 的《批准》一节删掉诚实段落 | 危险 | **红**（`test_l1_skill.py` 的新守卫） |
+| 从 `agents/airoot.json` 那条 `notes` 里删掉边界句 | 危险 | **红**（同文件的新守卫；注意它只认**同一条 note**） |
+| 把两种成因的消息改成同一句 | 危险 | **红**（`messages[0] != messages[1]`） |
+
+### 67.5 完成情况（回写）
+
+**本阶段已完成并验证。**
+
+| 子阶段 | 状态 | 证据 |
+|---|---|---|
+| S67.1 量清五条路径 + 两种成因 | ✅ | 67.2 的表；每一条都读过调用链（`cli.py` → `simulate`/`artifact`/`lifecycle` → `approval`） |
+| S67.2 ADR-0024（提案）+ 清单第 4 项交叉引用 | ✅ | `docs/AIROOT-v0.3-实现决策记录.md`；含挡住表、三条路、代价、推荐、明确不做 |
+| S67.3 共享句 `ISSUER_PENDING` + 两处拒绝一致 | ✅ | `tx/approval.py`；保留各自前半句，证据行改为可执行的三条 |
+| S67.4 指针可校验 | ✅ | `test_l1_transaction.py#test_both_issuer_refusals_name_the_same_pending_decision`（含 `## ADR-0024` 存在性） |
+| S67.5 参考文档、Skill 与通道表不再承诺走不通的步骤 | ✅ | `references/confirmation.md` 新增一节 + `test_l0_consistency.py#test_the_confirmation_reference_does_not_offer_a_step_this_build_cannot_perform`；`SKILL.md` 的《批准》一节原样写着"把 plan 路径与 hash 交给用户"，**同一个缺陷**，一并补上 + `test_l1_skill.py#test_the_skill_does_not_offer_an_approval_it_cannot_obtain`；`agents/airoot.json` 的 `adopt --mode import` 通道以"approve it and run install"收尾，**第三份**，边界句写进同一条 `notes` + `test_l1_skill.py#test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain` |
+| S67.6 入口文档如实指向裁决 | ✅ | `AGENTS.md` §8 那条 `ed25519` 边界升级成"挡住五条路径 + 见 ADR-0024"；§1 的 `§31`–`§67`；真机验收报告的边界行补上同一指针 |
+| S67.7 计数与语料 | ✅ | 测试 **776 → 780**；审计检查 **73 → 74**；台账计数**不变**（evidenced 53 / uncited 55）；无需重生语料（只改了文本、一条 `print` 与一条 `notes`，没有改动任何对外 JSON 形状——已用 `git diff --stat` 核对） |
+
+### 67.6 如实记录的边界
+
+1. **这一阶段不解锁任何执行点。** 措辞统一不等于问题解决：那五条路径在真机上仍然走不完，`security_mode=policy_only` 与 `enforcement=same_user_can_bypass` 一个字没改。从这一节读成"批准问题解决了"是对它的误读。
+2. **ADR-0024 是提案，不是决策。** 三条路一条都没选，本阶段也没有实现任何签发方。参考文档里"提案"二字由守卫钉住，正是为了防止文档把它说成已定。
+3. **测试签发方没动，也不允许升级成生产。** `cli/tests/fake_issuer.py` 与 `state/test-keyring.json` 原样保留；`AGENTS.md` §7 的"`test_hmac_sha256` 只允许出现在测试/模拟路径"是这一阶段的**前提**，不是可以顺手放宽的东西。
+4. **台账四条保持 `undesigned`，计数不变。** "我们讨论过它了"不是证据；裁决落地并且有生产侧可测之前，它们不改判。
+5. **只统一了这一族的拒绝消息。** `APPROVAL_REQUIRED`（没带 token）、`INVALID_APPROVAL`（签名不匹配）、`APPROVAL_EXPIRED` 等的措辞没有一起动——它们讲的是另外的成因，各自的下一步动作也不同，并进同一句话反而会掩盖它。
+6. **`ed25519` 分支的证据行提到 `caps/acl.py`**，只是说"受保护一侧今天只观测、不写入"。这不是声称 ACL 与批准共用一套机制——它们是两个都要等 P2 的东西，不是同一个东西。
+7. **没有新增 reason code、退出码或码表条目。** 两类拒绝仍然是 `PROVENANCE_FAILED`(7)；这一阶段改的是文本与文档，不是分类。
+8. **另外两份文档是"顺着调用者读"找到的，不是清单里写着的。** 这一阶段原本只点名了 `references/confirmation.md`；读到 Skill 入口发现同一个缺陷落在**更要紧**的位置（Agent 每次遇到需要批准的动作都照着那一节做），再顺着"Agent 还会读哪一份"找到**最先被读到**的 `agents/airoot.json` 通道表。这一类缺陷的判据是"**这份文档有没有让人去做一件做不到的事**"，而它天然会出现在**每一份**描述批准流程的文档里——所以下次修同类问题时，要顺着"谁会照着它做"读一遍，而不是只修被点名的那一份。
+
+### 67.7 实施顺序
+
+1. 先量：逐条走五条路径 + 两种成因，把**确切消息**抄下来（67.2 的表）——先有事实，再有说法；
+2. 读被引用的契约（核心契约 §8.5、broker 方案 §5、`AGENTS.md` §7），确认"核心只验不签"是一条**规则**而不是一处遗漏——否则下一步会写错成"补上签发"；
+3. 写 ADR-0024（提案）：**先把选项、代价与推荐写下来，再改任何代码**；
+4. 共享句 + 两处拒绝 + 指针测试（含"ADR 真的存在"），逐个验红；
+5. 改**三份**描述批准流程的文档（`references/confirmation.md` + `SKILL.md` + `agents/airoot.json`）并各加一条守卫——**先顺着"谁会照着它做"读一遍**，别只修被点名的那一份；
+6. 回写计数与三处文档（`AGENTS.md`、ADR 清单、本草案），跑全量 + 切片 + 两种验收模式，提交。
+
 
 
 

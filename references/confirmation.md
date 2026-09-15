@@ -41,6 +41,29 @@ cancel             取消
 - 需要确认时 `plan` **不写计划文件**——"还没决定"必须在文件系统上也可证明。
 - `airoot approve` 只消费批准。你不能把"我调用了 approve"解释成"用户批准了"。
 
+### 这个 build 里第 3、4 步**没有可用实现**
+
+第 1、2 步（`plan --dry-run` / `plan`）今天就能跑，且需要确认时**不写任何文件**。
+但**没有任何东西能签发 approval token**：核心只做校验，唯一实现过的签发方是测试用的
+`cli/tests/fake_issuer.py`，而 `state/test-keyring.json` 是**测试**密钥——它就写在 root 里，
+任何能写这个 root 的进程都能签，所以**不能**当生产签发方用。
+
+结果：`install --token-file`、`env persist --token-file`、`tool gc --apply --token-file`、
+`uninstall --token-file`（own 的那一支）以及 `approve --token-file` 在真机上都会返回
+`PROVENANCE_FAILED`（退出码 7），消息里带这一句：
+
+```text
+no production approval issuer exists in this build (ADR-0024 is the pending decision)
+```
+
+所以：
+
+- **不要**对用户描述"批准之后就能装"的流程而不说明这个 build 签不出批准——那会让用户以为
+  自己少做了一步；
+- **不要**试图自己造 token。伪造 token 正是消费侧要拒绝的东西，而测试 keyring 不属于生产路径；
+- 这条待裁决项写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**提案**），
+  里面列了 A/B/C 三条路、各自解锁什么、以及推荐（A 为默认）。
+
 ## 记忆（`.ai/tooling.json`）
 
 它记录"上次用户选了什么"，**不是授权凭据**。当前版本**只读**：连 AIROOT 自己都不写它
