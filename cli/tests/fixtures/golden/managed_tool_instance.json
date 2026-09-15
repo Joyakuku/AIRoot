@@ -1,0 +1,34 @@
+{
+  "architecture": "x64",
+  "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "bindings": [],
+  "capability_id": "fake-tool",
+  "created_at": "2024-01-01T00:00:00Z",
+  "entrypoints": [
+    "fake-tool.bin"
+  ],
+  "file_manifest_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "health": "healthy",
+  "install_backend_id": "fake_fixture",
+  "instance_id": "fake-tool/fake-tool/1.0.0/win-x64",
+  "kind": "managed_tool",
+  "lifecycle_status": "active",
+  "platform": "windows",
+  "schema_version": 1,
+  "source": {
+    "integrity": {
+      "artifact_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "file_manifest_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "kind": "generated_fixture",
+    "locator": "cache/fixtures/fake-tool/1.0.0",
+    "provenance": {
+      "publisher": "airoot-test",
+      "source_id": "fixture/fake-tool-v1"
+    },
+    "signature": null
+  },
+  "store_path": "store/fake-tool/fake-tool/1.0.0/win-x64",
+  "tool_id": "fake-tool",
+  "version": "1.0.0"
+}

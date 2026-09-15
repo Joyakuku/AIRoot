@@ -10,6 +10,8 @@
   "frozen_capabilities": 0,
   "invariant_catalogue": 0,
   "inventory_machine": 0,
+  "managed_tool_instance": 0,
+  "plan_fake_tool": 0,
   "reason_code_table": 0,
   "reference_plan": 0,
   "registry_with_data_root": 0,

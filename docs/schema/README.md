@@ -31,6 +31,21 @@ The schema set is intentionally split by contract so a caller can validate a sin
 | `doctor-response.schema.json` | Diagnostic result with stable remediation |
 | `gc-plan.schema.json` | Payload garbage collection plan |
 
+**Which of these does P1 actually print?** The table above says which boundary each file guards, not
+whether this build produces the document. `schema_io.validate_self` is called before any outward JSON
+is printed (AGENTS.md §7), so the names passed to it *are* the printed set — nine of the nineteen:
+`where-response`, `doctor-response`, `registry-projection`, `search-response`, `transaction`, `plan`,
+`managed-tool-instance`, `reference-plan` and `extension-envelope`. **Every one of them has a golden
+fixture**, and guard group 32 holds those two sets to exact equality in both directions (a printed
+document with no fixture has no acceptance face; a fixture for a document nothing prints is a wish).
+
+The other ten are not printed by this build: six are never named by any code at all
+(`broker-request`, `broker-response`, `common`, `desired-manifest`, `gc-plan`, `runtime-instance`) and
+four are named but not self-validated (`approval-token`, `extension-manifest`, `root-marker`,
+`search-request` — these are validated on the way *in*, or written to disk rather than printed). That
+is a fact about this slice, not a defect list: the schema set is the contract, and printing is one
+way to exercise it.
+
 Compatibility rules:
 
 1. `schema_version: 1` is the only accepted major version in this slice.

@@ -33,6 +33,8 @@ SCHEMA_FOR_FIXTURE = {
     "registry_with_data_root": "registry-projection",
     "extension_probe_envelope": "extension-envelope",
     "transaction_finalized": "transaction",
+    "plan_fake_tool": "plan",
+    "managed_tool_instance": "managed-tool-instance",
     "reference_plan": "reference-plan",
     "search_response": "search-response",
     "search_timeout_response": "search-response",

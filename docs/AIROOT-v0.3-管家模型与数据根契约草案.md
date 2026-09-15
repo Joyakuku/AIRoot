@@ -7449,3 +7449,79 @@ ticks = iter([0.0] + [10_000.0] * 64)
 4. **加完之后立刻检查 diff 是不是外科式的**，发现另外两条 fixture 的时间戳被推后 2 秒 → 把新 fixture 挪到最后；
 5. 写守卫（覆盖率 + 从字段取值表读例外）；2 个变异逐个验红，其中"去掉 †"那个是证明例外表承重的关键；
 6. 升级验收方案 §14 的句子；回写计数；跑全量 + 旧切片 + 真机验收；提交。
+## 90. 第 90 阶段：核心打印的文档与语料覆盖的文档，是两个不同的集合
+
+### 90.1 这一阶段要解决什么
+
+`AGENTS.md` §7 有一条硬规则：**核心在打印任何对外 JSON 之前调用 `schema_io.validate_self`**。于是**传给它的那些名字，就是"这个 build 真的会打印的文档"的权威定义**——不是谁的清单，是代码说的。
+
+§87–§89 把 `where`/`doctor`/`search` 的**结果字段**逐个对上了语料。这一轮换一个轴，问一个更粗也更基础的问题：
+
+> **核心打印的文档，和语料里有 fixture 的文档，是同一批吗？**
+
+### 90.2 实测：两个方向同时错
+
+把 `validate_self("<name>")` 的调用点扫出来（8 个文档），与 `SCHEMA_FOR_FIXTURE` 的值（7 个 schema）并排：
+
+| schema | 核心会打印（`validate_self`） | 语料有 fixture |
+|---|---|---|
+| `where-response` | ✅ | ✅ 8 条 |
+| `doctor-response` | ✅ | ✅ 5 条 |
+| `registry-projection` | ✅ | ✅ 2 条 |
+| `search-response` | ✅ | ✅ 4 条 |
+| `transaction` | ✅ | ✅ 1 条 |
+| `extension-envelope` | ✅ | ✅ 1 条 |
+| **`plan`** | ✅ | **❌ 一条都没有** |
+| **`managed-tool-instance`** | ✅ | **❌ 一条都没有** |
+| **`reference-plan`** | **❌（构建路径不校验）** | ✅ 1 条 |
+
+**缺的两个正是事务引擎最中心的两份文档**：`plan` 是"被批准、被执行"的那份东西，`managed-tool-instance` 是"被登记、被绑定"的那份东西。它们在 `transaction_finalized` 里**间接**出现过（journal 里带着 plan 与 instance），但**没有一份 fixture 是它们自己**——一个端口可以把 plan 的形状做错，只要那份事务语料照样能对上。
+
+**第三个是反方向的错**：`reference-plan` 有 fixture，`cli.py` 也会打印它，但**只有 `--plan-file` 那条路在加载时校验它**；`build_reference_plan` 造出来的那条路**从不自校验**——`cmd_env_persist` 直接 `_emit` 它。所以"核心打印前一定自校验"这句话在**一条真实可达的路径**上是假的（`env persist --dry-run` 与"没有 token"两条分支都会走到）。
+
+### 90.3 做了什么
+
+1. **补两个 fixture**：`plan_fake_tool`（`create_plan` 造出来的计划）与 `managed_tool_instance`（实例 payload），都在已经把这两样东西造出来的那个事务小节里登记，并在 `SCHEMA_FOR_FIXTURE` 里注册为 `plan` / `managed-tool-instance`。语料 30 → **32**。
+2. **补上缺的那个自校验**：`cmd_env_persist` 里在 if/else 之后加 `validate_self("reference-plan", plan)`——两条路（加载的与构建的）都覆盖，位置就在"这份 plan 定稿、下面要开始打印"的地方。（同时补了 `from .schema_io import validate_self`：这个函数里原本没有导入它，**这正是那条路径没校验的原因**。）
+3. **新增守卫第三十二组**：**两个集合恰好相等**，双向都查。名字列表从源码扫出来（`_?validate_self\("([^"]+)"`），不在这里重写一遍——所以"新加一个对外文档却没语料"会当场红，而"给一个没人打印的 schema 加语料"也会红。
+4. **在 schema 目录里补一句人能读的话**：`docs/schema/README.md` 的边界表说的是"这份 schema 守哪条边界"，从来没说过"这个 build 会不会打印它"。新增一段散文（**刻意不用表格**：§80 那组守卫会把 `| \`x.schema.json\` | 描述 |` 形状的每一行都当成边界行，加一行表就等于悄悄改边界表），点名**9 个会被打印的 schema**，并如实说明其余十个的处境：**六个在任何代码里连名字都没出现**（`broker-request`、`broker-response`、`common`、`desired-manifest`、`gc-plan`、`runtime-instance`），**四个被代码按名字引用但不走自校验**（`approval-token`、`extension-manifest`、`root-marker`、`search-request`——它们是**入口**校验或落盘，不是打印）。
+5. **回写计数**：测试 838 → **839**；审计检查 91 → **92**；fixture 30 → **32**。
+
+### 90.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 造的集合里多一个没人语料的文档（`ghost-response`） | 红 | ✅ 红（"自校验但没有 fixture"） |
+| 语料那头多一个没人打印的 schema（`runtime-instance`） | 红 | ✅ 红（"有 fixture 但核心从不自校验它"） |
+
+**这一组是"双向恰好相等"的第三个实例**（前面是 §83 的测试计数链、§86 的决定入口、§87 的 `where` 清单与语料）。四次的形状完全一样：**两份集合各自"看起来完整"，只有把它们并排放才看得出谁少了谁。** 而这一轮的两个方向各有一次命中——**只查一个方向的守卫会漏掉一半**。
+
+### 90.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **838 → 839**（新增 1 条） |
+| 审计检查（`test_l0_consistency.py`） | **91 → 92** |
+| golden fixture | **30 → 32**（`plan_fake_tool` / `managed_tool_instance`） |
+| 语料重生 | 是；**既有 29 个文档 fixture 逐字节不变，只有 `index.json` 变** |
+| 被修的实现 | **1 处**（`cmd_env_persist`：新增 `reference-plan` 的自校验与它缺的导入） |
+| schema / 台账 / 边界 | 19 / 108 / 均不变（**没有改任何 schema**） |
+
+### 90.6 如实记录的边界
+
+1. **"会被打印"是从 `validate_self` 的调用点推出来的，不是从 CLI 的全部输出推出来的。** 一个**没有**自校验的打印路径不会被这条规则发现——`reference-plan` 正是这样被漏掉的（这一轮修了它，但规则本身抓不到"下一处"）。真正完备的形状是"每个 `_emit` 之前都有一次自校验"，那需要在 CLI 层做数据流分析，**这一轮没做**，记在这里。
+2. **`common.schema.json` 不是文档**，是 `$defs` 片段，被别的 schema `$ref`。它落在"六个没人引用的"里，是因为扫描找的是**代码里的字符串**；这不表示它没用。
+3. **`desired-manifest` / `gc-plan` / `runtime-instance` / `broker-*` 没有生产者，不等于"设计有问题"**：`broker-*` 属 P2 的受保护 IPC，`gc-plan` 与 `runtime-instance` 属 P4/P5。它们是**已发布契约先于实现**，这正是第 1 层契约该有的样子；README 里那句只陈述事实，**没有把它们写成缺陷**。
+4. **`approval-token` 的"没有生产者"要打个折**：`cli/tests/fake_issuer.py` 会造它，真机上的生产签发方按 ADR-0025 的 D1 维持"等 P2"（见 §82）。它不在"会被打印"的集合里，因为它**不是被打印的**，是被消费的。
+5. **新增的两个 fixture 是合成的**，与其余 30 条一样：它们证"这两份文档的形状被钉住了"，不证"真机上以这种方式产生"。
+6. **这一轮没有给 `search-request` 加自校验**（它是**入口**文档，由 `build_request` 造出来后又嵌进 `search-response`；响应被自校验时是否连带校验了内嵌的请求，**这一轮没有查**）。记下来，免得下次以为是查过了。
+
+### 90.7 实施顺序
+
+1. 先找**权威定义**：不是"谁列过清单"，而是"代码在哪里说'这是我要打印的东西'"——答案是 `validate_self` 的调用点；
+2. 把两个集合并排，**两个方向都看**（这一轮两边各命中一次）；
+3. 补两个 fixture（放在已经把 plan 与 instance 造出来的那个小节里，不另起炉灶）；
+4. 修第三处：`reference-plan` 的构建路径补自校验——**并顺手发现它连导入都缺**；
+5. 写守卫（双向等集），两个变异各验一个方向；
+6. 把"哪 9 个会被打印、其余 10 个为什么不"写进 schema 目录，**用散文不用表格**（§80 的边界表解析器按行的形状取行）；
+7. 回写计数；跑全量 + 旧切片 + 真机验收；确认既有语料逐字节不变；提交。

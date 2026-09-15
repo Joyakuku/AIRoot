@@ -1077,6 +1077,7 @@ def cmd_env_list(args: argparse.Namespace, context: Context) -> tuple[dict[str, 
 def cmd_env_persist(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """Persist a reference's environment. Needs an approval token bound to the plan."""
 
+    from .schema_io import validate_self
     from .caps.exposure import (
         ExposureRequest,
         SCOPE_USER,
@@ -1106,6 +1107,12 @@ def cmd_env_persist(args: argparse.Namespace, context: Context) -> tuple[dict[st
                 request, registry=registry, clock=context.clock, plan_id=args.plan_id
             )
             external_id = target.external_id
+
+        # §90: this document is printed below, so it gets the pre-print self-check every other
+        # outward document gets (AGENTS.md §7: the core calls `validate_self` before printing any
+        # outward JSON). The `--plan-file` path already validates on load; the **built** path did not,
+        # which made `reference-plan` the one printed document this build never checked.
+        validate_self("reference-plan", plan)
 
         plan_file = _plan_path(context, str(plan["plan_id"]))
         plan_file.parent.mkdir(parents=True, exist_ok=True)

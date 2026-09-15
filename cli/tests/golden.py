@@ -328,6 +328,17 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
     token = fake_issuer.issue(plan, clock=clock, nonce="a" * 32, approval_id="approval/golden-fixture")
     tx = SimulationRunner(registry, clock=clock).commit(plan, token)
     documents["transaction_finalized"] = {"document": tx, "exit_code": 0}
+
+    # ---- the two documents the transaction engine is about (draft §90) ----- #
+    # Every document the core prints is self-validated first (`schema_io.validate_self`), and §90 found
+    # that two of the eight had **no fixture at all**: the plan — what gets approved and executed — and
+    # the managed instance payload — what gets registered and bound. They are recorded here rather than
+    # in a block of their own because this is where both already exist.
+    documents["plan_fake_tool"] = {"document": plan, "exit_code": 0}
+    documents["managed_tool_instance"] = {
+        "document": _instance("fake-tool/fake-tool/1.0.0/win-x64", digest=digest, version="1.0.0").payload,
+        "exit_code": 0,
+    }
     registry.close()
 
     # ---- steward domain: a data root plus a non-owning reference ----------- #

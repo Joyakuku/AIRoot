@@ -793,6 +793,58 @@ def test_every_search_status_has_a_fixture_or_a_written_exception() -> None:
     )
 
 
+# --- Guard group 32: printed documents and acceptance fixtures are the same set (draft §90) ------
+#
+# `schema_io.validate_self` is called before the core prints an outward document (AGENTS.md §7), so
+# the names passed to it are exactly "the documents a port must reproduce" — that set is derived from
+# the source, not restated here. Crossed with the corpus, §90 found it wrong in **both** directions:
+#
+#   * `plan` (what gets approved and executed) and `managed-tool-instance` (what gets registered and
+#     bound) are self-validated and printed, and had no fixture at all;
+#   * `reference-plan` had a fixture and was printed by `cli.py`, but the **built** path never
+#     self-validated it — only the `--plan-file` path did, on load.
+#
+# So the rule is exact equality, which is the only form that catches both.
+
+SELF_VALIDATED = re.compile(r'_?validate_self\("([^"]+)"')
+
+
+def _self_validated_schemas() -> set[str]:
+    found: set[str] = set()
+    for path in sorted(APP.rglob("*.py")):
+        found |= set(SELF_VALIDATED.findall(path.read_text(encoding="utf-8")))
+    return found
+
+
+def _printed_vs_fixture_problems(printed: set[str], covered: set[str]) -> list[str]:
+    return [f"{name} is self-validated but has no fixture" for name in sorted(printed - covered)] + [
+        f"{name} has a fixture but the core never self-validates it" for name in sorted(covered - printed)
+    ]
+
+
+def test_the_documents_the_core_prints_and_the_corpus_are_the_same_set() -> None:
+    """A printed document with no fixture has no acceptance face; a fixture with no printer is a wish."""
+
+    from test_golden import SCHEMA_FOR_FIXTURE
+
+    printed = _self_validated_schemas()
+    covered = set(SCHEMA_FOR_FIXTURE.values())
+    assert len(printed) >= 5, f"only {len(printed)} self-validated schemas found; is the scan broken?"
+    assert covered, "no fixture declares a schema"
+
+    assert _printed_vs_fixture_problems(printed, covered) == [], "; ".join(
+        _printed_vs_fixture_problems(printed, covered)
+    )
+
+    # Non-vacuity, one mutation per direction: a new printed document, and coverage that grew a wish.
+    assert _printed_vs_fixture_problems(printed | {"ghost-response"}, covered) == [
+        "ghost-response is self-validated but has no fixture"
+    ]
+    assert _printed_vs_fixture_problems(printed, covered | {"runtime-instance"}) == [
+        "runtime-instance has a fixture but the core never self-validates it"
+    ]
+
+
 def test_the_frozen_command_list_is_either_implemented_or_declared_unimplemented() -> None:
     """§15.1 lists the CLI surface; every entry must be one of the two, never neither.
 

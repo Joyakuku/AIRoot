@@ -1,0 +1,84 @@
+{
+  "canonicalization": "jcs-rfc8785-compatible",
+  "created_at": "2024-01-01T00:00:01Z",
+  "expires_at": "2024-01-01T00:05:01Z",
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "metadata": {
+    "backend": "fake_fixture",
+    "simulation": true
+  },
+  "operation": "install_tool",
+  "operations": [
+    {
+      "artifact_digest": "sha256:160c57ce8686a0f0cb2ae0a3268971a0a22092d74f0b7b2aa6c187cc1e4daee3",
+      "description": "read the deterministic simulated artifact from cache/fixtures",
+      "kind": "fetch",
+      "reversible": true,
+      "source_mutation": "none",
+      "step_id": "step/fetch",
+      "target_scope": "machine"
+    },
+    {
+      "artifact_digest": "sha256:160c57ce8686a0f0cb2ae0a3268971a0a22092d74f0b7b2aa6c187cc1e4daee3",
+      "description": "verify artifact digest and file manifest",
+      "kind": "verify",
+      "reversible": true,
+      "step_id": "step/verify",
+      "target_scope": "machine"
+    },
+    {
+      "description": "stage the payload inside tx/<id>/stage on the same volume",
+      "kind": "stage",
+      "reversible": true,
+      "step_id": "step/stage",
+      "target_scope": "machine"
+    },
+    {
+      "description": "move the verified payload into the immutable store",
+      "kind": "commit",
+      "reversible": true,
+      "step_id": "step/commit",
+      "target_scope": "machine"
+    },
+    {
+      "description": "bind the active generation and observe it",
+      "kind": "expose",
+      "reversible": true,
+      "step_id": "step/expose",
+      "target_scope": "machine"
+    }
+  ],
+  "plan_hash": "sha256:b11d9abb954661624ae0a0e103af0e21011b0996a904a9e5dba34ade0555879b",
+  "plan_id": "plan/fake-tool/1.0.0/golden-fixture",
+  "policy_revision": 1,
+  "requested_by": "airoot-cli",
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1,
+  "side_effects": [
+    "writes_store",
+    "writes_registry",
+    "derived_cache"
+  ],
+  "source": {
+    "integrity": {
+      "artifact_digest": "sha256:160c57ce8686a0f0cb2ae0a3268971a0a22092d74f0b7b2aa6c187cc1e4daee3",
+      "file_manifest_digest": "sha256:a5c13f53085909ea49c6e87878606dd7509f510c35f65cc5bd08cd4d3403c58d"
+    },
+    "kind": "generated_fixture",
+    "locator": "cache/fixtures/fake-tool/1.0.0",
+    "provenance": {
+      "publisher": "airoot-test",
+      "source_id": "fixture/fake-tool-v1"
+    },
+    "signature": null
+  },
+  "target": {
+    "architecture": "x64",
+    "binding_key": "machine/fake-tool/windows/x64",
+    "capability_id": "fake-tool",
+    "instance_id": "fake-tool/fake-tool/1.0.0/win-x64",
+    "kind": "managed_tool",
+    "platform": "windows",
+    "version": "1.0.0"
+  }
+}
