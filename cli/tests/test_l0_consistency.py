@@ -282,6 +282,177 @@ def test_every_declared_unimplemented_command_is_still_unimplemented() -> None:
     assert stale == [], f"these are implemented now and must be documented: {stale}"
 
 
+# --- Guard group 23: a deferred path states its reason and what unblocks it (draft §60) ---------
+#
+# `not_implemented` was a bare list of six command paths. The reasons existed, but scattered across
+# prose in three documents, in wording that had partly gone stale — and the agent-facing surface,
+# which is where an agent asks "why not?", said nothing at all. Draft §60 also *audited* the reasons,
+# which is a question a list cannot answer and a reason can: every one of the six was re-derived from
+# the planning document, and one of them came back wrong (see `covered-elsewhere` below).
+#
+# The categories are the point. "We have not built it" is not a reason; the three below are, because
+# each names a different thing that has to happen first — and they are the set actually in play, held
+# to exact equality by the guard. Adding a fourth because it *sounds* like a reason is what §60's own
+# audit did and then undid, so the vocabulary is not allowed to carry a member nobody is in.
+
+#: Why a command path is deferred. `needs-admin` and `needs-decision` are the two that cannot be
+#: worked around; `needs-capability` waits on a later phase.
+#:
+#: A fourth value, `covered-elsewhere` ("this verb would today be a synonym of an existing one"), was
+#: added and removed in the same round: its only member was `reconcile`, and the audit re-derived that
+#: path from 15.1 (`reconcile <manifest>`), the roadmap (P6, right after `project manifest`) and the
+#: shipped CLI (`forget` reports `project_manifest_check: not_implemented_before_p6`) and found the
+#: verb has no input it could consume. The overlap with `doctor`/`desired`/`plan` was real but was the
+#: smaller half. It is recorded in the register's `why` — the value is gone because nothing is in it.
+DEFERRAL_CATEGORIES: tuple[str, ...] = (
+    "needs-admin",
+    "needs-decision",
+    "needs-capability",
+)
+
+#: What has to happen before the path can be built. The phase spellings that the scenario ledger also
+#: uses must match it exactly (`p2-protected-state` is in both registers); the rest follow the ledger's
+#: `p<phase>-<capability>` shape so the two registers read alike. The guard below enforces the overlap
+#: rather than trusting the comments.
+DEFERRAL_UNBLOCKERS: tuple[str, ...] = (
+    "p2-protected-state",
+    "p6-project-manifest",
+    "decision",
+)
+
+
+def _deferral_problems(document: dict[str, Any]) -> list[str]:
+    """Structure of the ``deferred`` block: it must describe exactly the paths it is keyed to."""
+
+    problems: list[str] = []
+    declared = list(document.get("not_implemented", []))
+    deferred = document.get("deferred", {})
+    if not isinstance(deferred, dict):
+        return ["deferred must be an object keyed by command path"]
+
+    missing = sorted(set(declared) - set(deferred))
+    extra = sorted(set(deferred) - set(declared))
+    if missing:
+        problems.append(f"deferred paths with no stated reason: {missing}")
+    if extra:
+        problems.append(f"reasons for paths that are not declared unimplemented: {extra}")
+
+    for path, entry in sorted(deferred.items()):
+        if not isinstance(entry, dict):
+            problems.append(f"{path}: entry must be an object")
+            continue
+        if entry.get("category") not in DEFERRAL_CATEGORIES:
+            problems.append(f"{path}: category {entry.get('category')!r} is not in the vocabulary")
+        if not str(entry.get("why", "")).strip():
+            problems.append(f"{path}: no reason given")
+        if entry.get("unblocked_by") not in DEFERRAL_UNBLOCKERS:
+            problems.append(f"{path}: unblocked_by {entry.get('unblocked_by')!r} is not in the vocabulary")
+    return problems
+
+
+def test_every_deferred_command_path_states_a_reason_and_what_unblocks_it() -> None:
+    document = json.loads(AGENT_META.read_text(encoding="utf-8"))
+
+    assert _deferral_problems(document) == [], "; ".join(_deferral_problems(document))
+
+    # Non-vacuity: every failure mode this helper claims to detect must actually be reported.
+    assert _deferral_problems({**document, "deferred": {}}) , "an empty block must be reported"
+    assert _deferral_problems(
+        {**document, "deferred": {**document["deferred"], "teleport": {"category": "needs-admin", "why": "x", "unblocked_by": "p2-protected-state"}}}
+    ), "a reason for an undeclared path must be reported"
+    sample = sorted(document["deferred"])[0]
+    for mutation, expected in (
+        ({"category": "because"}, "category"),
+        ({"why": "   "}, "no reason"),
+        ({"unblocked_by": "someday"}, "unblocked_by"),
+    ):
+        broken = {**document["deferred"][sample], **mutation}
+        reported = _deferral_problems({**document, "deferred": {**document["deferred"], sample: broken}})
+        assert any(expected in item for item in reported), (mutation, reported)
+
+    # The vocabulary has to be the set actually in play — exact equality, both ways. `used <= the
+    # declared tuple` was the first version of this and it is the weaker check by exactly one
+    # direction: it catches a *misspelled* category and waves through a declared one that no path is
+    # in. That is not hypothetical here — this group's own vocabulary carried `covered-elsewhere` and
+    # `p4-real-backend` with no members until §60's audit showed the one entry filed under
+    # `covered-elsewhere` was filed wrong, and a category whose only member has just been re-derived
+    # is a word the reader will meet and be unable to find a use for.
+    used = {entry["category"] for entry in document["deferred"].values()}
+    assert used == set(DEFERRAL_CATEGORIES), (
+        f"declared categories with no deferred path in them: {sorted(set(DEFERRAL_CATEGORIES) - used)}; "
+        f"categories used but not declared: {sorted(used - set(DEFERRAL_CATEGORIES))}"
+    )
+
+    unblockers = {entry["unblocked_by"] for entry in document["deferred"].values()}
+    assert unblockers == set(DEFERRAL_UNBLOCKERS), (
+        f"declared unblockers with no deferred path waiting on them: "
+        f"{sorted(set(DEFERRAL_UNBLOCKERS) - unblockers)}; used but not declared: "
+        f"{sorted(unblockers - set(DEFERRAL_UNBLOCKERS))}"
+    )
+
+
+def test_the_two_registers_spell_a_shared_phase_the_same_way() -> None:
+    """The deferral register and the scenario ledger both name phases; a near-miss must not pass.
+
+    `p2-protected-state` is in both vocabularies, and the two lists are written by hand in different
+    files — the exact setup that produces `p2-broker` next to `p2-protected-state` and then two
+    documents that look like they are talking about different things. Exact-equality-of-shared-phases
+    is the check that can go red; "they use similar words" is not.
+
+    Only the phase prefix is compared, and only where *both* registers have that phase: P6 has no
+    ledger spelling yet, and inventing a constraint for a phase the other register has never heard of
+    would be a check with nothing to compare.
+    """
+
+    from scenario_ledger import MISSING_CAPABILITIES
+
+    ledger = {value for value in MISSING_CAPABILITIES if re.fullmatch(r"p\d+-.+", value)}
+    ledger_phases = {value.split("-", 1)[0]: value for value in ledger}
+
+    collisions: list[str] = []
+    for value in DEFERRAL_UNBLOCKERS:
+        match = re.fullmatch(r"(p\d+)-.+", value)
+        if match is None:  # `decision` is not a phase name
+            continue
+        ledger_value = ledger_phases.get(match.group(1))
+        if ledger_value is not None and ledger_value != value:
+            collisions.append(f"{value} vs the ledger's {ledger_value}")
+    assert collisions == [], f"the same phase is spelled two ways: {collisions}"
+
+    # Non-vacuity: the rule has to fire on the near-miss it exists for, and stay quiet for a phase the
+    # ledger does not know. Both directions are checked because a prefix rule that never matches
+    # anything passes for the wrong reason.
+    def _problems(unblockers: tuple[str, ...]) -> list[str]:
+        found = []
+        for value in unblockers:
+            match = re.fullmatch(r"(p\d+)-.+", value)
+            if match is None:
+                continue
+            ledger_value = ledger_phases.get(match.group(1))
+            if ledger_value is not None and ledger_value != value:
+                found.append(f"{value} vs the ledger's {ledger_value}")
+        return found
+
+    assert _problems(("p2-broker",)) , "a near-miss of a shared phase must be reported"
+    assert _problems(("p6-project-manifest",)) == [], "an unknown phase has nothing to compare against"
+
+
+def test_every_deferral_category_is_explained_in_the_entry_document() -> None:
+    """The register's vocabulary must be readable from the entry document, not only from code.
+
+    Without this, `needs-capability` would be a word an agent meets for the first time in a JSON file
+    with no explanation of what it waits for.
+    """
+
+    agents = AGENTS.read_text(encoding="utf-8")
+    for category in DEFERRAL_CATEGORIES:
+        assert category in agents, f"{category} is used by the deferral register but not explained in AGENTS.md"
+    for unblocker in DEFERRAL_UNBLOCKERS:
+        assert unblocker in agents or unblocker in DRAFT.read_text(encoding="utf-8"), (
+            f"{unblocker} is used as an unblocker but named nowhere a reader can find it"
+        )
+
+
 def test_every_reason_code_the_search_protocol_lists_is_registered() -> None:
     """The protocol document is a specification, not a wish list: its code families must exist.
 
@@ -1392,6 +1563,15 @@ def test_the_shared_spellings_between_vocabularies_are_the_known_ones() -> None:
 REVIEW_STATUS_HEADING = "## P1 实现状态"
 REVIEW_FALSE_CLAIMS = {
     "SKILL.md": "不是可安装 Skill",
+    # §60 found the same rot in two more rows of that section while editing the counts around them:
+    # `caps/acl.py` had been read-only-observing data roots since §58, and §59 had really fetched
+    # 12 721 664 bytes from `static.rust-lang.org` — both still described as absent. The ACL entry is
+    # the strong form (the artifact is the observation). The second is weaker and says so: the artifact
+    # proves the code path exists, while the *run* is a recorded observation, so the phrase banned is
+    # only the flat claim that it never happened. A guard that could not go red is not a guard, but a
+    # guard that pretends to verify a network run would be the dishonest kind of green.
+    "cli/app/airoot/caps/acl.py": "ACL 基线（`DATA_ROOT_ACL_DRIFT` 的发射）",
+    "cli/tests/real_machine_acceptance.py": "尚未对真实上游执行过",
 }
 
 

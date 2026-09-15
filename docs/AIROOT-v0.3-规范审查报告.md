@@ -169,7 +169,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 **本节随实现推进而更新：它描述的是当前状态，不是写入时的快照。** 前文（§「已生成的实现前基线」及以上）
 是审查当时的记录，其中的计数按当时为准。
 
-**当前规模**：`cli/schema/` **19** 个 JSON Schema；`pytest cli/tests` **756 项**（含 **70** 项常驻跨工件
+**当前规模**：`cli/schema/` **19** 个 JSON Schema；`pytest cli/tests` **759 项**（含 **73** 项常驻跨工件
 一致性审计 `cli/tests/test_l0_consistency.py`）；golden 语料 **27** 个 fixture
 （`cli/tests/fixtures/golden/`，Rust 版逐字节验收面）；两份契约文档合计定义 **108 个场景编号**，
 台账见 `cli/tests/fixtures/golden/scenario_ledger.json`；决定拒绝的每个数值（搜索上限三件套、
@@ -189,7 +189,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 | **管家域步骤 1–9、11–12**：数据根注册（可跨卷）、只读 PE 静态探测、能力白名单发现、`adopt --mode reference`、依赖分流与确认、会话级环境激活、**user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、删除语义分级、能力边界、`rebuild`、来源清单、`desired` 层与 `tool pin`、只读观察面、session 快照栈 | `cli\app\airoot\caps\`、`policy\{discovery-whitelist,sources,selection-policy,capabilities}.json` |
 | **`search` 协议面与 crawl 建的持久索引**（**不是** USN 索引）：请求/实现上限/root 规则/cursor 绑定索引 generation、有界 crawl、`cache\search\index.db` 整文件原子替换、索引状态接进 D7、**只读** USN 能力探测 | `cli\app\airoot\caps\{search,searchindex,usn}.py`、`policy\search-policy.json` |
 | **Skill 适配层**：`SKILL.md` 是仓库根的唯一 Skill 入口，另有机器可读调用元数据与按需参考 | `SKILL.md`、`agents\airoot.json`、`references\` |
-| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**756 项**）、`cli\tests\fixtures\golden\`（**27 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
+| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**759 项**）、`cli\tests\fixtures\golden\`（**27 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
 
 **P1 退出条件已验证**：
 
@@ -219,11 +219,25 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 - broker bootstrap、human approval 通道仍缺（属 P2）：目前只有测试用 `test_hmac_sha256` issuer，
   `ed25519` 校验显式未实现；
 - 第 7 条（`machine_id`/`session_id`/`project_id` 生成算法）**刻意未发明**：只接受夹具注入或显式入参；
-- **machine 级**环境变量持久化、ACL 基线（`DATA_ROOT_ACL_DRIFT` 的发射）、machine PATH 写入、
-  `exposure\bin` launcher：均属 P2；
-- **真实 artifact 的下载与验证**：机制（`https_artifact` + 上游校验和）已通，尚未对真实上游执行过；
+- **machine 级**环境变量持久化、machine PATH 写入、`exposure\bin` launcher：均属 P2；
+- **ACL 的写一侧**（把基线**强加**回目录，`WRITE_DAC` + broker）：属 P2。**读一侧已交付**（§58）：
+  `cli\app\airoot\caps\acl.py` 只读 owner/DACL（`ctypes`，无需提权、无新依赖），`doctor` 在数据根基线
+  漂移时发射 `DATA_ROOT_ACL_DRIFT`。ADR-0023 定下语义：基线是**观测**，所以"漂移"意为"与我们记录的不同"
+  而不是"你违反了某条要求的 ACL"，`remediation=repair` 是**重新记录基线**，不是"把 ACL 恢复回去"
+  （那会撤销一次用户有意做出的更改）；
+- **真实 artifact 的下载与验证**：**已对真实上游执行过一次**（§59，证据是 `real_machine_acceptance.py
+  --online` 的输出：`static.rust-lang.org` 的 `rustup-init.exe` **12 721 664 字节**，SHA256 与上游发布的
+  校验和一致）。这是**一次记录下来的实测**而不是常驻检查——网络不进 `pytest`（套件必须自足），
+  不传 `--online` 时脚本**自报 not run**。`stage`/`commit` **没跑过**，因为 P1 没有生产批准签发方；
 - `file_search` 的 **USN 常驻索引器**：属 P2（初始全量枚举需要 broker）；协议面与受控 crawl 已可用；
-- `reconcile`、`path backup|restore`、`root adopt|relocate`：已按命令路径登记为未实现；
+- `reconcile`、`path backup|restore`、`root adopt|relocate`：已按命令路径登记为未实现，并且
+  **每条都写明了"为什么"与"什么才能解锁它"**——`agents\airoot.json` 的 `deferred` 分三类
+  （`needs-admin` / `needs-decision` / `needs-capability`），由守卫第二十三组与 `AGENTS.md` §8
+  双向绑住（草案 §60）。其中 `reconcile` 是**审计改判过的那一条**：它先被记成"内容已被别的动词覆盖、
+  今天会是同义词"，重新推导后改判为 `needs-capability`——规划把它定成 `reconcile <manifest>`、
+  排在 P6 的 `project manifest` 之后，而 CLI 自己也这么说（`forget` 的输出里有
+  `project_manifest_check: "not_implemented_before_p6"`）。它与 `doctor`/`desired`/`plan` 的重叠是真的，
+  但那是这个命令较小的一半；第四类 `covered-elsewhere` 因此**在发明它的同一轮里被删掉**，因为不再有成员；
 - `.ai/tooling.json` 的写入。
 - **108 个场景编号里有 63 个没有任何测试点名**（台账 `scenario_ledger.json` 逐条给出结构性理由：
   10 个需要 P2 受保护状态、7 个需要 P4 真实 artifact、8 个依赖尚未设计的能力、37 个由某个测试覆盖

@@ -261,6 +261,38 @@
     "root adopt",
     "root relocate"
   ],
+  "deferred": {
+    "bootstrap": {
+      "category": "needs-admin",
+      "why": "The planning document lists it as a core command with no body (15.1) and makes it the precondition for Protected machine mode (8.1: an elevated broker must not trust user-writable Skill code). A real bootstrap creates the root marker and the ACL layout, and that is protected state. The other half of what the name carries -- the 9.8 re-entry sweep (read marker and generation, scan AIROOT's own directories, collect external candidates, report classifications, plan only what the user picked) -- is today's doctor + discover + plan, so no part of it survives as a plain file write either.",
+      "unblocked_by": "p2-protected-state"
+    },
+    "reconcile": {
+      "category": "needs-capability",
+      "why": "Draft 60 first filed this as 'covered-elsewhere' on the reading that its content is already doctor (re-observation drift) + desired evaluation + plan, and the audit found that reading wrong. 15.1 defines it as 'reconcile <manifest>', the roadmap puts it in P6 directly after project manifest and project binding (19), and the shipped CLI already says as much: forget reports project_manifest_check='not_implemented_before_p6' (the same rule 15.5 states for unadopt: a reference still used by a project manifest must not be released). Nothing in P1 produces or reads a project manifest, so the verb has no input it could honestly consume. The overlap with doctor/desired/plan is real, but it is the smaller half of the command -- recorded here instead of being used as the category.",
+      "unblocked_by": "p6-project-manifest"
+    },
+    "path backup": {
+      "category": "needs-admin",
+      "why": "The planning document lists it in P2's deliverables next to the ACL baseline, the single machine PATH entry and the elevated broker (19), and it exists to precede a machine PATH change. Recording the current PATH read-only is not the semantics the command is defined by; shipping a read-only verb under this name would make the real one look done.",
+      "unblocked_by": "p2-protected-state"
+    },
+    "path restore": {
+      "category": "needs-admin",
+      "why": "Restoring PATH is a machine PATH write, which needs the broker. The loose-first direction (ADR-0021) does not reach this one: a restore is not a read, so there is no weaker form of it to ship.",
+      "unblocked_by": "p2-protected-state"
+    },
+    "root adopt": {
+      "category": "needs-decision",
+      "why": "Its checks are partly written down (8.1.1 and 15.5: root marker, volume identity, protocol/schema, registry integrity) but what its name promises is not. The copy/verify/switch rules are named once -- 8.1.1 says root relocate uses the same copy/verify/switch rules, and that a copied directory is not automatically a new root -- and specified nowhere. 8.1.1 then offers adopt as one of two answers to an identity mismatch, the other being restore-from-backup, so what an adopted root *means* is an operator decision before it is code.",
+      "unblocked_by": "decision"
+    },
+    "root relocate": {
+      "category": "needs-admin",
+      "why": "15.5 defines it as migrating the whole AIROOT\\cli data root: establish the new root marker, copy and verify the persistent data, then switch the active root. The switch moves the machine PATH entry, and the frozen contract allows exactly one AIROOT entry there (AGENTS.md, section 5, item 8). A directory copy cannot do that, so it is a protected commit.",
+      "unblocked_by": "p2-protected-state"
+    }
+  },
   "honesty": {
     "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
     "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",
