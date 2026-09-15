@@ -79,7 +79,9 @@ def test_every_schema_file_is_referenced_somewhere_outside_itself() -> None:
         REPO / "docs" / "AIROOT-v0.3-实现决策记录.md",
     ]
     corpus = "\n".join(path.read_text(encoding="utf-8") for path in documents)
-    unreferenced = sorted(name for name in schema_names() if name not in corpus)
+    unreferenced = sorted(
+        name for name in schema_names() if not names_token(corpus, name, word="A-Za-z0-9_-")
+    )
     assert unreferenced == [], f"schemas never mentioned in the docs: {unreferenced}"
 
 
@@ -114,10 +116,25 @@ def test_the_reason_code_table_documents_every_registered_code() -> None:
     assert missing == [], f"registered but undocumented reason codes: {missing}"
 
 
-def names_code(text: str, code: str) -> bool:
-    """True when `code` appears as itself, not as part of a longer code."""
+def names_token(text: str, token: str, *, word: str = "A-Za-z0-9_") -> bool:
+    """True when `token` appears as itself, not as part of a longer word.
 
-    return re.search(r"(?<![A-Z0-9_])" + re.escape(code) + r"(?![A-Z0-9_])", text) is not None
+    §76: this is the one place a vocabulary check may ask "is it named here?". The old spelling in
+    several guards was `token in text` or `token\\b`, and both are wrong in the same direction: the
+    first because `DEGRADED` lives inside `CURRENT_SOURCE_DEGRADED`, the second because `\\b` only
+    guards one side — `telescope` satisfied `scope\\b`, so a command could be "documented" by a word
+    that merely ends with its name.
+    """
+
+    return (
+        re.search(r"(?<![" + word + r"])" + re.escape(token) + r"(?![" + word + r"])", text) is not None
+    )
+
+
+def names_code(text: str, code: str) -> bool:
+    """Reason codes are single tokens: a lowercase or hyphen continuation means a longer word."""
+
+    return names_token(text, code)
 
 
 def test_the_reason_code_table_invents_nothing() -> None:
@@ -280,11 +297,97 @@ def test_every_implemented_command_is_named_in_the_documentation() -> None:
     corpus = "\n".join(path.read_text(encoding="utf-8") for path in documents)
 
     undocumented = sorted(
-        entry
-        for entry in implemented_commands()
-        if not re.search(r"(?:airoot\s+)?" + re.escape(entry) + r"\b", corpus)
+        entry for entry in implemented_commands() if not names_token(corpus, entry, word="A-Za-z0-9_-")
     )
     assert undocumented == [], f"implemented commands nobody documented: {undocumented}"
+
+
+def test_the_vocabulary_helper_rejects_a_name_nested_in_a_longer_word() -> None:
+    """§76: the helper above is the only thing standing between a vocabulary and a false pass.
+
+    The negative cases cover **both** directions, which the first version of this test did not: it
+    only nested the name at the *end* of a longer word (`telescope`, `checklist`), so a helper that
+    had lost its trailing boundary — the one that catches `scopes` and `listings` — still passed.
+    The mutation that dropped that boundary is how the gap was found (see §76 of the draft).
+    """
+
+    assert not names_token("a telescope is not a command", "scope")
+    assert not names_token("telescope", "scope", word="A-Za-z0-9_-")
+    assert not names_token("scopes are a different word", "scope", word="A-Za-z0-9_-")
+    assert not names_token("checklist", "list", word="A-Za-z0-9_-")
+    assert not names_token("listings", "list", word="A-Za-z0-9_-")
+    assert not names_token("CURRENT_SOURCE_DEGRADED", "DEGRADED")
+    assert not names_token("DEGRADED_SOMETHING", "DEGRADED")
+    assert not names_token("needs-capability", "capability", word="A-Za-z0-9_-")
+
+    assert names_token("run `airoot scope decide java`", "scope", word="A-Za-z0-9_-")
+    assert names_token("`DEGRADED` is a code", "DEGRADED")
+    assert names_token("data-root add D:\\env", "add", word="A-Za-z0-9_-")
+
+
+#: Names in this module that hold *document text*. A membership test of a variable against one of
+#: these is a substring check on prose, which is exactly what `names_token` exists to replace.
+DOCUMENT_NAMES = frozenset(
+    {"text", "agents", "corpus", "body", "skill_text", "draft_text", "prose", "document_text"}
+)
+
+
+def test_the_audit_module_asks_vocabulary_questions_through_the_helper() -> None:
+    """§76: pinning the helper is not enough — a guard can quietly stop using it.
+
+    Both idioms that produced §75 and §76 are visible in the module's own syntax, so this reads the
+    module's AST rather than trusting a reviewer to notice a reverted line: a *variable* membership
+    test against a document (`code not in text`), and a `re.search` whose pattern carries a
+    one-sided `\\b`. Literal phrase checks (`"--token-file" in text`) are deliberately allowed — they
+    ask "is this block still about that thing?", not "is this vocabulary documented?".
+    """
+
+    import ast
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+            for operand in [node.left, *node.comparators]:
+                if isinstance(operand, ast.Name) and operand.id in DOCUMENT_NAMES:
+                    other = node.comparators[0] if operand is node.left else node.left
+                    if isinstance(other, ast.Name):
+                        offenders.append(ast.unparse(node))
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "search"
+            and node.args
+        ):
+            literal = node.args[0]
+            pieces = [
+                item.value
+                for item in ast.walk(literal)
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            ]
+            if any("\\b" in piece for piece in pieces) and not any("(?<!" in piece for piece in pieces):
+                offenders.append(ast.unparse(node)[:90])
+    offenders = sorted(set(offenders) - SUBSTRING_CHECKS_ARE_FINE)
+    assert offenders == [], (
+        "these vocabulary checks bypass names_token (use it, or explain why a substring is the "
+        "right question): " + "; ".join(offenders)
+    )
+
+
+#: `variable in document` checks that are deliberately **not** about a vocabulary token, so a plain
+#: substring is the right question. Each needs a reason; a new one has to be added here on purpose.
+SUBSTRING_CHECKS_ARE_FINE = frozenset(
+    {
+        # A whole-sentence honesty claim: the question is "is this sentence present?", and a longer
+        # string cannot make a shorter sentence look present by accident.
+        "ISSUER_PENDING in text",
+        # Section headings and their neighbours: `heading in text` asks "did this section survive?",
+        # and headings are full phrases, not names.
+        "REVIEW_STATUS_HEADING in text",
+        "following in text",
+        "heading in text",
+    }
+)
 
 
 def test_every_declared_unimplemented_command_is_still_unimplemented() -> None:
@@ -458,11 +561,13 @@ def test_every_deferral_category_is_explained_in_the_entry_document() -> None:
 
     agents = AGENTS.read_text(encoding="utf-8")
     for category in DEFERRAL_CATEGORIES:
-        assert category in agents, f"{category} is used by the deferral register but not explained in AGENTS.md"
-    for unblocker in DEFERRAL_UNBLOCKERS:
-        assert unblocker in agents or unblocker in DRAFT.read_text(encoding="utf-8"), (
-            f"{unblocker} is used as an unblocker but named nowhere a reader can find it"
+        assert names_token(agents, category, word="A-Za-z0-9_-"), (
+            f"{category} is used by the deferral register but not explained in AGENTS.md"
         )
+    for unblocker in DEFERRAL_UNBLOCKERS:
+        assert names_token(agents, unblocker, word="A-Za-z0-9_-") or names_token(
+            DRAFT.read_text(encoding="utf-8"), unblocker, word="A-Za-z0-9_-"
+        ), f"{unblocker} is used as an unblocker but named nowhere a reader can find it"
 
 
 def test_every_reason_code_the_search_protocol_lists_is_registered() -> None:

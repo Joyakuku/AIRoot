@@ -6147,4 +6147,75 @@ AssertionError: codes an agent can see but cannot look up: ['DEGRADED']
 4. 写 4 条守卫；对 **6 个变异**逐个验红，其中一个是"让实现开始写一个被标 † 的码"；
 5. 回写 `AGENTS.md` 与审查报告的计数；跑全量 + 旧切片 + 两种验收模式；确认 golden 语料未动；提交。
 
+## 76. 第 76 阶段：守卫问"这个词被写下来了吗"时用的是子串——这一轮轮到守卫自己
+
+### 76.1 这一阶段要解决什么
+
+§75 修的是**一条**守卫（reason code 的子串匹配）。这一轮的问题是它上面一层：**同一种写法在审计模块里还有几处？** 判据可以写成一句话：
+
+> 凡是"某个**词表项**（命令名、类别、解锁词、码、schema 名）有没有出现在某份文档里"的问题，都必须**按词**问；"某段话/某个标题还在不在"才是子串的问题。
+
+### 76.2 实测
+
+**发现一：命令守卫只有一个边界。** `test_every_implemented_command_is_named_in_the_documentation` 用的模式是 `re.escape(entry) + r"\b"`——`\b` 只管**右**边。于是 `scope\b` 会被 `telescope` 满足、`list\b` 会被 `checklist` 满足。而命令名恰恰是最短的那类词（`add` / `list` / `plan` / `scope` / `check`），"某个更长的词以命令名结尾"在七份文档的合并语料里根本不是稀奇事。
+
+**发现二：分流类别守卫用的是裸子串。** `test_every_deferral_category_is_explained_in_the_entry_document` 里是 `category in agents` 与 `unblocker in agents`。这一组词汇天然互相嵌套：`needs-capability` ⊃ `capability`、`needs-admin` ⊃ `admin`、`needs-decision` ⊃ `decision`。
+
+**发现三：schema 提及守卫也是子串。** `name not in corpus`，而 schema 名（`plan` / `common` / `transaction` / `where-response`）同样是短词。
+
+**发现四（量过才知道）：一个猜疑被量掉了。** 由发现二我推出"解锁词 `decision` 一直靠 `needs-decision` 冒充被解释过"。把 AGENTS.md 里那一处 `decision` 改掉之后实测：
+
+```text
+old check `'decision' in agents`          -> True
+new check names_token(agents, 'decision') -> True
+```
+
+两种问法都仍然是 True——因为 AGENTS.md 里 `decision` **本来就作为独立的词**出现在别处。所以这一条**不是**缺陷。它被写进这一轮的记录，是因为"以为找到的缺陷"和"找到的缺陷"要一样如实：变异脚本里留着那两行输出，而不是把它删掉。
+
+### 76.3 做了什么
+
+1. **把 §75 的 `names_code` 提升成通用的 `names_token(text, token, *, word="A-Za-z0-9_")`**：两侧都不许是词内字符。`names_code` 保留为它的一个具名用法（码是单一 token），命令名/类别/schema 名传 `word="A-Za-z0-9_-"`（它们自己带连字符）。
+2. **三条守卫改用它**：命令提及（发现一）、分流类别与解锁词（发现二）、schema 提及（发现三）。
+3. **新增两条守卫**：
+   - `test_the_vocabulary_helper_rejects_a_name_nested_in_a_longer_word`：**两个方向**都钉——前缀嵌套（`telescope` / `checklist`）与后缀嵌套（`scopes` / `listings`），再加三个"确实提到"的正例。**第一版只写了前缀那一侧**，是这一轮的变异（把 helper 的右边界删掉）让它绿着通过，才发现漏了一个方向——这条测试的 docstring 把这个过程写下来了。
+   - `test_the_audit_module_asks_vocabulary_questions_through_the_helper`：**读自己的 AST**。两种形状必须要么改用它、要么进白名单并写出理由：`变量 in 文档名`（子串查词表）与带单边 `\b` 的 `re.search`。常量对文档的查询（`"--token-file" in text`）**故意不受限**——那问的是"这一段还在不在讲那件事"。
+4. **白名单 `SUBSTRING_CHECKS_ARE_FINE`（4 条，各带理由）**：三条是标题/相邻行（`heading` / `following` / `REVIEW_STATUS_HEADING`），一条是整句诚实声明（`ISSUER_PENDING`）。它们是"整句存在性"，子串正是对的问题。
+
+### 76.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| helper 去掉**左**边界 | 红 | ✅ 红 |
+| helper 去掉**右**边界（第一版测试漏掉的方向） | 红 | ✅ 红 |
+| **命令守卫改回单边 `\b`**（AST 那条守卫要抓的就是这个） | 红 | ✅ 红 |
+| ~~AGENTS.md 不再把 `decision` 写成解锁词~~ | ~~红~~ | ⛔ **不成立**（发现四：两种问法都仍然 True，因为 `decision` 在别处独立出现） |
+
+第三个变异是这一轮的重点：它证明"守卫有没有走 helper"这件事**本身**是钉住的，靠的不是评审者记得，而是 AST。
+
+### 76.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **808 → 809** |
+| 审计检查（`test_l0_consistency.py` 的 `^def test_`） | 75 → **76**（这一轮**新增了一条**审计函数——前两轮都只是改，所以这是本系列里这个数字第一次变大） |
+| 场景台账 / schema | 108 / 19 **不变** |
+| golden 语料 | **未重生**（没动对外 JSON 形状） |
+| `AGENTS.md` / 审查报告计数 | 同一提交更新 |
+
+### 76.6 如实记录的边界
+
+1. **AST 那条守卫检查的是语法形状，不是"问得对不对"。** 把 `code not in text` 写成 `text.find(code) >= 0`（同样是子串）就绕过去了；`.count()`、`in` 套一层临时变量也一样。它挡的是**这一模块历史上真的出现过的那两种写法**，不是所有子串写法——要挡全部得写 lint 规则集，这一轮不做，写在这里。
+2. **白名单是理由制的，进了白名单就不再被检查。** 与本项目其它白名单一致：它的价值是"新增一条必须是有意的"，不是"这一条是对的"。
+3. **`word` 的字符集是逐处传的，传错会静默改变松紧。** 给 `where-response` 用默认集时 `.` 之后算边界（正好是对的）；给 `plan` 用默认集则 `plan-x` 也会被算成"提到过 `plan`"。这是**判断**，没有从数据里推导出来。
+4. **这一轮没有把审计模块里其它上百处 `in text` 都改成 helper。** 它们查的是整句/整标题/整段（"那句诚实声明还在吗"），子串是对的问题。只把**变量对文档**的查询挑出来——这条界线是本轮的核心判断，写在守卫的 docstring 里。
+5. **`names_token` 只回答"是不是作为独立的词出现"**，不回答"用法对不对"：把 `DEGRADED` 讲成"坏了"的文档照样通过（与 §74/§75 同一条边界）。
+
+### 76.7 实施顺序
+
+1. 先把 §75 的教训归纳成一句判据（**词表项按词问**），再拿这句话去找同一写法的其它实例；
+2. 量出三处守卫 + 一个"以为有、量了没有"的猜疑（发现四）；
+3. 修 helper（两侧边界）与三条守卫；写两条守卫（一条钉 helper 的两个方向，一条读 AST 钉"必须走它"）；
+4. **3 个变异逐个验红**，其中一个是"把守卫改回旧写法"——只有 AST 那条能抓到它；被否掉的猜疑也跑一遍并记下来；
+5. 回写计数（含审计检查 75 → 76）、跑全量 + 旧切片 + 两种验收模式、确认 golden 语料未动、提交。
+
 
