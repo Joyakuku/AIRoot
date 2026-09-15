@@ -338,6 +338,16 @@
       "unblocked_by": null
     }
   },
+  "unmapped_verbs": {
+    "scope": {
+      "why_not_mapped": "`scope decide` is the routing decision surfaced on its own; the command map's `plan` row already routes *and* plans (`--scope`/`--target`/`--dry-run`), so teaching both would present one decision twice. Its lane stays because it answers without producing a plan.",
+      "unblocked_by": null
+    },
+    "uninstall": {
+      "why_not_mapped": "It is `tool retire` + `tool gc` in one verb (`retire then collect an owned payload, needs approval`). The map teaches those two graded steps on purpose: retiring clears the binding, collecting is what deletes, and the gate sits at `tool gc --apply` -- one verb would hide the grading. The composed path also needs a token this build cannot mint (ADR-0024).",
+      "unblocked_by": null
+    }
+  },
   "honesty": {
     "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
     "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",

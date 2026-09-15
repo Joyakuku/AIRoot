@@ -38,7 +38,9 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（这个 build 签不出 token：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
+| "这个目录（D:\env 之类）交给 AIROOT 看着" | `airoot data-root add <path> --id <data_root_id> --role <runtime\|tool\|mixed> --json` | **注册不写任何文件**（`files_touched` 是 0）；这是管家域的第一步：没有数据根，`discover`/`adopt` 无事可做 |
 | "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件 |
+| "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（这个 build 签不出 token：见《批准》） | **没有 token 就不要写**；不发明 `--force` |

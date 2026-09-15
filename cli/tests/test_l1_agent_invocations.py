@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 
 from airoot.cli import build_parser
 
@@ -106,3 +107,76 @@ def test_every_verb_is_either_a_lane_or_explained() -> None:
         assert entry["unblocked_by"] is None or entry["unblocked_by"] in unblockers, (
             f"{verb}: unblocked_by must be one of the deferral register's words ({sorted(unblockers)}) or null"
         )
+
+
+# --- Guard group: the entry document's *instruction* surface (draft §81) -----------------------
+#
+# `SKILL.md` is where an agent learns what to run. Two places in it *instruct*: the command-map
+# table and the always-first block. §81 measured that all three surfaces could disagree without
+# anything noticing — `data-root add` (the steward domain's first step) had a lane but was taught
+# nowhere, and every lane verb was one prose edit away from the same fate.
+
+SKILL = REPO / "SKILL.md"
+UNBLOCKED_MEANS_BLOCKED = "unblocked_by"
+
+
+def taught_verbs() -> set[str]:
+    """The verbs SKILL.md tells an agent to *run*: command-map rows plus the always-first block.
+
+    Prose is deliberately excluded. §81 measured the difference: `approve`, `bootstrap` and
+    `reconcile` appear in SKILL.md only in sentences about what a command does *not* do or is not
+    available for, and treating those mentions as instructions would make this guard demand a lane
+    for a blocked verb.
+    """
+
+    text = SKILL.read_text(encoding="utf-8")
+    first_step = text.split("## 第一步永远是确认状态", 1)[1].split("\n## ", 1)[0]
+    rows = "\n".join(line for line in text.splitlines() if line.startswith("|") and "airoot " in line)
+    return {
+        verb
+        for chunk in (first_step, rows)
+        for verb in re.findall(r"airoot ([a-z][a-z-]*)", chunk)
+    }
+
+
+def test_every_lane_verb_is_taught_or_recorded_as_unmapped() -> None:
+    """A lane the entry document never mentions is a question an agent cannot reach."""
+
+    document = metadata()
+    lanes = {entry["command"][0] for entry in document["invocation"]}
+    unmapped = document["unmapped_verbs"]
+    taught = taught_verbs()
+
+    assert sorted(lanes - taught - set(unmapped)) == [], (
+        "these verbs have lanes but the command map never teaches them: %s"
+        % sorted(lanes - taught - set(unmapped))
+    )
+    assert sorted(set(unmapped) - (lanes - taught)) == [], (
+        "these are recorded as unmapped but either are taught or have no lane: %s"
+        % sorted(set(unmapped) - (lanes - taught))
+    )
+    for verb, entry in sorted(unmapped.items()):
+        assert len(entry["why_not_mapped"]) > 40, f"{verb}: the reason is a placeholder"
+
+
+def test_nothing_is_taught_that_the_metadata_cannot_account_for() -> None:
+    """An instruction has to resolve: it names a real verb, and one the metadata has a story for."""
+
+    parser = build_parser()
+    document = metadata()
+    every = set(_subcommands(parser))
+    lanes = {entry["command"][0] for entry in document["invocation"]}
+    taught = taught_verbs()
+
+    assert sorted(taught - every) == [], "SKILL.md tells an agent to run verbs that do not exist: %s" % sorted(
+        taught - every
+    )
+    assert sorted(taught - lanes - set(document["uncovered_verbs"])) == [], (
+        "these are taught as instructions but have no lane and no explanation: %s"
+        % sorted(taught - lanes - set(document["uncovered_verbs"]))
+    )
+    blocked = {verb for verb, entry in document["uncovered_verbs"].items() if entry["unblocked_by"] is not None}
+    assert sorted(taught & blocked) == [], (
+        "the metadata says these cannot be completed, so the map must not teach them: %s"
+        % sorted(taught & blocked)
+    )
