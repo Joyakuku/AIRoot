@@ -30,6 +30,9 @@ SKILL = REPO / "SKILL.md"
 AGENTS = REPO / "agents" / "airoot.json"
 REFERENCES = REPO / "references"
 
+#: The marker `references/field-values.md` uses for "no writer in this build writes this value".
+DAGGER = "\u2020"
+
 # Every verb that may appear as `airoot <verb>` in the Skill text. Derived from the parser at
 # test time, so a removed command fails here instead of misleading an agent later.
 def known_verbs() -> set[str]:
@@ -343,8 +346,22 @@ def test_the_entry_document_marks_the_commands_it_cannot_complete() -> None:
 
 
 def test_the_reference_set_is_present() -> None:
-    for name in ("reason-codes.md", "confirmation.md"):
+    for name in ("reason-codes.md", "confirmation.md", "field-values.md"):
         assert (REFERENCES / name).is_file(), f"missing on-demand reference: {name}"
+
+
+def test_the_skill_points_at_the_field_value_table_it_now_depends_on() -> None:
+    """§74: `references/field-values.md` is only on-demand if the entry document says when to open it.
+
+    Measured before §74: 58 enums across the schemas, 14 of them with no agent-facing document at
+    all — an agent could read `verification`/`source_kind`/`value_kind` and have nowhere to look.
+    A reference nobody is told to open is a file, not a reference.
+    """
+
+    text = skill_text()
+    assert "references/field-values.md" in text
+    assert DAGGER in text, "the entry document has to explain what a daggered value means"
+    assert "三套 `scope`" in text
 
 
 def test_the_skill_explains_the_zone_vocabulary_its_responses_carry() -> None:

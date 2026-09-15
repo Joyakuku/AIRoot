@@ -160,6 +160,20 @@ airoot root adopt|relocate   # 需要完整的 copy/verify/switch 规则
   AIROOT（`--json`、`--root` 写在外部引用 id 之后也会被正确识别）。子进程非零退出不会污染
   AIROOT 自己的退出码——它会以 `CHILD_PROCESS_FAILED`（退出码 2）返回，真实状态在 `exit_status`。
 
+## 看到不认识的取值（详见 references/field-values.md）
+
+输出里的每个取值都应该能念出来。**念不出来就去查 `references/field-values.md`**——它按 schema 列出每个
+字段的全部合法取值，并标出**这一版真的会写出来的是哪些**：
+
+- 表里带 **†** 的值表示**这一版没有任何代码会写它**（合法、能通过校验，但你在真机上不会遇到）。
+  遇到 † 的值**不要为它写分支**：那说明有人在手写 JSON，或者版本已经变了——去核对，不要猜。
+- `null` 只在 `含义` 里解释（空值不是字符串，不参与 † 的判定）。
+- **三套 `scope` 不要混**：绑定的 `system|machine|session|project`、环境变量持久化的 `user|machine`、
+  依赖分流的 `project|data-root`。拼写相同，意思不同，看它出现在哪个字段里。
+
+取值**域**的权威是 `cli/schema/*.schema.json`（这张表逐行从 schema 解析出来，一致性由
+`cli/tests/test_l1_field_values.py` 守着）；取值**语义**的权威是核心契约。
+
 ## 退出码（详见 references/reason-codes.md）
 
 ```text

@@ -5880,14 +5880,161 @@ argument command: invalid choice: 'effective'
 5. 教词汇（两个方向）、注册字段、两个面互相钉住、条数接到现实；
 6. 逐个验红（含"推导不再看 zone"这种改行为的变异）；回写 §56 的旁注与计数，跑全量 + 切片 + 两种验收模式，提交。
 
+## 74. 第 74 阶段：被打开的词汇里，四分之三的取值没有任何一份 agent 文档解释过
 
+### 74.1 这一阶段要解决什么
 
+§73 把 `zone` 这个词教给了文档。收尾时冒出来的是它的**一般形式**：`zone` 不是唯一一个"输出里有、文档里没有"的字段。这一轮把 `cli/schema/*.schema.json` 里的**每一个枚举**都量一遍，回答三件事：
 
+1. 哪些枚举的取值，在任何一份 agent 文档里都**没有被命名过**；
+2. 其中哪些这个 build **真的会写出来**——只有会写出来的，才是 agent 真会遇到的；
+3. 怎么让这件事**不能重新漂移**：一张按 schema 组织的取值表 + 一组会红的守卫。
 
+### 74.2 实测
 
+**发现一：换一个口径，数字就换一副面孔——说明 token 级测量回答不了这个问题。**
 
+同一批 schema、同一批文档（`SKILL.md`、`agents/airoot.json`、`references/reason-codes.md`、`references/confirmation.md`），两种匹配方式：
 
+| 口径 | 枚举值集合 | 全部取值都被命名 | 部分被命名 | 一个都没被命名 |
+|---|---|---|---|---|
+| **宽松**：裸词命中（`degraded` 出现在文件里就算） | 58 | 11 | 33 | 14 |
+| **严格**：反引号命名（`` `degraded` `` 才算文档点了名） | **61** | **0** | **17** | **44** |
 
+严格口径下"全部被命名"是 **0**。两个数字都不是这一轮的重点，重点是**两者都回答不了真正的问题**：一个字段的词表**解释过没有**。它们只能回答"这个词在这个文件里出现过没有"，而"出现过"和"解释过"是两件事——这正是**发现三**。
 
+**发现二（核心）：真正的缺口是"字段"级的。** 下面这些字段**这个 build 会写出**，而在本轮之前没有任何一份 agent 文档解释它的取值（† 见发现四）：
+
+| 字段 | 会写出的取值 | 之前 agent 文档里的解释 |
+|---|---|---|
+| `doctor.diagnostics[].severity` 的 `critical` | 会（`caps/doctor.py` 4 处：根标记/卷身份/registry 元数据读不出来） | 无。文档只写了 `healthy/degraded/broken` 这一档的 `status` |
+| `doctor.diagnostics[].remediation` 的 `inspect` | 会（"人看一眼"，AIROOT 没有对应命令） | 无。文档只解释了 `rebuild`/`repair` |
+| `search.status` 的 `timed_out` | 会（crawl 撞上 `max_duration_ms`） | 无 |
+| `search.data.freshness.state` 的 `unknown`/`stale` | 会 | 无（文档只有 `freshness.current` 那句"不是 USN 游标"） |
+| `search.data.freshness.coverage` 的三个值 | 会 | 无 |
+| `search.data.results[].verification` 的四个值 | 会 | 无 |
+| `extension-envelope.status` 的 `timed_out` | 会 | 无 |
+| `plan.operations[].kind` 的 `fetch/verify/stage/commit/expose/delete` | 会 | 无 |
+| `plan.operations[].source_mutation` 的 `none` | 会（且两个 backend 都**只能**是 `none`） | 无 |
+| `reference-plan.exposure.value_kind` 的 `REG_SZ`/`REG_EXPAND_SZ` | 会 | 无 |
+| `registry-projection.external_references[].source_kind` 的 `pe_static` | 会（只读 PE 静态探测，这一版唯一的来源种类） | 无 |
+| `registry-projection.external_references[].management` 的三个值 | 会 | 无 |
+| `common.sideEffect` 的九个值 | 会（能力清单 + 两个扩展 manifest） | 只解释过 `none` |
+| `common.lifecycle` 的四个值 | 会 | 无 |
+| `common.binding.exposure` 的 `stable_launcher` | 会 | 无 |
+
+**发现三：最难看的不是"没写"，是**同名词的假覆盖**。** token 级测量会把**别的字段**的取值算成覆盖：
+
+- `common.health` 的 `degraded` 在文档里"存在"，但那是 `doctor.status` 的 `degraded`（`status` 由 severity 推出）；`health=degraded` 这一版**根本没有写者**。
+- 文档里的 `stale` 是 `search` 的**新鲜度**（`freshness.state`），不是 `health` 的 `stale`。
+- 文档里的 `verified` 是 `search` 的**结果核验**（`verification`），不是 `lifecycle` 的 `verified`。
+- `directory` 在文档里出现，指的是 `search` 的 `results[].kind`；`fileManifestEntry.mode` 的 `directory` 同样没有写者。
+- `declared` 出现在规划里（"声明的事实"），但 `external_references[].source_kind` 的 `declared` 这一版没有写者。
+- `none` 无处不在，但 `binding.exposure` 的 `none` 今天没有写者。
+
+**这就是为什么这一轮的产出必须按"字段路径"组织，而不能按"词"组织**——守卫也必须按 schema 路径解析（见 74.4）。
+
+**发现四：有些值是**词表里有、这一版一个写者都没有**。** 这不是文档缺口，是**词表与实现的差距**，而它恰好是 agent 最容易混的一件事（"schema 允许"≠"这个 build 会做"）：
+
+| 位置 | 没有写者的取值 |
+|---|---|
+| `common.zone` | `W`、`P`——`machine_discoverable: false` 这条规则**已经生效**，但这一版**没有任何对象落在 W 里**（会话激活写的是会话快照栈，不建 binding）；项目分区要 P6 |
+| `common.health` | `degraded`、`stale`、`drifted`（ACL 漂移走 `DATA_ROOT_ACL_DRIFT` 诊断，索引过旧走 `freshness.state`） |
+| `common.management` | `orphaned`（孤儿是 `doctor`/`rebuild` 的**发现**，不是行上的取值）、`project_owned`（只在过滤集合里被点到名） |
+| `common.lifecycle` | `discovered`、`external_reference`、`unmanaged`、`planned`、`staged`、`verified`、`garbage_collectable`（登记进 store 直接就是 `installed`/`active`；"可回收"是 `tool gc --plan` **算出来的**判据） |
+| `common.binding.exposure` | `session_env`、`project_binding`、`none`（只写 `stable_launcher`） |
+| `common.source.kind` | `local_directory`、`registry` |
+| `common.$defs.fileManifestEntry.mode` | `directory`（`caps/canon.py` 只产文件条目） |
+| `common.$defs.scope` | `system` |
+| `plan.operation` | `import_tool`、`recreate_runtime`、`root_relocate` |
+| `plan.target.kind` / `instances[].kind` / `gc-plan items[].kind` | `runtime`（P5 之前没有 runtime 实例） |
+| `plan.operations[].kind` | `rollback`（回滚是状态机在失败/恢复时做的，不是计划的一步） |
+| `plan.operations[].source_mutation` | `delete`、`move`、`overwrite`（两个 backend 都被强制成 `none`） |
+| `reference-plan.operations[].kind` | `rollback` |
+| `doctor.diagnostics[].remediation` | `reapprove`（要重新拿批准，而这个 build 没有生产签发方——ADR-0024） |
+| `search.status` | `error`、`cancelled` |
+| `search.data.freshness.state` | `degraded`、`rebuilding`（`rebuilding` 只在 `caps/search.py` 的 `FRESHNESS_STATES` **声明元组**里出现） |
+| `extension-envelope.status` | `cancelled` |
+| `registry-projection.external_references[].source_kind` | `declared`、`public_locator`、`extension_handler`、`approved_execution`（只有 `pe_static`） |
+| `where-response.source` | `project`、`search` |
+| `runtime-instance.runtime_family` | **全部五个**（这个 schema 这一版没有任何写者） |
+| `desired-manifest.source.kind` | **全部三个**（`source` 恒为 `null`） |
+| `approval-token.approval_mode` | `policy` |
+| `extension-manifest.*` | `adapter`、`broker`、`user_or_broker`、`execute`、`mutate_system`、`explicit_generation`、`stop_before_commit` |
+
+`search.status` 的这一条值得单独说：**`error` 是 schema 里的失败档，但这个 build 走 `degraded`/`timed_out`**——所以"按 `error` 分支处理"在今天是一段**永不执行**的代码。这正是要有 † 的理由。
+
+### 74.3 做了什么
+
+1. **新增 `references/field-values.md`（按需参考）**：按 schema 分 15 节，每行是 `字段 | 取值 | 含义 | 本版谁写出`；带 **†** 的值表示"这一版没有任何代码会写出它"；`null` 单独说明（空值不是字面量，不参与 † 判定）；开头提醒**三套 `scope` 不要混**（绑定的 `system|machine|session|project`、持久化的 `user|machine`、分流的 `project|data-root`）；末尾列出**不在这张表里的四个 schema** 及理由（`broker-*` 是 P2 未实现、`managed-tool-instance` 与 `root-marker` 文件里没有枚举）。
+2. **`SKILL.md` 新增《看到不认识的取值》一节**：什么时候读这张表、† 怎么读（"**不要为它写分支**：遇到 † 的值说明有人在手写 JSON 或版本变了，去核对而不是猜"）、`null` 不进 †、三套 `scope`、以及"取值域的权威是 schema / 语义的权威是核心契约"。
+3. **`cli/tests/test_l1_skill.py`**：reference 集合加 `field-values.md`；新增一条守卫"入口文档必须指向它、且必须解释 † 与三套 scope"（一条**没人被告知去打开**的参考只是文件，不是参考）。
+4. **新增 `cli/tests/test_l1_field_values.py`**：10 条守卫（见 74.4）。
+5. **`AGENTS.md`**：`references/` 行登记新参考；阶段范围 `§31`–`§73` → `§31`–`§74`；计数同步。
+
+### 74.4 守卫与验红
+
+新文件 10 条守卫，每条都盯一个**会失效**的方向：
+
+| 守卫 | 盯什么 |
+|---|---|
+| `test_every_documented_field_resolves_to_exactly_the_documented_values` | 每一行的值集合 == 在 `cli/schema/<name>.schema.json` 里按该路径解析出来的枚举（**两个方向**：schema 加值不写文档会红，文档编一个 schema 没有的值也红） |
+| `test_no_value_is_documented_without_appearing_in_the_schema` | 同上，专门给"文档多写了值"一个更清楚的失败信息 |
+| `test_every_documented_producer_path_exists` | "本版谁写出"那一列指向的文件必须存在；有 † 却没有"没有写者"标记也算红 |
+| `test_each_daggered_value_has_no_writer_in_its_own_field` | † ⇔ 该值**在写这个字段的代码里**不出现；非 † ⇔ 出现。**双向** |
+| `test_a_daggered_value_that_could_mean_only_one_thing_is_written_nowhere` | 21 个"不可能是别的字段的值"的词，只要 `cli/app/airoot/**.py` 里出现就当 † 失效——补上一条守卫**看不见"文档没点名的那种写者"**的漏洞 |
+| `test_every_daggered_value_is_named_in_the_daggers_note` | 文档必须解释 † 与 `null`（否则读者会把每个 † 读反） |
+| `test_every_enum_of_an_in_scope_schema_is_documented` | 每个在表内的 schema，文件里的每个枚举值集合都必须有行（`common` 例外，见 74.6 第 3 条） |
+| `test_the_documented_and_exempt_schemas_cover_every_schema_exactly_once` | "在表内" ∪ "不在表内" == `cli/schema/*.schema.json`，且不相交——**加一个新 schema 必须做一次决定** |
+| `test_every_row_belongs_to_a_schema_that_exists` | 节标题必须是真 schema，行必须有取值 |
+| `test_the_in_scope_schemas_are_the_ones_an_agent_reads` | 15 个在表内 + 4 个在表外**恰好等于**这份名单，且总行数 ≥ 50——删一节必须是**故意**的编辑，不是 diff 事故 |
+
+**判据的关键设计**：`†` 不能靠"文件里有没有这个词"来判——`search.status = "degraded"` 与 `freshness.state = "degraded"` 在同一个文件里，`health = "healthy"` 与 `"healthy"` 出现在别的语境里也是。所以其中 **10 个字段**用**写形状的捕获**（例如 `lifecycle_status\s*=\s*["']([A-Za-z_]+)["']`、`["']state["']\]?\s*[:=]\s*["']([a-z_]+)["']`、`Binding\([^)]*["']([a-z_]+)["']`），其余用文件存在性——后者只在"这个词不可能是同文件里另一个字段的取值"时才安全。
+
+**逐个验红（9 个变异，方向都取"危险的那一侧"）**：
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 文档编一个 schema 没有的值（`healthy` 旁边加 `fine`） | 红 | ✅ 红 |
+| 文档少写一个 schema 有的值（删 `timed_out`） | 红 | ✅ 红 |
+| 把没人写的值的 † 去掉（`reapprove`） | 红 | ✅ 红 |
+| 给有人写的值加 †（`repair`） | 红 | ✅ 红 |
+| 把一行的字段名改成一个不存在的路径（整行失效） | 红 | ✅ 红 |
+| 把**在表内**的 schema 写进"不在表内" | 红 | ✅ 红 |
+| "本版谁写出"指向一个不存在的文件 | 红 | ✅ 红 |
+| **在实现里写出一个被标 † 的值**（`caps/lifecycle.py` 加 `lifecycle_status = "staged"`） | 红 | ✅ 红 |
+| **在实现里写出一个文档没点名的 † 值**（`caps/doctor.py` 加 `"reapprove"`） | 红 | ✅ 红 |
+
+最后一个变异是这一轮最想要的：它证明这组守卫能在**有人真的把 † 值实现出来**时把文档喊醒，而不是只在文档被编辑时才响。
+
+### 74.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **792 → 803**（新文件 10 条 + `test_l1_skill.py` 1 条） |
+| 审计检查（`test_l0_consistency.py` 的 `^def test_`） | 74 **不变** |
+| 场景台账 | 108 **不变** |
+| schema | 19 **不变**（这一轮**没有动任何 schema**、没有增删枚举值） |
+| golden 语料 | **未重生**（没动任何对外 JSON 形状；`git diff --stat cli/tests/fixtures/golden/` 为空） |
+| `AGENTS.md` 里的计数 | 3 处；`docs/AIROOT-v0.3-规范审查报告.md` 2 处（同一提交） |
+
+### 74.6 如实记录的边界
+
+1. **† 的判据绑在"本版谁写出"这一列上。** 那一列写错，两个方向会**同时**失效（把写者漏掉，† 就假绿）。最后一条守卫（21 个独特词"全文不许出现"）**部分**补上这个洞，但它只对"不可能是别的字段的取值、也不会出现在声明元组里"的词有效——所以 `rebuilding` **不在**那一档里：`caps/search.py` 有一个 `FRESHNESS_STATES = (..., "rebuilding", ...)` **声明元组**，而**声明不是写出**。这是判断，不是遗漏。
+2. **`null` 不可测。** JSON 空值在代码里由 `None` 写出，不是字符串字面量——字面量扫描对它既证明不了"会写"，也证明不了"不会写"。所以 `null` 不进 † 的判定，它的含义单独写在"含义"列里。
+3. **`common` 允许在别节被覆盖。** `$defs.externalReference` 的三个字段（`capability_kind`/`management`/`source_kind`）与 `registry-projection` 的 `external_references[]` 是**同一组词汇**，行写在 agent 真正遇到它们的那一节，`common` 节不重复。这是**判断**（避免同一条规则写两遍），代价是 `common` 的覆盖检查只能对"全文"而不是"本节"——写在该节的开头，守卫按这个例外读。
+4. **守卫比的是"值集合"，不是"某一行有没有被写到错误的路径上"。** 值集合相同的两个字段共用一行时，覆盖检查看不出来（例如 `plan.target.kind` 与 `gc-plan.items[].kind`）。已知的漏法，写在这里而不是假装它不存在。
+5. **表里的"含义"是"够做决定"的最短解释，不是契约。** 权威指针写在表头（取值域→schema，语义→核心契约）。守卫检查**指针与集合**，**不检查语义正确性**：一个把 `degraded` 讲错的 agent 仍能通过全部 10 条。可自动化的边界就在这里。
+6. **这一轮没有实现任何"没有写者"的值**，也没有为了让表好看而删除任何枚举值。发现四那张表是**记录**，不是待办——`zone.W` 没有写者不代表 ADR-0022 失效（恰恰相反：`machine_discoverable` 已经按 `zone != "W"` 算，只是今天没有 W 对象），`runtime_family` 没有写者是因为 P5 还没到。
+7. **`search.status.error` 今天永不会出现**：按它写分支等于写一段死代码。这一条是**行为性**的，不是文档性的——记在这里，将来 `error` 真的被写出来时，† 守卫会红，那时再改文档。
+
+### 74.7 实施顺序
+
+1. 先把 19 个 schema 的枚举**全部**枚举出来，两种口径各量一遍（发现一：口径一换数字就换）；
+2. 把"会写出"与"不会写出"分开（发现四）——这一步决定 † 落在哪；同名词的假覆盖（发现三）在这一步暴露出来；
+3. 按 schema 分节写 `references/field-values.md`，写完用脚本把每一行与 schema 对一遍（两个方向）；
+4. 写 10 条守卫；对 **9 个变异**逐个验红，其中两个变异改的是**实现**（证明守卫盯的是"有没有人开始写这个值"，不只是"文档有没有被编辑"）；
+5. 入口文档加《看到不认识的取值》一节 + 一条"必须指向它"的守卫；回写 `AGENTS.md` 与审查报告的计数；
+6. 跑全量 + 旧切片 + 两种验收模式，确认 golden 语料**未被改动**（这一轮只动文档与测试），提交。
 
 
