@@ -25,7 +25,7 @@ The schema set is intentionally split by contract so a caller can validate a sin
 | `transaction.schema.json` | Journal state projection and recovery evidence |
 | `extension-manifest.schema.json` | Capability Extension declaration |
 | `extension-envelope.schema.json` | Common Extension response envelope |
-| `search-request.schema.json` | File search input |
+| `search-request.schema.json` | File search input: what to match, how to match it, and which consistency the caller will accept |
 | `search-response.schema.json` | Search envelope and freshness semantics |
 | `where-response.schema.json` | Deterministic capability selection result |
 | `doctor-response.schema.json` | Diagnostic result with stable remediation |

@@ -6483,4 +6483,90 @@ if verb not in verbs:
 4. 补文档面：一条 lane（`data-root`）+ 一张 `uncovered_verbs` 理由表；写 2 条守卫；把 §42 那条场景从 `run` 改成 `record`；
 5. 6 个变异逐个验红；read 路径计数接回现实（133 → 139）；跑全量 + 旧切片 + 两种验收模式；确认 golden 语料未动；提交。
 
+## 80. 第 80 阶段：契约目录自己写的规则，只有"19 个"这一条被机器守着
+
+### 80.1 这一阶段要解决什么
+
+`docs/schema/README.md` 是**契约自己的目录**：19 行边界表（一行一个 schema，写清它守哪个边界）+ 五条兼容规则。而它唯一的守卫是一个**计数**（"19 个 schema"，§第四章的计数守卫）。也就是说：`AGENTS.md` §7 要求"改 Schema：跑 `validate-schemas` + 同步 `docs/schema/README.md` 的边界表与兼容规则"——**这句话在任何一条守卫里都没有对应物**。
+
+这一轮问的就是它：**目录里写的规则，有几条被机器守着？**
+
+### 80.2 实测
+
+**发现一：19 个 schema 与 19 行边界表今天完全对上**，没有残留行、没有未登记的文件。所以这一轮（和前几轮一样）是**在漂移之前**装门。
+
+**发现二：规则 1（`schema_version: 1` 是唯一主版本）在 18 个文档里以两种形状成立。**
+
+| 形状 | 数量 | 例子 |
+|---|---|---|
+| 文档版本：`{"$ref": "common.schema.json#/$defs/schemaVersion"}` | 17 | `plan`、`where-response`、`transaction`… |
+| **信封版本**：`protocol_version: {"type": "integer", "const": 1}` | 1 | `broker-request`（与 `docs/broker/` 方案 §3 的信封示例一致） |
+| 都不带 | 1 | `common.schema.json` —— 它是**定义**这两个东西的文件 |
+
+结论：**"有没有版本钉子"是可查的，"用哪个名字"是设计选择**。在此之前没有任何检查——一个不带版本的 schema 可以直接合进来。
+
+**发现三：规则 3（每个安全边界都拒绝未知属性）在 69 个对象节点上成立，而"成立"有三种形状。**
+
+- **记录型**对象：`additionalProperties: false`（绝大多数）；
+- **映射型**对象：`additionalProperties` 是一个 **schema**（键本身是数据）——只有两个：`extension-manifest` 的 `operations`/`operation_schemas`、`reference-plan` 的 `exposure.variables`；
+- **条件分支**：`allOf` 里的 `if`/`then`（十来个）**没有** `additionalProperties`——它们**约束**一个已存在的对象，不描述一个对象，在那里写它没有意义。
+
+这条界线不写下来，一个"要求所有对象都写 `additionalProperties`"的守卫会把人逼去改 JSON Schema 的条件分支。**它是判断，写进了守卫的常量里，并由一个变异钉住**（见 80.4 最后一个）。
+
+**发现四（守卫第一次跑就抓到的）：边界表里 `search-request` 那一行只写了 "File search input"。** 17 个字符，全表最短（其余 ≥27）。它没回答"这份 schema 守的是哪个边界"，而 `search-request` 恰恰有真实语义（match/target/consistency 与实现上限，§74 已逐值解释）。已补写成："File search input: what to match, how to match it, and which consistency the caller will accept"。
+
+### 80.3 做了什么
+
+新增 `cli/tests/test_l1_schema_catalog.py`（4 条守卫）：
+
+| 守卫 | 盯什么 |
+|---|---|
+| `test_the_catalog_table_and_the_schema_files_are_the_same_set` | 边界表 ⟷ schema 文件**双向**相等；每行 ≥20 字符（"说了等于没说"会红）；**没有两行共用一句描述**（复制粘贴占位会红） |
+| `test_the_catalog_only_names_schemas_that_exist` | README 里出现的每个 `xxx.schema.json` 名字都必须真实存在（改名不会留下僵尸引用） |
+| `test_every_schema_pins_the_version_its_documents_carry` | 每个 schema 必须钉住版本，且**钉死在 1**；两种形状；例外集合**恰好等于** `VERSION_BY_PROTOCOL`（`broker-request` 一条，带理由）；`common.$defs.schemaVersion` 本身必须是 `const 1` |
+| `test_every_record_object_rejects_unknown_properties` | 走遍所有"有 `properties` 且不是条件分支"的节点（**≥50 个**的非空断言），每个都必须声明 `additionalProperties` |
+
+**没有改任何 schema 文件**：这一轮量出来的结论是"规则都被遵守"，所以产出是**守卫**，不是修契约；唯一被改的是**目录里那一行薄描述**。
+
+### 80.4 守卫与验红（7 个变异）
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 边界表删掉一行（`gc-plan`） | 红 | ✅ 红 |
+| 加一行给不存在的 schema | 红 | ✅ 红 |
+| 某行变成空话（"plan"） | 红 | ✅ 红 |
+| 某个文档 schema 丢掉版本钉子（`where-response`） | 红 | ✅ 红 |
+| **IPC 信封的版本不再是 `const 1`** | 红 | ⚠️ 第一次**绿** → 收紧后 ✅ 红 |
+| 某个记录对象开始接受未知属性（`plan.target`） | 红 | ✅ 红 |
+| **把条件分支的例外集合清空** | 红 | ✅ 红 |
+
+第 5 个是这一轮第二次"变异抓出更弱的检查"：我的第一版只断言 `protocol_version` **存在**，于是 `{"type": "integer"}`（不钉任何值）照样通过——**"存在"不等于"钉住"**。收紧成 `const == 1` 之后再测才红。第 7 个则证明那条例外**是必要的**：清空它，十来个 `if`/`then` 分支立刻报错。
+
+### 80.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **817 → 821**（新文件 4 条） |
+| 审计检查（`test_l0_consistency.py`） | **76 不变** |
+| schema | **19 不变**（这一轮**没有改任何 schema 文件**） |
+| 边界表 | 19 行不变；`search-request` 的描述被补写 |
+| 场景台账 / fixture / golden | 108 / 27 / **未重生** |
+
+### 80.6 如实记录的边界
+
+1. **规则 2（"加可选属性是 minor 兼容；改类型/枚举/必填/digest 算法/状态含义需要新 schema id"）是流程规则，不是文件属性。** 它只能靠 diff 审查，静态守卫做不到——写在这里，而不是假装覆盖了。
+2. **规则 3 的判据是"声明了 `additionalProperties`"，不是"拒绝得对"**：一个对象把它写成 `{"type": "string"}` 会被放过（那是映射形状）。要区分"有意的映射"与"漏写 false"，只能人读——两个映射型对象写在守卫的 docstring 里。
+3. **规则 1 只管版本钉子的形状**，不管"这个 schema 该不该带版本"：`common` 的例外是**按文件名硬编码**的（`FRAGMENT_FILE`）。将来若再加一个片段文件，必须先改那条常量——这是有意的手续，守卫会红。
+4. **规则 4/5**（`plan_hash` 的计算方式、`test_hmac_sha256` 只允许出现在假切片里）**早就有守卫**，这一轮没有重复它们。
+5. **"两行不许共用一句描述"只防完全相同的复制**：改一个词就绕过。它挡的是最廉价的那种占位，不是所有偷懒。
+6. **这一轮没有让 `docs/schema/README.md` 变得"机器可生成"**：边界描述是**人写的判断**（"这份 schema 守哪个边界"），机器生成不了。守卫只能保证它**存在、不重复、指向真实文件**。
+
+### 80.7 实施顺序
+
+1. 先读契约目录自己写了什么（19 行表 + 5 条规则），再逐条问"这条有没有守卫"——答案是：只有计数有；
+2. 量规则 1 与规则 3：两种版本形状、69 个对象节点、两个映射形状、条件分支的例外；
+3. 写 4 条守卫；**第一次跑就被自己的阈值抓到一个薄行**（`search-request`），补写它；
+4. 7 个变异逐个验红；其中"IPC 信封的版本"第一次是绿的（"存在" vs "钉住"），收紧后重跑；
+5. 回写计数与 `AGENTS.md` 的 schema README 行；跑全量 + 旧切片 + 两种验收模式；确认 schema 与 golden 语料都没动；提交。
+
 
