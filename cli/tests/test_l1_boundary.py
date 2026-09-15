@@ -24,7 +24,7 @@ from airoot.caps.boundary import (
     load_capabilities,
 )
 from airoot.caps.discovery import load_whitelist
-from airoot.cli import main
+from airoot.cli import build_parser, main
 from airoot.exits import AirootError
 
 
@@ -245,6 +245,119 @@ def test_cli_capability_check_rejects_a_lookalike(capsys, registry, tests_tmp: P
     assert code == 9
     assert document["verdict"] == "unmanaged"
     assert document["reason_code"] == "CAPABILITY_NOT_DECLARED"
+
+
+# --------------------------------------------------------------------------- #
+# the boundary at every entry point (draft §91)
+# --------------------------------------------------------------------------- #
+#
+# The frozen list is the boundary of what AIROOT may manage *at all*, and §91 measured that one of the
+# eight commands that name a capability did not apply it: `tool pin` recorded an intent for a name no
+# plan can ever satisfy, exited 0, and then blamed the **second** blocker ("no trusted source is
+# declared for X") while the first one — that X is not a capability — stayed unsaid. A pin is *state*,
+# so the same boundary the plan path applies belongs here.
+#
+# The set is derived from the parser, not listed: an eighth command arriving later has to be classified
+# or this goes red, which is the shape §79/§81 used for verbs and lanes.
+
+
+def capability_naming_commands() -> set[str]:
+    """Every command path whose parser carries a capability id (positional or `--capability`)."""
+
+    parser = build_parser()
+    top = [
+        action for action in parser._actions if getattr(action, "choices", None) and action.dest == "command"
+    ][0].choices
+
+    found: set[str] = set()
+    for verb, subparser in top.items():
+        nested = [
+            action
+            for action in getattr(subparser, "_actions", [])
+            if getattr(action, "choices", None) and action.dest == "subcommand"
+        ]
+        branches = [(verb, subparser)] + [
+            (f"{verb} {sub}", child) for sub, child in (nested[0].choices.items() if nested else [])
+        ]
+        for path, branch in branches:
+            if any(
+                getattr(action, "dest", None) == "capability" for action in getattr(branch, "_actions", [])
+            ):
+                found.add(path)
+    return found
+
+
+#: Commands that **act** on the id: they write state or produce a plan, so the frozen boundary applies
+#: and the refusal must use the code `plan` uses.
+CAPABILITY_ACTING: dict[str, list[str]] = {
+    "plan": ["plan", "{id}"],
+    "tool pin": ["tool", "pin", "{id}", "--version", "1.0"],
+    "scope decide": ["scope", "decide", "{id}"],
+    "adopt": ["adopt", "{dir}", "--mode", "import", "--capability", "{id}", "--version", "1.0"],
+}
+
+#: Read-only queries. "Where is X" has a true answer for an unknown X — nowhere — so they answer
+#: instead of refusing, and the test below measures that rather than asserting it.
+CAPABILITY_QUERIES: dict[str, list[str]] = {
+    "where": ["where", "{id}"],
+    "tool list": ["tool", "list", "--capability", "{id}"],
+}
+
+#: Neither: `capability check` **is** the boundary (deciding adoptability is its job, and it already
+#: answers `CAPABILITY_NOT_DECLARED` for a name that is not frozen); `source resolve` resolves a
+#: download recipe rather than acting on a capability, and `sources.json` registers `rust-toolchain`
+#: ahead of its freeze by ADR-0001, with its own verification note (draft §59).
+CAPABILITY_EXEMPT = frozenset({"capability check", "source resolve"})
+
+UNFROZEN = "totally-not-a-frozen-capability"
+
+
+def test_every_capability_naming_command_is_classified() -> None:
+    """The denominator is derived, so a new command cannot quietly join the ungated group."""
+
+    derived = capability_naming_commands()
+    classified = set(CAPABILITY_ACTING) | set(CAPABILITY_QUERIES) | set(CAPABILITY_EXEMPT)
+
+    assert len(derived) >= 6, f"only {len(derived)} capability-naming commands found; is the walk broken?"
+    assert derived - classified == set(), (
+        f"these commands name a capability and are not classified: "
+        f"{sorted(derived - classified)}; a command that acts on an id must apply the frozen boundary"
+    )
+    assert classified - derived == set(), (
+        f"these are classified but no longer name a capability: {sorted(classified - derived)}"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(CAPABILITY_ACTING), ids=sorted(CAPABILITY_ACTING))
+def test_every_command_that_acts_on_a_capability_applies_the_frozen_boundary(
+    capsys, registry, tests_tmp: Path, name: str
+) -> None:
+    directory = tests_tmp / "frozen-gate"
+    directory.mkdir(parents=True, exist_ok=True)
+    argv = [part.format(id=UNFROZEN, dir=str(directory)) for part in CAPABILITY_ACTING[name]]
+
+    code, document = run(capsys, "--json", "--root", str(Path(registry.path).parent.parent), *argv)
+
+    assert code == 9, f"`airoot {' '.join(argv)}` did not refuse an unfrozen capability: exit {code}"
+    assert document["reason_code"] == "CAPABILITY_NOT_DECLARED", document
+
+
+@pytest.mark.parametrize("name", sorted(CAPABILITY_QUERIES), ids=sorted(CAPABILITY_QUERIES))
+def test_a_query_answers_about_an_unfrozen_name_instead_of_refusing(
+    capsys, registry, name: str
+) -> None:
+    argv = [part.format(id=UNFROZEN) for part in CAPABILITY_QUERIES[name]]
+
+    code, document = run(capsys, "--json", "--root", str(Path(registry.path).parent.parent), *argv)
+
+    assert code != 9 and document["reason_code"] != "CAPABILITY_NOT_DECLARED", (
+        f"`airoot {' '.join(argv)}` is a read-only query, so `nowhere` is an answer and not a boundary "
+        f"refusal; it returned exit {code} / {document['reason_code']}"
+    )
+    # `where` echoes the name it was asked about; `tool list` answers with a filtered set instead, so
+    # the check is conditional rather than inventing a field for it.
+    if "capability_id" in document:
+        assert document["capability_id"] == UNFROZEN, "the query must answer about the name it was given"
 
 
 # --------------------------------------------------------------------------- #

@@ -27,6 +27,7 @@ from typing import Any
 from ..canon import digest_bytes, canonical_bytes
 from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
+from .boundary import load_capabilities
 from .version import satisfies
 
 DESIRED_RELATIVE = "state/desired.json"
@@ -169,6 +170,23 @@ def pin(
     if scope not in {"machine", "project", "session"}:
         raise AirootError(
             "INVALID_INPUT", f"unsupported pin scope: {scope}", evidence=["machine, project, session"]
+        )
+    # §91: the frozen list is the boundary of what AIROOT may manage at all, and five other entry
+    # points that name a capability apply it (`plan`, `adopt --mode import`, `scope decide`,
+    # `capability check`, `source resolve`). This one did not, so an intent for a name no plan can ever
+    # satisfy was recorded with exit 0 — and the pin report then blamed the *second* blocker
+    # ("no trusted source is declared for X") while the first one, that X is not a capability, stayed
+    # unsaid. Refusing here keeps the same code every other entry point uses.
+    frozen = load_capabilities()
+    if frozen.by_id(capability_id) is None:
+        raise AirootError(
+            "CAPABILITY_NOT_DECLARED",
+            f"no frozen capability is declared for {capability_id}",
+            evidence=[
+                f"revision {frozen.revision} declares: {', '.join(sorted(frozen.ids()))}",
+                "an intent outside the frozen list is one no plan can satisfy; propose the name "
+                "through the growth path first (planning §15.4: propose -> freeze -> whitelist)",
+            ],
         )
     if version:
         # Validate the constraint now: a pin that cannot be parsed would fail later, at a worse time.
