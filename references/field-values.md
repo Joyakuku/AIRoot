@@ -332,7 +332,7 @@
 
 | schema | 类别 | 为什么不列 |
 |---|---|---|
-| `broker-response.schema.json` | `unbuilt` | 这一版**没有构造者**——但 §108 起它**有读者**了（`broker/protocol.py` 的 `parse_response` 会校验它、按 `status` 决定是否抛错）。所以这一行的意思精确到："没有人把这份文档**造出来**"；`parse_response` 不是写者。它的 `status` 是这张表唯一还点名豁免的词汇（`enforcement` / `security_mode` 已改为引用 `common` 的定义，那一节有行） |
+| `broker-response.schema.json` | `unbuilt` | **核心**没有构造者——但 §108 起它**有读者**（`broker/protocol.py` 的 `parse_response` 会校验它、按 `status` 决定是否抛错），§110 起它还有一个**测试路径的**生产者（`cli/tests/fake_broker.py`，进程内 loopback harness）。所以这一行的意思精确到："**核心**里没有人把这份文档造出来"；读者与测试替身都不是写者。它的 `status` 是这张表唯一还点名豁免的词汇（`enforcement` / `security_mode` 已改为引用 `common` 的定义，那一节有行） |
 | `root-marker.schema.json` | `no-own-vocabulary` | **这一版会写出它**——根标记文件是十三个被构造的 schema 之一（`state/root.json`）。它被列在这里是因为**它自己没有词汇**：`schema_version` 与 `protocol_version` 两个字段都是**版本钉**（见本节末尾）。**原先这里写的是"同上"**（即按两个 `broker-*` 那样归到"P2 未实现"），那句话是**错的**，§107 量出来后改的 |
 
 这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105/§106）：**任何一个已发布
@@ -355,6 +355,6 @@ schema 能携带的词汇**（跟 `$ref`、含唯一取值的 `const`），要�
 
 **"构造者"这个词是字面意思**（§108 量出来的一个后果）：这份表与它的守卫都只看 `cli/app/` 里的函数
 有没有把一份文档**造出来**。一个**读者**不算写者——所以 `broker-response` 有了 `parse_response` 之后
-仍然留在 `unbuilt` 那一类；而 P2 第二阶段如果把进程内 loopback harness 放在 `cli/tests/`（它该放在那里），
-那份 harness 也**不会**让任何 schema 变成"已构造"：测试替身不是产品文档的写者。这不是漏洞，是这条判据
-本来的意思（"谁写出"问的是核心）。
+仍然留在 `unbuilt` 那一类；**§110 把这条语义第一次实测了**：进程内 loopback harness 按设计就住在 `cli/tests/`（它不该住进那个
+用户可写、不被信任的包里），它**真的**开始构造 `broker-response` 之后，这一格**仍然是** `unbuilt`
+——测试替身不是产品文档的写者。这不是漏洞，是这条判据本来的意思（"谁写出"问的是核心）。

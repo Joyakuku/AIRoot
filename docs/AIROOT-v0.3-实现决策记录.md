@@ -1849,3 +1849,35 @@ exits"——**输家回滚是允许的，赢家的绑定被摧毁不是**。所�
   遗留文件让绝对计数失效）。它们**不是产品缺陷**，是"会因为正当理由变红的检查"的反面——
   会**无缘无故**变红的检查。一并修掉，并说明它们是偶发红灯的另一半来源。
 
+
+---
+
+## ADR-0036：`broker-response` 的 `status` 由 `reason_code` 推出，而"拒绝"与"失败"的边界是契约
+
+**背景**：P2 第二阶段给了 `broker-response` 第一个生产者（`cli/tests/fake_broker.py`，进程内
+loopback harness，§110）。响应 schema 的 `status` 是四值枚举（`ok` / `rejected` / `failed` /
+`recovery_required`），而 `reason_code` 只是形状（`^[A-Z][A-Z0-9_]{2,63}$`，**不枚举**）——
+**没有任何已发布的东西说哪个码配哪个 status**。缺了这条规则，两个 broker 会对同一次失败给出不同的
+`status`，而调用方的分支（重试 / 先 repair / 放弃）完全建立在它上面。
+
+**决策**：
+
+1. `status` **只由 `reason_code` 推出**，只用一个函数（`_status_class`），成功路径与拒绝路径共用它。
+   "同一次失败按两条规则分类"是缺陷的温床。
+2. **退出码 0 的码 → `ok`**（`SUCCESS` 与其余信息性码）。把成功报成失败是最响的假话。
+3. **`RECOVERY_REQUIRED` → `recovery_required`，点名的，不由退出码推出**：退出码 **6** 同时承载
+   `JOURNAL_TRUNCATED`（"日志读不出来，什么都不该继续"），那是**失败**而不是可恢复状态。按退出码推
+   status 会把这两件事混为一谈。
+4. 其余按"**裁定**还是**出错**"分：操作**开跑之前**下的判决（缺失、越权、来源、凭证、路径、不支持的
+   实现）→ `rejected`；**开跑之后**坏掉的（摘要漂移、载荷不见、实例冲突、日志被截断）→ `failed`。
+5. 这条边界存在**一处被记录下来的例外**：第一版把 `INSTANCE_CONFLICT` 放在"拒绝"集合里，但它由
+   `tx/simulate.py` 的 `_fail` 在**操作已经开始之后**发射（store 路径被比较过，里面是别的字节），
+   按第 4 条它是 `failed`。已移出集合，并把理由写在集合旁边——**规则与表不一致**正是本项目反复量的
+   那类缺陷。
+
+**后果**：这条映射成为 Rust broker 必须逐字复现的契约（调用方按 `status` 决定重试、恢复还是放弃）。
+ADR-0034 记下的形状陷阱依旧成立：响应的 `evidence` 是**对象**，错误信封的 `evidence` 是**字符串**。
+**未定**：`status` 之外只有 `retryable` 一个布尔承载"能不能重试"（`PENDING_TRANSACTION` /
+`STALE_GENERATION` / `RECOVERY_REQUIRED` 为真），更细的重试语义**不提前发明**；`probe_root` 与
+`gc_apply` 没有事务行，所以它们的 `transaction_id`/`state` 恒为 `null`——编一个 id 等于替没有写过的
+历史作证。

@@ -9396,3 +9396,81 @@ A=ROLLED_BACK   B=FINALIZED   活动绑定数=0
 5. 加确定性用例（交错 / 两个 key / 普通路径），并用"换回旧实现"验红；
 6. 修搜索夹具的卫生问题；
 7. 回写计数；写 ADR-0035 与本记录；跑 8 次全量；与 §108 同一次提交。
+
+## 110. P2 第二阶段：进程内 loopback harness——`broker-response` 的第一个生产者（ADR-0036）
+
+### 110.1 这一阶段补的是哪一半
+
+§108 让线路面有了客户端：能造 `broker-request`、能读 `broker-response`。但**没有任何东西回答请求**
+——没有 broker 进程、没有 named pipe、测试之外没有生产签发方（ADR-0025 的 D1）。于是四个 operation
+一条端到端路径都没有，`broker-response` 也从来没有被真正**产出来**过（ADR-0026 的"没有写者"）。
+
+### 110.2 交付
+
+`cli/tests/fake_broker.py`（**测试路径**模块，不是产品件）+ `cli/tests/test_l2_fake_broker.py`（35 条）。
+`serve(request, *, root=…, security_mode=…, clock=…, injector=…)` 把请求当**输入**校验
+（`validate_document`），按 `operation` 分派到**已有的进程内实现**，返回前自校验（`validate_self`）。
+`DISPATCH` 是分派表的唯一来源：
+
+| operation | 调用的进程内实现 |
+|---|---|
+| `commit_plan` | `tx/simulate.py` 的 `SimulationRunner.commit`（fake-fixture 后端；计划与 token 从 `plan_ref`/`approval_ref` 指向的文件读出） |
+| `recover_transaction` | `tx/journal.py` 的 `load_context`+`classify` → `tx/simulate.py` 的 `repair` |
+| `probe_root` | `root.py` 的 `open_root`（卷守卫开着）+ `caps/acl.py` 的 `capture_acl` |
+| `gc_apply` | `caps/lifecycle.py` 的 `apply_gc_plan` |
+
+**拒绝是返回的文档，不是异常**：篡改计划（改后重算 hash → `INVALID_APPROVAL`(4)；改后不重算 →
+`INVALID_PLAN`(7)）、重放 nonce（`APPROVAL_REPLAYED`(4)）、gc 载荷在批准之后变了
+（`DIGEST_MISMATCH`(7)，status `failed`）、计划/批准缺失（`NOT_FOUND`(1)）、越出 root
+（`PATH_ESCAPES_ROOT`(8)）、没有日志（`JOURNAL_TRUNCATED`(6)）、请求本身非法（`INVALID_INPUT`(8)）。
+每一条都被断言为**一份通过 `broker-response` 校验的文档**。只有"答案是 schema 拒绝的文档"（实现缺陷）
+才抛 `HarnessDefect`——这是 AGENTS.md §7 那条规则的例外，也是唯一例外。
+
+### 110.3 它明确不是的三件事
+
+**不是 broker**：不校验调用方的 token，`client` 块原样当"自述"收下（可以写任何 SID/pid/完整性级别）。
+**不是 ACL 边界**：不建 ACL、不提权；`probe_root` 只是**观测** DACL，用的是 `doctor` 同一个只读调用。
+**不是信任边界的证明**：一次绿跑只说"四个 operation 能从请求文档驱动、并回答一份 schema 接受的文档"。
+恒为 `policy_only` + `same_user_can_bypass`，对"要求 protected 模式"**拒绝**（`PRIVILEGE_REQUIRED`(5)）
+而不是改标签——这条拒绝本身是测试里的一格（删掉模式守卫 → 红）。
+
+### 110.4 裁定：`status` 由 `reason_code` 推出（ADR-0036）
+
+四值 `status` 与不枚举的 `reason_code` 之间原本没有任何已发布规则。现在有一条：退出码 0 → `ok`；
+`RECOVERY_REQUIRED` 点名 → `recovery_required`（**退出码 6 同时承载 `JOURNAL_TRUNCATED`**，那是失败）；
+其余按"开跑之前裁定 / 开跑之后出错"分 `rejected` / `failed`。第一版把 `INSTANCE_CONFLICT` 放在"拒绝"
+里，而它由 `_fail` 在操作**开始之后**发射——按这条规则它是 `failed`，已移出并在表旁写明理由。
+
+### 110.5 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 删掉模式守卫 | 红 | ✅ 红（`test_the_harness_refuses_to_answer_as_protected_machine`） |
+| 让 `_plan_and_token` 忽略磁盘上的 approval | 红 | ✅ 红（8 条） |
+| 把 `INSTANCE_CONFLICT` 放回"拒绝"集合 | —— | 没有测试钉这个码的 status：这是**判断**，写进 ADR-0036 而不是假装有判据 |
+
+### 110.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **945 → 980**（+35：harness 的 35 条） |
+| 审计检查（`test_l0_consistency.py`） | **102 → 102**（不变） |
+| golden 语料 | **37 → 37**（**本阶段不加**，理由见 110.7-1） |
+| schema / 退出码 / 对外输出 | 一处没动 |
+| 新增 ADR | **ADR-0036** |
+
+### 110.7 如实记录的边界
+
+1. **`broker-response` 还没有逐字节语料。** 它的**形状**有一份比语料更强的验收面：35 条测试里每一份响应
+   都过已发布 schema。但**字节级**的可复现示例还没有，理由是**还没有量过**四个响应在规范化时间戳与临时
+   根路径之后是否逐字节确定；"没量过就写进语料"正是本项目一直在防的那类假话。它是下一阶段的第一件事。
+2. `transaction_id` / `state` 对 `probe_root` / `gc_apply` **恒为 `null`**：它们没有事务行。编一个 id
+   等于替没有写过的历史作证。
+3. evidence 里**不放** owner/trustee SID：那是机器指纹，而远端是 public（AGENTS.md §9）。
+4. harness 住在 `cli/tests/`：测试替身不是产品文档的写者，所以 `broker-response` 仍属 `unbuilt`
+   ——§108 钉下的这条语义在本阶段第一次被**实测**（取值表那一格没变）。
+5. "拒绝 vs 失败"是本阶段的**新契约**，其中 `RECOVERY_REQUIRED` 与 `JOURNAL_TRUNCATED` 同为退出码 6
+   却分属两个 status——刻意的，见 ADR-0036。
+6. **路径拼写**：把全量跑在"临时根含 8.3 短名"的位置上（例如 `%TEMP%` 拼作 `C:\Users\PROFIL~1\…`）
+   会让四条比较路径字符串的用例变红，产品里没有任何 `GetShortPathName`/8.3 处理。机制未定，已单独派查，
+   不混进本阶段。

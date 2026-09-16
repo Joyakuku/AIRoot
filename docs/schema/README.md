@@ -49,6 +49,12 @@ before it would be sent, the second is only ever *parsed*, because this build ha
 it; and `common` is the fragment the others `$ref`. That is a fact about this slice, not a defect list:
 the schema set is the contract, and printing is one way to exercise it.
 
+**`broker-response` is the one document whose only producer is a test-path harness**
+(`cli/tests/fake_broker.py`, draft §110): the core never prints it and never self-validates it, so it
+stays out of the printed set above and the corpus rule does not demand a fixture for it. Its *shape*
+is held by that harness's own tests instead (every one of them validates the response it gets against
+this schema), and a byte-level response corpus is a separate, still-open question — see draft §110.7.
+
 The remaining **three have no writer at all in this build** — nothing validates them and nothing `$ref`s
 them — and each says why, because "published ahead of implementation" and "describes a document that
 does not exist" look identical from the outside:

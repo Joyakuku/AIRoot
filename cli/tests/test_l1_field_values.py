@@ -549,9 +549,10 @@ def test_every_daggered_value_is_named_in_the_daggers_note() -> None:
 
 #: Vocabularies a published schema **can carry** that this table deliberately does not document, as
 #: `(schema, path)` pairs. One entry left, and it is a *reader's* vocabulary: §108 gave
-#: `broker-response` a reader (`broker/protocol.py` `parse_response`) but no writer — nothing in this
-#: build constructs that document — so a "who writes it in this version" row would have nothing to
-#: point at. The other three left the set in the same stage, each for a measured reason:
+#: `broker-response` a reader (`broker/protocol.py` `parse_response`), and §110 added a producer that
+#: lives in the **test path** (`cli/tests/fake_broker.py`) — which is exactly why this set still names
+#: it: the measure is `_produced_schemas`, a walk over `cli/app/`, so a test double that builds a
+#: response does not make the *core* a writer of it. The other three left the set in the same stage, each for a measured reason:
 #: `broker-response.enforcement` became a `$ref` to the shared definition (the `common` row documents
 #: it), and `broker-request`'s `operation` and `client.integrity` got real rows because the client
 #: codec and the identity probe now write them. Measured, not assumed (§105): the reachable walk
