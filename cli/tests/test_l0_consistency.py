@@ -451,7 +451,12 @@ def test_the_repo_map_agrees_with_the_sentence_that_delegates_the_stage_records(
         f"the row does not state §{low}",
         f"the row does not state §{high}",
     ]
-    assert _delegation_problems(rows, "31", "99", target) == ["the row does not state §99"]
+    # The third direction: a range the row does not state at all. **Derived**, not spelled out — this
+    # read `"99"` until §99 existed, at which point the row legitimately contained it and the mutation
+    # went green for the wrong reason (§84/§85/§90 met the same trap: a probe anchored on a literal the
+    # next stage moves). `high + 1` is always outside the range the row states.
+    beyond = str(int(high) + 1)
+    assert _delegation_problems(rows, low, beyond, target) == [f"the row does not state §{beyond}"]
     assert _delegation_problems({k: v for k, v in rows.items() if k != target}, low, high, target) == [
         f"{target} is not in the repo map"
     ]

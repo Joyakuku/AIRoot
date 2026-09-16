@@ -113,6 +113,43 @@ def invocations() -> list[dict]:
     return json.loads(AGENT_META.read_text(encoding="utf-8"))["invocation"]
 
 
+def vacuous_paths(document: dict, paths: list[str]) -> list[str]:
+    """Read paths whose `[]` segment drained an **empty** list (draft §99).
+
+    `unresolved` deliberately counts an empty list as resolved — a healthy `doctor` has no diagnostics
+    to carry `diagnostics[].code` — which makes such a path *checked vacuously*: the key could be
+    renamed and the check would stay green, because there is nothing to look at either way. A lane that
+    tells an agent to read `x[].y` therefore needs a scenario in which `x` is not empty, and this is how
+    that requirement is stated rather than assumed.
+    """
+
+    empty: list[str] = []
+    for path in paths:
+        nodes: list[object] = [document]
+        drained_empty = False
+        for raw in path.split("."):
+            match = _SEGMENT.match(raw)
+            if match is None:
+                break
+            key, drains = match.group(1), bool(match.group(2))
+            nxt: list[object] = []
+            for node in nodes:
+                if not isinstance(node, dict) or key not in node:
+                    continue
+                value = node[key]
+                if drains:
+                    if isinstance(value, list):
+                        if not value:
+                            drained_empty = True
+                        nxt.extend(value)
+                else:
+                    nxt.append(value)
+            nodes = nxt
+        if drained_empty:
+            empty.append(path)
+    return empty
+
+
 #: Every published schema file name, for the check below. Derived, never listed.
 def _schema_stems() -> list[str]:
     from airoot import SCHEMA_DIR
@@ -330,6 +367,16 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     record("tool pin <capability>", "tool", "pin", CAPABILITY, "--version", "1.0.0")
     record("search <query>", "search", "--query", "python")
     record("rebuild", "rebuild")
+    # `repair` reads `repaired[].action` / `repaired[].state`, and an empty `repaired` array makes those
+    # reads **vacuous** — the resolver treats an empty list as resolved, so a renamed key would leave the
+    # check green (draft §99). Leaving a transaction interrupted at `ACTIVE_BOUND` gives the repair
+    # something to report, which is the only way those two paths are checked at all.
+    interrupted = create_plan(registry, version="1.0.0", clock=clock)
+    from conftest import FaultInjector
+
+    SimulationRunner(registry, clock=clock, injector=FaultInjector(stop_after="ACTIVE_BOUND")).commit(
+        interrupted, fake_issuer.issue(interrupted, clock=clock)
+    )
     record("repair", "repair")
 
     # --- mutations last, so nothing above loses its precondition ------------------------------
@@ -355,6 +402,12 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         missing = unresolved(document, entry["read"])
         if missing:
             problems.append(f"{command}: exit {code} does not carry {missing}")
+        holes = vacuous_paths(document, entry["read"])
+        if holes:
+            problems.append(
+                f"{command}: exit {code} makes {holes} vacuous — the list is empty, so a renamed key "
+                "would pass; give this lane a scenario that produces one"
+            )
         problems += document_schema_problems(command, entry, document)
 
     assert problems == [], "agents/airoot.json names fields the output does not have:\n" + "\n".join(problems)
@@ -425,6 +478,27 @@ def test_every_invocation_is_either_exercised_or_declared_uncovered() -> None:
     # Every entry also has a non-empty `read` list; an empty one would make the check vacuous.
     empty = sorted(" ".join(entry["command"]) for entry in invocations() if not entry.get("read"))
     assert empty == [], f"these invocations tell the agent to read nothing: {empty}"
+
+
+def test_the_vacuity_check_reports_what_it_is_for() -> None:
+    """§99: the resolver counts an empty list as resolved, so `x[].y` can be checked vacuously.
+
+    This pins the helper that finds those: an empty list is reported, a non-empty one is not, and a
+    path with no list segment at all is never reported (or every scalar read would look vacuous).
+    """
+
+    assert vacuous_paths({"diagnostics": []}, ["diagnostics[].code"]) == ["diagnostics[].code"]
+    assert vacuous_paths({"diagnostics": [{"code": "x"}]}, ["diagnostics[].code"]) == []
+    assert vacuous_paths({"found": True}, ["found"]) == []
+    # Only a **drained** segment counts. `reports[].candidates` reads an empty list as its value, which
+    # is a legitimate answer — the vacuity is when the list you page through is itself empty, because
+    # then no row's keys are looked at. A nested drain is caught the same way.
+    assert vacuous_paths({"reports": [{"candidates": []}]}, ["reports[].candidates"]) == []
+    assert vacuous_paths({"reports": []}, ["reports[].candidates"]) == ["reports[].candidates"]
+    assert vacuous_paths({"a": [{"b": []}]}, ["a[].b[].c"]) == ["a[].b[].c"]
+    assert vacuous_paths({"a": [{"b": [{"c": 1}]}]}, ["a[].b[].c"]) == []
+    # An `[]` segment the document does not carry at all is `unresolved`'s finding, not this one's.
+    assert vacuous_paths({}, ["diagnostics[].code"]) == []
 
 
 def test_the_read_path_resolver_reports_what_is_actually_missing() -> None:
