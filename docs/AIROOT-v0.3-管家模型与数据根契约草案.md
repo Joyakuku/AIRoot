@@ -10950,3 +10950,5 @@ pytest 里的 `test_a_new_version_rewrites_no_launcher_bytes` 用的是**模拟 
 （`conftest.FaultInjector` 就是它），`ArtifactRunner(registry, backend, injector=...)` 是可注入的入口，
 所以下一个阶段要做的只是"在真机闭环上逐个状态注入一次、再跑 `repair`"，而不是再设计什么。
 **把配方写在这里，是为了让下一轮不必重新测量一遍同样的东西。**
+
+**#14 下一轮必须先从这一个矛盾量起。** 注入的接口是清楚的：`TransactionJournal` 吃一个带 `checkpoint(state)` 的对象（`conftest.FaultInjector` 就是它），`ArtifactRunner(registry, backend, injector=...)` 接受它，`_runner_for` 用 `resolve_backend(plan["metadata"]["backend_id"], root=...)` 选后端。但上一次按同样方式构造时，**在到达任何状态之前**就报了 `AirootError: path escapes the AIROOT root: <root>\store\archive\probe-tool\9.9.9\win-x64`；而按代码读，`ArtifactRunner` 的 `self.root = Path(registry.path).parent.parent`、`Registry.db_path = root/state/registry.db`，两者推出来**都应该是 root**——**读数与代码不一致，所以先解释这个矛盾，再写断言**。那一次后续 `repair` 报的是 `action=resume_or_expire`、`repaired[0].result.outcome=DIGEST_MISMATCH`（`where` → `NOT_FOUND`、`doctor` healthy），但那是被那个早期失败污染过的事务，**不能当作 #14 的期望形状**。
