@@ -15,6 +15,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from airoot.caps import lifecycle
 from airoot.caps.boundary import load_capabilities
 from airoot.caps.doctor import INVARIANTS, doctor, status_exit_code
 from airoot.caps.discovery import discover_data_root
@@ -23,6 +24,7 @@ from airoot.caps.inventory import inventory
 from airoot.caps.where import WhereQuery, where
 from airoot.broker.protocol import build_request
 from airoot.cli import DECLARED_ABSENT, _declared_absent_error
+from airoot.broker import protocol
 from airoot.clock import FakeClock
 from airoot.exits import REASON_EXIT, exit_code_for
 from airoot.ext.fake import load_fake_extension
@@ -132,6 +134,44 @@ def _normalize(value: Any, base: Path) -> Any:
     return value
 
 
+#: The `client` block a broker request carries. Synthetic on purpose: a fixture in a public repository
+#: must not hold this machine's SID, and the harness relays the block as the caller's own claim.
+BROKER_CLIENT = {
+    "sid": "S-1-5-21-1000",
+    "pid": 1234,
+    "integrity": "medium",
+    "application_id": "airoot-cli",
+}
+
+
+class _StopAfter:
+    """The transaction engine's own checkpoint seam, used to leave a journal mid-flight (draft §112).
+
+    A stand-in for `cli/tests/test_l2_fake_broker.py`'s `Stop`: `recover_transaction` needs a
+    transaction that was *interrupted* rather than one that failed, and the engine already exposes the
+    hook its fault injector uses.
+    """
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+
+    def checkpoint(self, state: str) -> None:
+        if state == self.state:
+            raise InterruptedError(f"stopped after {state}")
+
+
+def _write_broker_documents(root: Any, plan: dict, token: dict, *, stem: str) -> tuple[str, str]:
+    """Write a plan and its approval where `state/plans|approvals` says they live."""
+
+    plans = root.path / "state" / "plans"
+    approvals = root.path / "state" / "approvals"
+    plans.mkdir(parents=True, exist_ok=True)
+    approvals.mkdir(parents=True, exist_ok=True)
+    for directory, payload in ((plans, plan), (approvals, token)):
+        (directory / f"{stem}.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return f"state/plans/{stem}.json", f"state/approvals/{stem}.json"
 def build_documents(base: Path) -> dict[str, dict[str, Any]]:
     """Every golden document, keyed by fixture name, normalised against ``base``.
 
@@ -330,6 +370,149 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
     token = fake_issuer.issue(plan, clock=clock, nonce="a" * 32, approval_id="approval/golden-fixture")
     tx = SimulationRunner(registry, clock=clock).commit(plan, token)
     documents["transaction_finalized"] = {"document": tx, "exit_code": 0}
+
+    # ---- the broker's answers (draft §112) --------------------------------- #
+    # `broker-response` got its first producer in §110 — the in-process harness under `cli/tests/` —
+    # and the printed-versus-corpus rule belongs to documents the *core* self-validates, so these are
+    # declared in `test_golden.py`'s `SCHEMA_FOR_HARNESS_FIXTURE` rather than in `SCHEMA_FOR_FIXTURE`.
+    # They exist because a port has to reproduce the *answers*, not only the requests (§108), and
+    # because the four operations had no byte-level example at all.
+    #
+    # Every id is pinned (`plan_id`, `nonce`, `approval_id`) and the clock is a `FakeClock`: measured
+    # in §112.1, without that the transaction id and the approval id differ per root and no fixture
+    # could be byte-stable. `probe_root` is deliberately absent — its answer is a machine observation
+    # (ACL entry count and a DACL digest), so a fixture would embed one machine's numbers or lie.
+    #
+    # Every name here is prefixed: this block sits inside `_build_documents`, where `plan`, `root`,
+    # `registry` and `clock` are already in use by the blocks around it, and a first version of it
+    # silently rewrote `plan_fake_tool`'s fixture by rebinding `plan`.
+    import fake_broker  # noqa: E402  (test-path harness, same directory)
+
+    broker_root, broker_registry, broker_clock = _build_root(base / "broker")
+    fake_issuer.install_keyring(broker_root.path)
+
+    def _answer(operation: str, request_id: str, *, injector: Any = None, **overrides: Any) -> dict:
+        """Build a request through the wire layer, serve it, and return the answer.
+
+        `injector` is the harness's own seam rather than a request field, which is why it is keyword
+        only and kept out of `overrides`.
+        """
+
+        return fake_broker.serve(
+            protocol.build_request(
+                operation=operation,
+                client=dict(BROKER_CLIENT),
+                request_id=request_id,
+                **overrides,
+            ),
+            root=broker_root.path,
+            clock=broker_clock,
+            injector=injector,
+        )
+
+    broker_plan = create_plan(
+        broker_registry,
+        version="1.0.0",
+        clock=broker_clock,
+        plan_id="plan/fake-tool/1.0.0/broker-fixture",
+    )
+    broker_token = fake_issuer.issue(
+        broker_plan, clock=broker_clock, nonce="b" * 32, approval_id="approval/broker-fixture"
+    )
+    broker_plan_ref, broker_approval_ref = _write_broker_documents(
+        broker_root, broker_plan, broker_token, stem="broker-commit"
+    )
+
+    broker_committed = _answer(
+        "commit_plan",
+        "req/broker/commit-0001",
+        plan_ref=broker_plan_ref,
+        approval_ref=broker_approval_ref,
+    )
+    documents["broker_response_commit_plan"] = {
+        "document": broker_committed,
+        "exit_code": exit_code_for(broker_committed["reason_code"]),
+    }
+
+    # A refusal: the request is well formed and names a plan that is not there. The client turns this
+    # back into `NOT_FOUND` (exit 1) rather than exiting 0 — what §102 / ADR-0027 are about.
+    broker_refused = _answer(
+        "commit_plan",
+        "req/broker/refused-0001",
+        plan_ref="state/plans/does-not-exist.json",
+        approval_ref=broker_approval_ref,
+    )
+    documents["broker_response_refused_missing_plan"] = {
+        "document": broker_refused,
+        "exit_code": exit_code_for(broker_refused["reason_code"]),
+    }
+
+    # `recover_transaction`: interrupt a second commit at ACTIVE_BOUND, then heal it.
+    broker_plan2 = create_plan(
+        broker_registry,
+        version="2.0.0",
+        clock=broker_clock,
+        plan_id="plan/fake-tool/2.0.0/broker-fixture",
+    )
+    broker_token2 = fake_issuer.issue(
+        broker_plan2, clock=broker_clock, nonce="c" * 32, approval_id="approval/broker-recover"
+    )
+    broker_plan2_ref, broker_approval2_ref = _write_broker_documents(
+        broker_root, broker_plan2, broker_token2, stem="broker-recover"
+    )
+    broker_interrupted = _answer(
+        "commit_plan",
+        "req/broker/interrupted-0001",
+        plan_ref=broker_plan2_ref,
+        approval_ref=broker_approval2_ref,
+        injector=_StopAfter("ACTIVE_BOUND"),
+    )
+    broker_healed = _answer(
+        "recover_transaction",
+        "req/broker/recover-0001",
+        transaction_id=broker_interrupted["transaction_id"],
+    )
+    documents["broker_response_recover_transaction"] = {
+        "document": broker_healed,
+        "exit_code": exit_code_for(broker_healed["reason_code"]),
+    }
+
+    # `gc_apply`: commit a third payload, retire it, then collect it — plan and token off disk.
+    broker_plan3 = create_plan(
+        broker_registry,
+        version="3.0.0",
+        clock=broker_clock,
+        plan_id="plan/fake-tool/3.0.0/broker-fixture",
+    )
+    broker_token3 = fake_issuer.issue(
+        broker_plan3, clock=broker_clock, nonce="d" * 32, approval_id="approval/broker-gc"
+    )
+    SimulationRunner(broker_registry, clock=broker_clock).commit(broker_plan3, broker_token3)
+    broker_gc_instance = str(broker_plan3["target"]["instance_id"])
+    lifecycle.retire(broker_registry, broker_gc_instance, clock=broker_clock)
+    broker_gc_plan = lifecycle.build_gc_plan(
+        broker_registry,
+        broker_gc_instance,
+        clock=broker_clock,
+        plan_id="plan/fake-tool/gc/broker-fixture",
+    )
+    broker_gc_token = fake_issuer.issue(
+        broker_gc_plan, clock=broker_clock, nonce="e" * 32, approval_id="approval/broker-gc-run"
+    )
+    broker_gc_plan_ref, broker_gc_approval_ref = _write_broker_documents(
+        broker_root, broker_gc_plan, broker_gc_token, stem="broker-gc"
+    )
+    broker_collected = _answer(
+        "gc_apply",
+        "req/broker/gc-0001",
+        plan_ref=broker_gc_plan_ref,
+        approval_ref=broker_gc_approval_ref,
+    )
+    documents["broker_response_gc_apply"] = {
+        "document": broker_collected,
+        "exit_code": exit_code_for(broker_collected["reason_code"]),
+    }
+    broker_registry.close()
 
     # ---- the two documents the transaction engine is about (draft §90) ----- #
     # Every document the core prints is self-validated first (`schema_io.validate_self`), and §90 found

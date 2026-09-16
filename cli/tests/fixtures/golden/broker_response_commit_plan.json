@@ -1,0 +1,29 @@
+{
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "plan_id=plan/fake-tool/1.0.0/broker-fixture plan_hash=sha256:91bb99c809997a48517b905d9b5d0fd76a5748f21c138ec9ebcdac67d99adcca",
+      "kind": "plan"
+    },
+    {
+      "detail": "transaction_id=tx/fake-tool/1a06db345fe8",
+      "kind": "transaction"
+    },
+    {
+      "detail": "generation 0 -> 1 (ACTIVE_BOUND is the only point that may change the active binding)",
+      "kind": "transaction"
+    },
+    {
+      "detail": "approval_id=approval/broker-fixture request=req/broker/commit-0001",
+      "kind": "approval"
+    }
+  ],
+  "reason_code": "SUCCESS",
+  "request_id": "req/broker/commit-0001",
+  "retryable": false,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "state": "FINALIZED",
+  "status": "ok",
+  "transaction_id": "tx/fake-tool/1a06db345fe8"
+}

@@ -53,7 +53,10 @@ the schema set is the contract, and printing is one way to exercise it.
 (`cli/tests/fake_broker.py`, draft §110): the core never prints it and never self-validates it, so it
 stays out of the printed set above and the corpus rule does not demand a fixture for it. Its *shape*
 is held by that harness's own tests instead (every one of them validates the response it gets against
-this schema), and a byte-level response corpus is a separate, still-open question — see draft §110.7.
+this schema), and its byte-level corpus lives in a **second** fixture map
+(`test_golden.py`'s `SCHEMA_FOR_HARNESS_FIXTURE`, draft §112) — with `probe_root` deliberately
+absent from it, because that answer is a machine observation (an ACL entry count and a DACL
+digest) and a fixture would either embed one machine's numbers or lie about them.
 
 The remaining **three have no writer at all in this build** — nothing validates them and nothing `$ref`s
 them — and each says why, because "published ahead of implementation" and "describes a document that

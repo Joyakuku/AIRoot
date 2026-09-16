@@ -9531,3 +9531,64 @@ A=ROLLED_BACK   B=FINALIZED   活动绑定数=0
    不一致，不是用户已经踩到的 bug；但它一旦被第二个写入者（broker 侧注册？）触发就是活的。
 3. `resolve()` 对**不存在**的尾部不做解析（非 `strict`），所以"声明指向一个还不存在的东西"这一类拼写差异
    **不在**本阶段的处理范围内。
+
+## 112. `broker-response` 的逐字节语料（ADR-0038）
+
+### 112.1 先量确定性，再写语料
+
+§110.7-1 立的规矩：**没量过就不写进语料**。量法是在两个**独立的根**上各造一份同样的请求与答案，然后比较
+规范化之后的 JSON：
+
+| 答案 | 两个根之间逐字节 | 差异在哪 |
+|---|---|---|
+| `gc_apply` | ✅ 稳定 | — |
+| `refused_missing_plan`（`NOT_FOUND`） | ✅ 稳定 | — |
+| `probe_root` | ✅ 稳定 | — |
+| `commit_plan` | ❌ | `transaction_id`、`evidence`（含 `approval_id`） |
+| `commit_interrupted` / `recover_transaction` | ❌ | `transaction_id`（以及中断那份的 `evidence`） |
+
+`transaction_id`/`approval_id` 不是随机的，而是**由内容推出的**——`plan_id`、`nonce`、`approval_id` 都是
+入参（`golden.py` 给既有的事务 fixture 早就这么钉了）。钉死之后四份都能逐字节再生，由
+`test_golden_fixtures_reproduce_exactly` 每次跑测试证明。
+
+**`probe_root` 不进语料**：它的答案是**机器观测**（ACL 条目数与 DACL 摘要）。它在这台机器上稳定，但换一台
+机器就不同——fixture 要么嵌入某台机器的数字，要么撒谎。**"在这台机器上稳定"不是"可复现"**，这是它与其余
+三份的区别，也是它被排除的唯一理由（记录在案，不是遗漏）。
+
+### 112.2 顺带修掉一个真实的泄漏
+
+`probe_root` 的 `acl_trustees` 把排好序的受托者 SID 列表当 `detail` 发出去，而同一个函数的 docstring 写着
+"SID 不进证据"——**一份文档在跟自己的说明打架**。返回的文档里带机器身份违反 AGENTS.md §9，并且让它的答案
+永远不可能成为可复现语料。改成只报条目数。守卫是"整份答案的 JSON 里不出现 `S-1-`"。
+
+**守卫的第一次写法没有红方向**：把泄漏那行放回去，判据仍然绿——因为**这台机器的 `capture_acl` 根本报不出
+受托者 SID**（实测）。所以守卫改成**注入一份带 SID 的快照**（与 `caps/identity.py` 处理"token 读不到"是
+同一个接缝思路），并加一条"仍然要报条目数"的断言，免得第一条因为字段消失而通过。改完：放回泄漏 → 红，
+修好 → 绿。
+
+### 112.3 语料的两个来源（ADR-0038）
+
+`broker-response` 的唯一生产者是**测试路径**的 harness，而"核心打印的文档 ⟺ 语料"是精确相等。所以语料有
+**第二个 map**（`test_golden.py` 的 `SCHEMA_FOR_HARNESS_FIXTURE`），孤儿判据认**两个** map——一个 fixture
+只能有一个出处，而"这是谁造的"在文件里读得出来。
+
+### 112.4 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **982 → 984**（+1 身份泄漏守卫、+1 harness 语料过 schema） |
+| golden 语料 | **37 → 41**（+4：提交 / 恢复 / 回收 / 一次拒绝） |
+| 审计检查（`test_l0_consistency.py`） | **102 → 102**（孤儿判据改成认两个 map，条数不变） |
+| schema / 退出码 / 对外输出 | 一处没动 |
+| 新增 ADR | **ADR-0038** |
+
+### 112.5 如实记录的边界
+
+1. **`probe_root` 没有字节级语料**，理由见 112.1（机器观测）。它的形状仍由 §110 的 35 条测试覆盖。
+2. **`acl_digest` 仍然在 `probe_root` 的答案里**：摘要本身不泄漏 SID（不可逆），但它**随机器不同**，所以
+   即使将来要给它一份语料，也必须先规范化这个字段（`golden.py` 已有 `<VERSION>` 式的规范化先例）。
+3. **四份语料只覆盖"成功 + 一种拒绝"**：另外七条拒绝路径（`INVALID_APPROVAL`/`INVALID_PLAN`/
+   `APPROVAL_REPLAYED`/`DIGEST_MISMATCH`/`PATH_ESCAPES_ROOT`/`JOURNAL_TRUNCATED`/`INVALID_INPUT`）有测试、
+   没有语料。按同样的口径，它们**只在被量过确定性之后**才会进来。
+4. **那段代码插错位置这件事**记在 ADR-0038 里：抓住它的是逐字节再生检查，不是任何文档判据——**文档判据
+   守不住"我改坏了别的 fixture"**。

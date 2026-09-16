@@ -1918,3 +1918,35 @@ ADR-0034 记下的形状陷阱依旧成立：响应的 `evidence` 是**对象**�
 规范化它，而 `caps/searchindex.covers` 只做小写与去尾部反斜杠。**`doctor` 不受影响**：它比较卷序列号与
 观测到的版本/架构/入口点，不比较路径字符串。**未定**：broker 侧将来若也写注册表，是否同样规范化——
 那是设计问题而不是测量问题，触发条件（出现第二个写入者）今天还不存在。
+
+
+---
+
+## ADR-0038：语料可以有两个来源，但一个 fixture 只能有一个出处
+
+**背景**：§112 要给 `broker-response` 一份逐字节语料。问题是它与现有那条规则的关系：
+`test_l0_consistency.py` 的"核心打印的文档 ⟺ 语料"是**精确相等**，而 `broker-response` 的**唯一**生产者是
+`cli/tests/fake_broker.py`（§110 的进程内 harness，测试路径）。把它塞进 `SCHEMA_FOR_FIXTURE` 会让那条规则
+两边都说谎（一个"核心从不打印"的文档混进"核心打印的集合"）；不塞进去，孤儿 fixture 判据又会把它当成
+"没人检查的文件"。
+
+**决策**：
+
+1. **第二个 map**：`test_golden.py` 的 `SCHEMA_FOR_HARNESS_FIXTURE` 声明测试路径生产者造出来的语料，并由它
+   自己的判据逐份过 schema；"核心打印 ⟺ 语料"那条**精确相等**的规则继续只管 `SCHEMA_FOR_FIXTURE`。
+2. **孤儿判据认两个 map**：两个 map 都算"已知"，它拒绝的是**两个都不在**的文件。一个 fixture 因此只能
+   有一个出处，而"这是谁造的"这件事在文件里是**读得出来**的。
+3. **哪些响应可以进语料，是量出来的**：四个 operation 加一条拒绝在**两个独立根**上各造一次并比较——
+   `gc_apply`、`refused_missing_plan`、`probe_root` 逐字节相同；`commit_plan` / `recover_transaction`
+   只在 `transaction_id`/`approval_id` 上不同，而那是**可以钉死**的（`plan_id`、`nonce`、`approval_id`
+   全都是入参）。所以前四个进语料，`probe_root` **不进**：它的答案是**机器观测**（ACL 条目数与 DACL 摘要），
+   换一台机器就不同，fixture 要么嵌入某台机器的数字，要么撒谎。**"在这台机器上稳定"不是"可复现"**。
+4. **顺带修掉一个真实的泄漏**：`probe_root` 的 `acl_trustees` 把排好序的受托者 SID 列表当 `detail` 发出去，
+   而同一个函数的 docstring 写着"SID 不进证据"。返回的文档里带机器身份违反 AGENTS.md §9，也让它的答案
+   永远不可能成为可复现语料。改成只报**条目数**；守卫是"整份答案里不出现 `S-1-`"。
+
+**后果**：`broker-response` 有了四份逐字节答案（成功提交、中断后恢复、载荷回收、一次 `NOT_FOUND` 拒绝），
+Rust broker 有了要复现的东西；`probe_root` 的缺席是**记录在案的决定**而不是遗漏。**一条施工教训也记下来**：
+那段代码插在 `_build_documents` 里，第一版复用了 `plan`/`root`/`registry`/`clock` 这几个名字，把下面的
+`plan_fake_tool` fixture **悄悄改写成 broker 的计划**——抓住它的不是任何文档判据，而是 golden 语料的
+**逐字节再生检查**（`plan_fake_tool.json` 出现在 diff 里）。共享函数里插入的块必须用自己的名字。

@@ -1,0 +1,25 @@
+{
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "state ACTIVE_BOUND -> FINALIZED",
+      "kind": "journal"
+    },
+    {
+      "detail": "classified action: reconcile_binding_then_resume_or_revert",
+      "kind": "recovery"
+    },
+    {
+      "detail": "resumed to FINALIZED",
+      "kind": "recovery"
+    }
+  ],
+  "reason_code": "SUCCESS",
+  "request_id": "req/broker/recover-0001",
+  "retryable": false,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "state": "FINALIZED",
+  "status": "ok",
+  "transaction_id": "tx/fake-tool/8edce6324a08"
+}

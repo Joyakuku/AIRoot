@@ -2139,12 +2139,17 @@ def test_the_honesty_prohibitions_are_still_in_both_documents() -> None:
 def test_every_golden_fixture_is_known_to_the_golden_test() -> None:
     """An orphan fixture is either a lost acceptance case or a file nobody checks."""
 
-    from test_golden import SCHEMA_FOR_FIXTURE
+    from test_golden import SCHEMA_FOR_FIXTURE, SCHEMA_FOR_HARNESS_FIXTURE
 
     # Fixtures with no published schema are named here instead; each one has a hand-written shape
     # assertion somewhere (`discover_report` and `transaction_transitions` in the L1 suites,
     # `index`/`reason_code_table` by equality in `test_golden.py`).
-    known = set(SCHEMA_FOR_FIXTURE) | {
+    #
+    # The harness map is a **second** map on purpose (draft §112): it holds documents a test-path
+    # producer builds rather than the core printing them, and the printed-versus-corpus equality
+    # above must not absorb them. Both maps count as "known"; what this check rejects is a fixture
+    # in neither.
+    known = set(SCHEMA_FOR_FIXTURE) | set(SCHEMA_FOR_HARNESS_FIXTURE) | {
         "index",
         "reason_code_table",
         "discover_report",

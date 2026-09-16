@@ -354,7 +354,6 @@ def _probe_root(context: _OperationContext, _request: dict) -> dict[str, Any]:
 
     snapshot = acl.capture_acl(context.root.path)
     entries = len(snapshot.entries)
-    listed = ", ".join(sorted({entry.sid for entry in snapshot.entries if entry.sid})) or "none readable"
     return {
         "operation": "probe_root",
         "root_instance_id": context.root.root_instance_id,
@@ -367,7 +366,12 @@ def _probe_root(context: _OperationContext, _request: dict) -> dict[str, Any]:
         # The digest is a 64-hex sha256 with no machine-identifying content, so it is safe to carry;
         # the SIDs behind it are named by count only.
         "acl_digest": acl.acl_digest(snapshot) if snapshot.observed else None,
-        "acl_trustees": f"{entries} trustee(s): {listed}"[:MAX_DETAIL],
+        # No SIDs and no owner name: they are machine fingerprints (AGENTS.md §9), and a returned
+        # document is not the place for an identity. The count is what a caller can act on. A first
+        # version of this field printed the sorted SID list under the comment above saying the SIDs
+        # were left out — the §112 measurement caught a document disagreeing with its own docstring.
+        "acl_trustees": f"{entries} trustee(s) observed; SIDs withheld because they are machine "
+        "fingerprints (AGENTS.md §9)",
         "identity_note": (
             "the harness did not read the caller's token; the `client` block is the caller's own "
             "claim, so this probe says nothing about who asked"

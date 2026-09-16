@@ -923,3 +923,32 @@ def _references_for(broker_root, clock, operation: str) -> dict:
     if operation == "recover_transaction":
         return {"transaction_id": "tx/fake-tool/absent"}
     return {}
+def test_a_probe_answer_carries_no_machine_identity(broker_root, clock, monkeypatch) -> None:
+    """§112: a returned document must not carry a SID (AGENTS.md §9).
+
+    `probe_root` observes a DACL, and a DACL is full of SIDs. Measured: the answer carried the sorted
+    trustee list as `detail` text while the handler's own docstring said the SIDs were left out — a
+    document disagreeing with the sentence that describes it, and a machine fingerprint in a document
+    whose remote is public. A substring rule is enough here because a SID is unmistakable (`S-1-`),
+    and it is checked against the whole answer rather than one field, so a new field cannot smuggle one
+    back in.
+
+    The snapshot is injected because **this host reports no trustee SIDs at all** (measured: restoring
+    the leaky field left the guard green), so a check that only read the real ACL would have had no red
+    direction. The second assertion keeps the first from passing because the field vanished.
+    """
+
+    from airoot.caps import acl
+
+    snapshot = acl.AclSnapshot(
+        path=str(broker_root.path),
+        owner="S-1-5-21-1000",
+        entries=(acl.AclEntry(0, 0, 0x1F01FF, "S-1-5-21-1000"),),
+        dacl_present=True,
+    )
+    monkeypatch.setattr(acl, "capture_acl", lambda path: snapshot)
+
+    document = answer("probe_root", broker_root, clock)
+
+    assert "S-1-" not in json.dumps(document), "a returned document carried a machine identity"
+    assert "trustee" in json.dumps(document), "the observation must still report how many it saw"

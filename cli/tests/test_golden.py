@@ -47,6 +47,29 @@ SCHEMA_FOR_FIXTURE = {
     "search_stale_index_response": "search-response",
 }
 
+#: Documents a **test-path** producer builds rather than the core printing them (draft §112).
+#: `broker-response`'s only writer is `cli/tests/fake_broker.py`; the printed-versus-corpus rule in
+#: `test_l0_consistency.py` is about documents the core self-validates, so declaring these there would
+#: be a lie in both directions. They are held to their schema here instead, by the test below.
+SCHEMA_FOR_HARNESS_FIXTURE = {
+    "broker_response_commit_plan": "broker-response",
+    "broker_response_recover_transaction": "broker-response",
+    "broker_response_gc_apply": "broker-response",
+    "broker_response_refused_missing_plan": "broker-response",
+}
+
+
+def test_every_harness_document_satisfies_its_schema() -> None:
+    """§112: a corpus entry no core prints still has to satisfy the contract it claims."""
+
+    assert SCHEMA_FOR_HARNESS_FIXTURE, "the harness corpus is empty, so this guard is about nothing"
+    overlap = set(SCHEMA_FOR_HARNESS_FIXTURE) & set(SCHEMA_FOR_FIXTURE)
+    assert not overlap, f"a fixture is declared in both maps: {sorted(overlap)}"
+
+    for name, schema in SCHEMA_FOR_HARNESS_FIXTURE.items():
+        document = json.loads(_fixture_path(name).read_text(encoding="utf-8"))
+        schema_io.validate_document(schema, document)
+
 
 def _fixture_path(name: str) -> Path:
     return GOLDEN_DIR / f"{name}.json"

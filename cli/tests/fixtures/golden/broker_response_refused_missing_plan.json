@@ -1,0 +1,25 @@
+{
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "no plan document at <BASE>\\broker\\root\\state\\plans\\does-not-exist.json",
+      "kind": "reason"
+    },
+    {
+      "detail": "<BASE>\\broker\\root\\state\\plans\\does-not-exist.json",
+      "kind": "evidence"
+    },
+    {
+      "detail": "the request names it as state/plans/does-not-exist.json",
+      "kind": "evidence"
+    }
+  ],
+  "reason_code": "NOT_FOUND",
+  "request_id": "req/broker/refused-0001",
+  "retryable": false,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "state": null,
+  "status": "rejected",
+  "transaction_id": null
+}

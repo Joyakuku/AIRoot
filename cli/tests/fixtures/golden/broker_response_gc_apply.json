@@ -1,0 +1,29 @@
+{
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "plan_hash=sha256:9e639ff7546f3427fb4c88c16e8eb10179224b80ec4edf7ec889e0f1d67f9ef3 plan_id=plan/fake-tool/gc/broker-fixture",
+      "kind": "plan"
+    },
+    {
+      "detail": "instance_id=fake-tool/fake-tool/3.0.0/win-x64 store_path=<BASE>\\broker\\root\\store\\fake-tool\\fake-tool\\3.0.0\\win-x64 payload_removed=True already_collected=False",
+      "kind": "store"
+    },
+    {
+      "detail": "data_root_files_touched=0; deletion grading is enforced by caps/lifecycle.py, not by this harness",
+      "kind": "steward"
+    },
+    {
+      "detail": "consumed approval state/approvals/broker-gc.json",
+      "kind": "approval"
+    }
+  ],
+  "reason_code": "SUCCESS",
+  "request_id": "req/broker/gc-0001",
+  "retryable": false,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "state": null,
+  "status": "ok",
+  "transaction_id": null
+}
