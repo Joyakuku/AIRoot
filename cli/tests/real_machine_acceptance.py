@@ -13,9 +13,10 @@ It is **not** a pytest module (the suite must not depend on the host's real `D:\
 It never writes HKCU: the persisted path stops at the no-token / dry-run boundaries.
 
 **And it now proves it.** The two halves are bracketed by host snapshots -- the machine and user
-environment blocks, a per-file manifest of the AIROOT root and the two rustup trees, and a summary of
-the data root -- and the pass fails if any of them moved. See the isolation contract at the end of the
-file for what that does and does not cover.
+environment blocks, a per-file manifest of the AIROOT root and the two rustup trees, a summary of the
+data root, the top level of the home directory and of this checkout, and the scratch directories this
+run could have left behind -- and the pass fails if any of them moved. See the isolation contract at
+the end of the file for what that does and does not cover.
 
 The scratch root lives in the system temp directory and is deleted on the way out.
 """
@@ -35,6 +36,7 @@ APP = Path(__file__).resolve().parent.parent / "app"
 sys.path.insert(0, str(APP))
 
 from airoot.cli import main  # noqa: E402
+from airoot.caps.identity import probe_identity  # noqa: E402
 from airoot.registry import Registry  # noqa: E402
 from airoot.root import init_root  # noqa: E402
 
@@ -309,6 +311,35 @@ def main_run() -> int:
     code, doc = run("tool", "pin", "java", "--clear")
     show("tool pin --clear", code, doc, ("desired",))
     check("the pin can be removed", doc.get("desired") == [])
+
+    # Posture, in the run's own words (minimum version, judgement 16) ------------------
+    #
+    # Three of that judgement's clauses are measurable here; the fourth is not, and saying which is
+    # which is the point:
+    #
+    #   * `policy_only` + `same_user_can_bypass` -- asserted below from the root's own document;
+    #   * "no machine PATH write" -- `path verify` says `path_written is False` (checked above) and the
+    #     isolation audit compares the machine environment block before and after;
+    #   * "no elevation" -- **not asserted, because it would measure the operator's shell.** Measured:
+    #     this session's token is elevated (`integrity=high`, SID `…-500`), so an assertion here would
+    #     fail on this machine for a reason that has nothing to do with the product. What is asserted
+    #     instead is the clause that holds under *any* token: the write that would need elevation is
+    #     refused even when the token has it (checked above, `--scope machine` -> `PRIVILEGE_REQUIRED`).
+    token = probe_identity()
+    print(f"    token: integrity={token.integrity} elevated={token.elevated} sid={token.sid}")
+    code, status = run("root", "status")
+    show("root status", code, status, ("security_mode", "enforcement", "registry_generation"))
+    check("the root declares policy_only", status.get("security_mode") == "policy_only")
+    check(
+        "and the enforcement word that goes with it",
+        status.get("enforcement") == "same_user_can_bypass",
+    )
+
+    code, inventory = run("inventory", "--class", "external_reference")
+    references = inventory.get("external_references") or []
+    show("inventory --class external_reference", code, inventory, ("reason_code",))
+    check("the adopted reference is in the inventory", code == 0 and len(references) == 1)
+    check("...and the data root is listed beside it", bool(inventory.get("data_roots")))
 
     # Step 31: the search protocol surface over a bounded crawl (read-only) -----
     code, doc = run("search", "java", "--ext", ".exe")
@@ -714,7 +745,10 @@ def closed_loop() -> int:
 #     it does not catch a same-size edit with the timestamp put back, and nothing would;
 #   * the system temp directory -- *leftovers only*: every scratch directory this script makes carries
 #     `SCRATCH_PREFIX`, and one that survives the run is reported by name. "It cleans up after itself"
-#     was a sentence in the docstring; this is the measurement of it.
+#     was a sentence in the docstring; this is the measurement of it;
+#   * the **top level** of the home directory and of this checkout -- the watched trees above are a list
+#     somebody wrote down, and this is the surface around it. A file appearing in either place is
+#     reported by name; a file *edited* inside is not, which is the honest limit of a listing.
 #
 # The surfaces deliberately *not* here, named so their absence is a decision rather than an oversight:
 # the process environment (a child cannot change its parent's), PATH (this script never writes it) and
@@ -723,6 +757,22 @@ def closed_loop() -> int:
 WATCHED_TREES = (DATA_ROOT / ".airoot", Path.home() / ".cargo", Path.home() / ".rustup")
 
 MACHINE_ENVIRONMENT = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+#: Two directories whose *top level* is compared, because the watched trees above are a list I wrote
+#: down and this is the surface around them. A verb that dropped a file into the home directory or into
+#: this checkout would have gone unnoticed by every other check here — the same shape §131 found when a
+#: hand-written list of banned values met a value nobody had written down. Names, not mtimes: editing a
+#: file inside does not change the listing, and this is about things *appearing*.
+WATCHED_LISTINGS = (Path.home(), Path(__file__).resolve().parents[2])
+
+
+def _listing(path: Path) -> list[str]:
+    """Top-level entry names, so an appearing or disappearing file is visible without a full walk."""
+
+    try:
+        return sorted(item.name for item in path.iterdir())
+    except OSError:
+        return []
 
 #: The prefix every scratch directory of this script uses, so "it cleans up after itself" is a
 #: measurement rather than a sentence in the docstring: leftovers are reported by name.
@@ -808,6 +858,7 @@ def host_state() -> dict:
         "machine environment": _environment_block(winreg.HKEY_LOCAL_MACHINE, MACHINE_ENVIRONMENT),
         "user environment": _environment_block(winreg.HKEY_CURRENT_USER, "Environment"),
         "trees": {str(path): _file_manifest(path) for path in WATCHED_TREES},
+        "listings": {str(path): _listing(path) for path in WATCHED_LISTINGS},
         "data root": {"path": str(DATA_ROOT), "summary": _tree_summary(DATA_ROOT)},
         "scratch entries": _scratch_entries(),
     }
@@ -843,6 +894,14 @@ def isolation_problems(before: dict, after: dict) -> list[str]:
     left = sorted(set(after["scratch entries"]) - set(before["scratch entries"]))
     if left:
         problems.append(f"the pass left {len(left)} scratch entr(y/ies) behind: {left}")
+    for directory, old in before["listings"].items():
+        new = after["listings"].get(directory, [])
+        appeared = sorted(set(new) - set(old))
+        disappeared = sorted(set(old) - set(new))
+        if appeared:
+            problems.append(f"{directory}: {len(appeared)} entry/entries appeared, e.g. {appeared[:5]}")
+        if disappeared:
+            problems.append(f"{directory}: {len(disappeared)} entry/entries disappeared, e.g. {disappeared[:5]}")
     return problems
 
 
@@ -850,9 +909,9 @@ def isolation_report(before: dict, after: dict) -> int:
     """Compare the two snapshots, and prove the comparison is not vacuous on this machine's own data.
 
     The run is *supposed* to find nothing, so a comparison that can never find anything would look
-    exactly like a clean machine. Four synthetic snapshots derived from `before` close that: a file
-    appearing, an environment value changing, the data-root summary moving and a scratch leftover must
-    each be reported.
+    exactly like a clean machine. Five synthetic snapshots derived from `before` close that: a file
+    appearing, an environment value changing, the data-root summary moving, a scratch leftover and an
+    appearing entry in a watched listing must each be reported.
     """
 
     problems = isolation_problems(before, after)
@@ -869,6 +928,9 @@ def isolation_report(before: dict, after: dict) -> int:
     grown["data root"]["summary"] = (files + 1, total, newest)
     littered = copy.deepcopy(before)
     littered["scratch entries"] = sorted(before["scratch entries"] + [f"{SCRATCH_PREFIX}planted-by-the-self-check"])
+    dropped = copy.deepcopy(before)
+    dropped_directory = next(iter(dropped["listings"]))
+    dropped["listings"][dropped_directory].append("planted-by-the-self-check.txt")
 
     self_check = []
     for label, snapshot in (
@@ -876,17 +938,20 @@ def isolation_report(before: dict, after: dict) -> int:
         ("a changed value", moved),
         ("a moved summary", grown),
         ("a scratch leftover", littered),
+        ("an appearing entry in a watched listing", dropped),
     ):
         if not isolation_problems(before, snapshot):
             self_check.append(label)
 
     environment_values = len(before["machine environment"]) + len(before["user environment"])
     watched = sum(len(manifest) for manifest in before["trees"].values())
+    listed = sum(len(names) for names in before["listings"].values())
     print("\nisolation audit (nothing outside a scratch root may change)")
     print(
         f"  compared: {environment_values} environment value(s), {watched} file(s) in "
         f"{len(before['trees'])} watched tree(s), a {before['data root']['summary'][0]}-file "
-        f"summary of {before['data root']['path']}, and {len(before['scratch entries'])} scratch "
+        f"summary of {before['data root']['path']}, {listed} top-level entr(y/ies) in "
+        f"{len(before['listings'])} watched listing(s), and {len(before['scratch entries'])} scratch "
         "entr(y/ies) under the system temp directory"
     )
     for problem in problems:

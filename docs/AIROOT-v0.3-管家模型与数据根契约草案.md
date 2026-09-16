@@ -11612,3 +11612,72 @@ isolation: PASS (0 difference(s))        exit code 0
 | 测试 | **1368 → 1368**（契约与自清理都在真机脚本里，不进 pytest，理由同 §133.6） |
 | 真机脚本 | +1 格快照（临时目录**目录**条目）+1 条合成变异；`ROOT` 惰性创建；`__main__` 的 `try/finally` |
 | 行为 | 无产品行为变化；`--online` 仍是 opt-in，且现在有"它也不碰宿主机"的实测 |
+## 135. 真机测试第三步：把"我没想到的面"纳入快照，并把 judgement 16 拆成"能测的"与"不能测的"
+
+§133/§134 让"不碰宿主机"与"自己收干净"变成判据。这一节补两处**结构性**缺口：一处是审计**自己的视野**，
+一处是"姿态"这个词究竟由哪几句可测的话支撑。
+
+### 135.1 审计的视野：名单 vs 面（§131 那张课，换一层再上一遍）
+
+原来的观看面是一张**名单**：`.airoot`、`.cargo`、`.rustup`、`D:\env`、两个环境块、临时目录。名单的问题
+§131 已经量过——**它只覆盖有人想到的地方**：一个把文件丢进用户主目录、或丢进这个 checkout 的动词，
+整套检查会一声不响。
+
+现在多了**两处"面"**：主目录与仓库根的**顶层条目列表**。比的是**名字**，不比 mtime——比 mtime 会让任何
+别的进程在主目录里建文件都变成红，而这条检查要问的是"多了一个/少了一个条目"。它**抓不住"改了里面一个
+文件"**，这一点写在代码里：那是清单式检查的诚实边界。
+
+**非空性**因此多了一条合成变异（往被观看的列表里加一个条目），每次运行都验；本轮运行的五条变异全部
+被报出，于是主比较的"0 处不同"才有意义。
+
+### 135.2 judgement 16 的四句话：三句可测，一句不可测——而不可测的那句要说出来
+
+| 那半句 | 怎么量 | 状态 |
+|---|---|---|
+| `policy_only` / `same_user_can_bypass` | `root status` 的**根自己那份文档** | **本轮新加断言** |
+| 不写 machine PATH | `path verify` 的 `path_written=false`（已有）+ 审计比对 HKLM 环境块 | 已覆盖 |
+| 需要提权的写入被拒 | `env persist --scope machine` → `PRIVILEGE_REQUIRED`(5)（已有） | 已覆盖 |
+| **整轮不提权** | —— | **不测，并写明为什么不测** |
+
+最后一行是本节最值得记的：本会话的 token 实测**是提权的**（`integrity=high`、SID `…-500`），所以
+"这个进程没有提权"这句断言会在这台机器上**因为操作者用哪个 shell 而变红**——那量的不是产品。改成本地
+**打印** token 事实，并把可测的那一句留给"在任何 token 下都该成立"的那条：**需要提权的那次写入，
+在提权的 token 下也必须被拒**——而唯一能证明它的地方恰好就是这里。
+
+**能测的测、不能测的说清为什么不能测**，比一句"全程不提权 ✅"更接近事实。
+
+### 135.3 顺带补上的一条读路径
+
+`inventory --class external_reference` 此前没被真机路径走过（`tool list` 走的是 owned 一侧）。现在断言：
+**恰好一条**登记在案的 reference，且数据根与它并列。仍然只读。
+
+### 135.4 实测（真机，本轮）
+
+```text
+    token: integrity=high elevated=True sid=S-1-5-21-…-500
+root status                             exit=0 {"security_mode": "policy_only",
+                                                "enforcement": "same_user_can_bypass",
+                                                "registry_generation": 0}
+inventory --class external_reference     exit=0
+step 5-6 + 8-9 + 31-34 real-machine acceptance: PASS (0 failed check(s))
+closed loop: PASS (0 failed check(s))
+isolation audit (nothing outside a scratch root may change)
+  compared: 42 environment value(s), 181 file(s) in 3 watched tree(s), a 191750-file summary of
+            D:\env, 99 top-level entr(y/ies) in 2 watched listing(s), and 42 scratch entr(y/ies)
+            under the system temp directory
+  [note] 42 scratch entr(y/ies) were already there, e.g. airoot-acceptance-15_v1cr6; not created by
+         this pass, and not removed by it either
+  [ok ] no tracked surface moved, and the comparison reports a planted change
+isolation: PASS (0 difference(s))       exit code 0
+```
+
+`99` 是那两处列表的条目总数（主目录 + 仓库根顶层），**它随机器变化**——这一行要记的是"它比了什么"，
+不是"它必须是几"。跑完临时目录仍是 42 个目录：没多、没少。
+
+### 135.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1368 → 1368**（契约与断言都在真机脚本里，不进 pytest，理由同 §133.6） |
+| 真机脚本 | +1 格快照（两处顶层列表）+1 条合成变异 +4 条断言（姿态 2、清单 2）+ token 事实一行打印 |
+| 行为 | 无产品行为变化 |
