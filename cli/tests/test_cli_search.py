@@ -426,9 +426,10 @@ def registered_non_canonical(registry, data_root: Path) -> Path:
     """A data root and a reference registered in a spelling that is not the canonical one.
 
     `.` and `..` segments are the deterministic stand-in for an 8.3 alias: `Path.resolve()` folds
-    them, a raw string comparison does not, and unlike the `PROFIL~1` spelling this host's `%TEMP%` happens to
-    have, they exist everywhere. This is the state `test_cli_search.py` used to reach *by accident* (its fixture handed out
-    whatever spelling the session temp root had) — reaching it on purpose is what makes the two
+    them, a raw string comparison does not, and unlike the `PROFIL~1` spelling a session temp root
+    happens to have, they exist everywhere. This is the state `test_cli_search.py` used to reach *by
+    accident* (its fixture handed out whatever spelling the session temp root had) — reaching it on
+    purpose is what makes the two
     guards below able to go red (draft §111).
     """
 

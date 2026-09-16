@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import ctypes
 import json
 import os
 import re
 import shutil
+import sys
 import pathlib
 from pathlib import Path
 from typing import Any
@@ -26,10 +28,12 @@ import pytest
 from airoot import SCHEMA_DIR
 from airoot.caps.doctor import DIAGNOSTIC_CODES, INVARIANTS
 from airoot.caps.exposure import PERSIST_SCOPES
+from airoot.caps.identity import probe_identity
 from airoot.caps.inventory import SCOPES as BINDING_SCOPES
 from airoot.caps.planner import SCOPE_DATA_ROOT, SCOPE_PROJECT
 from airoot.cli import DECLARED_ABSENT, EXEC_ALIAS_FLAG, build_parser
 from airoot.exits import EXIT_MEANINGS, REASON_EXIT
+from airoot.paths import volume_serial
 from airoot.schema_io import load_schema, schema_names
 from schema_walk import enums_by_path, vocabularies_by_path
 
@@ -4630,4 +4634,106 @@ def test_the_minimum_versions_result_table_and_its_summary_agree() -> None:
     assert _entry_judgement_count_problems(lowered, len(totals)), (
         "an entry document stating a count the table does not have must be reported"
     )
+
+
+# --- Guard group 37: the published tree carries no fingerprint of *this* host (draft §131) -------
+#
+# AGENTS.md §9 says the remote is public and names what must never be committed — credentials, the
+# volume serial, the USN journal id, the real user name — and then says "the tree has none of these
+# (measured)". That last clause was nobody's measurement. This host's `D:` volume serial sat in three
+# tracked files, one of them in the **byte-for-byte acceptance corpus**, and the profile directory's
+# 8.3 spelling in nine more (§131). Nothing caught it because the leak guards that do exist scan for
+# SIDs: a hand-written list of banned values can only ban what someone remembered to write down, and
+# the value that leaked was already in the tree when the sentence claiming otherwise was written.
+#
+# So the fingerprint is **read from the OS on every run** — the fixed drives' volume serials in both
+# spellings, the profile directory long and 8.3, and the user SID — and the question asked is the one
+# that is answerable here: *does this machine's fingerprint appear in the tree?* On another machine
+# the same question is asked about that machine, which is what the rule actually means.
+
+_FINGERPRINT_DRIVES = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _short_path(path: Path) -> str:
+    """The 8.3 spelling the OS reports for ``path``, or ``path`` itself when it has none.
+
+    Falling back to the long path is the honest answer, not a failure: a volume with 8.3 name
+    generation disabled has no short spelling to leak.
+    """
+
+    if sys.platform != "win32":
+        return str(path)
+    buffer = ctypes.create_unicode_buffer(32768)
+    written = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))  # type: ignore[attr-defined]
+    return buffer.value if written else str(path)
+
+
+def _host_fingerprints() -> list[tuple[str, str]]:
+    """``(label, text)`` for every string this host must not be found carrying."""
+
+    found: list[tuple[str, str]] = []
+    for letter in _FINGERPRINT_DRIVES:
+        drive = Path(f"{letter}:/")
+        if not drive.exists():
+            continue
+        serial = volume_serial(drive)
+        found.append((f"{letter}: volume serial", serial))
+        # `vol` prints the same 32 bits in the other spelling, so both are searched for.
+        found.append((f"{letter}: volume serial as `vol` spells it", f"{serial[:4]}-{serial[4:]}".upper()))
+
+    home = Path.home()
+    short = _short_path(home)
+    candidates = [("the profile directory", str(home)), ("its 8.3 spelling", short)]
+    # The bare name is only worth searching for when 8.3 actually shortened it: the long name alone
+    # (`Administrator`) is a substring of `Administrators`, a word this repository uses correctly and
+    # often, so searching for it would make the guard a spelling test instead of a leak test.
+    if "~" in Path(short).name:
+        candidates.append(("the profile's 8.3 name", Path(short).name))
+    for label, text in candidates:
+        if text and text not in [value for _, value in found]:
+            found.append((label, text))
+
+    sid = probe_identity().sid
+    if sid:
+        found.append(("the user SID", sid))
+    return found
+
+
+def _fingerprint_problems(
+    files: dict[str, bytes], fingerprints: list[tuple[str, str]]
+) -> list[str]:
+    """Which tracked file carries which fingerprint. Case-insensitive: Windows spellings vary."""
+
+    problems: list[str] = []
+    for label, text in fingerprints:
+        needle = text.casefold()
+        for name, data in sorted(files.items()):
+            if needle in data.decode("utf-8", "ignore").casefold():
+                problems.append(f"{name} carries {label} ({text})")
+    return problems
+
+
+def test_the_tree_carries_no_fingerprint_of_this_host() -> None:
+    """The public tree must not contain this machine's own identity (draft §131, AGENTS.md §9)."""
+
+    fingerprints = _host_fingerprints()
+    assert len(fingerprints) >= 2, (
+        f"only {fingerprints} was read from this machine; this guard is about nothing"
+    )
+    files = _walked_text_files()
+    assert len(files) > 50, f"the walk returned {len(files)} text files; this guard is about nothing"
+
+    problems = _fingerprint_problems(files, fingerprints)
+    assert problems == [], (
+        "the remote is public (AGENTS.md §9), so no tracked file may carry this host's identity; "
+        "replace the value with a synthetic one and keep whatever conclusion it supported: "
+        + "; ".join(problems)
+    )
+
+    # Non-vacuity, on synthetic input. A clean tree is the normal case, and a matcher that never
+    # matches would be indistinguishable from a clean tree — so a planted fingerprint must be found.
+    planted = dict(files)
+    planted["planted.txt"] = f"prefix {fingerprints[0][1]} suffix\n".encode()
+    assert _fingerprint_problems(planted, fingerprints), "a planted fingerprint was not reported"
+    assert _fingerprint_problems(files, []) == [], "an empty fingerprint set must report nothing"
 

@@ -102,7 +102,7 @@ def canonicalize(path: str | Path, *, root: Path | None = None, must_exist: bool
         raise AirootError("INVALID_INPUT", f"cannot resolve path: {path}", evidence=[str(exc)]) from exc
     if root is not None:
         # **Both sides are resolved before they are compared.** The OS can spell one directory two
-        # ways -- an 8.3 component (`PROFIL~1`) versus its long name (`Administrator`) -- and
+        # ways -- an 8.3 component (`PROFIL~1`) versus its long name (`Profile Name`) -- and
         # `resolve()` expands the candidate while `Path(root)` stays as it was written. Comparing a
         # resolved child with an unresolved root therefore reports a legal path as an escape; measured
         # on a temp root whose `TEMP` is a short path, where `from_root_relative` refused a path that
