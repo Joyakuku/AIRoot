@@ -1,22 +1,34 @@
-"""Approval token verification.
+"""Approval token verification — both algorithms, one keyring, one refusal left.
 
-``airoot approve`` only *consumes* approvals; it never mints them (v0.3 §8.5 and
-the broker plan §5). P1 therefore implements verification only:
+``airoot approve`` only *consumes* approvals; it never mints them (v0.3 §8.5 and the broker plan §5).
+What that leaves here is verification, and since §113 **both** algorithms are real:
 
-* ``test_hmac_sha256`` — the P1 simulation issuer, keyed by a test keyring under
-  ``state/test-keyring.json``. ``docs/schema/README.md`` permits this algorithm
-  only for the fake slice, which P1's simulation extends.
-* ``ed25519`` — recognised but **not implemented in P1**; a token using it is
-  refused with ``PROVENANCE_FAILED`` rather than silently accepted.
+* ``test_hmac_sha256`` — the simulation issuer, ``docs/schema/README.md`` permits it only for the fake
+  slice, which the simulation extends;
+* ``ed25519`` — **RFC 8032** (``airoot.crypto.ed25519``, pure Python, no new dependency). A token signed
+  by a key whose public half is registered is accepted; one that is not is refused as a bad token.
 
-The signing side intentionally does not exist in the core: it lives in the test
-issuer (``cli/tests/fake_issuer.py``) so the CLI can never manufacture consent.
+**Verification being real is not the same as this build being able to approve anything.** The signing
+side still does not exist in the core — deliberately, so the CLI can never manufacture consent — and no
+protected issuer exists either (ADR-0025's D1). So every path that consumes an approval (``approve``,
+``install``, ``env persist``, ``tool gc --apply``, ``uninstall``) still stops, and what it stops on is
+now exactly one thing: **a root with no keyring at all**, refused with :data:`ISSUER_PENDING` so the
+reader is told it is a boundary waiting for the P2 broker rather than a bug.
 
-Consequence, stated plainly: **this build cannot produce an approval.** Every path
-that consumes one (``approve``, ``install``, ``env persist``, ``tool gc --apply``,
-``uninstall``) therefore stops at :func:`load_keyring`, and an ``ed25519`` token stops
-at :func:`verify_signature`. Both refusals carry :data:`ISSUER_PENDING` so that any one
-of those paths tells the reader the same thing and names the pending decision (ADR-0024).
+**The verification key must come from the boundary, not from the document.** RFC 8032 does not
+reject small-order public keys, so with a degenerate key `(R = [S]B, S)` verifies for *any*
+message and no private key — pinned by a test in `test_l1_ed25519.py`. This module is therefore
+only as trustworthy as its keyring, and today that keyring is a file in the root that any process
+which can write the root can replace. **That is the gap the protected stage closes**, not
+something a check here can fix; do not move this keyring's location into a token or a caller
+argument.
+
+The keyring is a map of **records**, not of bare key bytes: each entry says which algorithm its material
+is for (``{"algorithm": "ed25519", "public_key": "base64:…"}``). That closes a hole the flat form had —
+the token's own ``signature.algorithm`` field decided which verification ran, so a token could name an
+algorithm the registered key was never registered for. Now the two must agree or the token is refused
+(draft §113, ADR-0039). The file is still called ``state/test-keyring.json`` because its only *writer*
+in this build is the test issuer; renaming it belongs to the stage that gives it a production writer.
 """
 
 from __future__ import annotations
@@ -25,10 +37,12 @@ import base64
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from ..canon import signable_payload
+from ..crypto import ed25519
 from ..clock import Clock, SYSTEM_CLOCK, parse_timestamp
 from ..exits import AirootError
 from ..schema_io import validate_document
@@ -37,12 +51,30 @@ KEYRING_RELATIVE = "state/test-keyring.json"
 TEST_ALGORITHM = "test_hmac_sha256"
 PRODUCTION_ALGORITHM = "ed25519"
 
+#: Which field of a keyring record carries the material for each algorithm. A record says what its
+#: material is *for*, so "the key is registered for another algorithm" is a refusal rather than a
+#: silent reinterpretation of the same bytes.
+ALGORITHM_FIELDS = {TEST_ALGORITHM: "secret", PRODUCTION_ALGORITHM: "public_key"}
+
+
+@dataclass(frozen=True)
+class ApprovalKey:
+    """One registered key: which algorithm it signs for, and the material to verify with.
+
+    For ``test_hmac_sha256`` the material is the shared secret; for ``ed25519`` it is the **public**
+    key, which is why a production keyring is not itself a secret — the private half must live behind
+    the protected boundary and never in the root (§113.3).
+    """
+
+    algorithm: str
+    material: bytes
+
 #: The one sentence every refusal caused by the absent production issuer must contain.
 #: Five different commands reach it, and they used to explain themselves two different ways
-#: ("no keyring" vs "ed25519 not implemented"), which reads like two unrelated gaps rather
-#: than one decision. That decision has now been **taken**: ADR-0025 chose option A, so this
-#: is not a question waiting for an answer but a boundary waiting for the P2 broker. A test
-#: pins the pointer so it cannot rot silently.
+#: ("no keyring" vs "`ed25519` not implemented"). Since §113 there is **one** way left — a root with no
+#: keyring — because verification is real for both algorithms; the sentence keeps naming the pending
+#: decision (ADR-0025 chose option A) so a reader is told this is a boundary waiting for the P2 broker
+#: rather than a missing feature. A test pins the pointer so it cannot rot silently.
 ISSUER_PENDING = "no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)"
 
 
@@ -50,16 +82,46 @@ def keyring_path(root: Path) -> Path:
     return Path(root) / KEYRING_RELATIVE
 
 
-def write_test_keyring(root: Path, keys: Mapping[str, bytes]) -> None:
-    """Test/bootstrap helper: install the P1 test issuer keyring."""
+def _b64(value: bytes) -> str:
+    return "base64:" + base64.b64encode(value).decode("ascii")
+
+
+def _write_records(root: Path, records: Mapping[str, ApprovalKey]) -> None:
+    """Merge records into the keyring file, replacing only the ids given."""
 
     path = keyring_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"keys": {key_id: base64.b64encode(secret).decode("ascii") for key_id, secret in keys.items()}}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            existing = dict(json.loads(path.read_text(encoding="utf-8")).get("keys", {}))
+        except (OSError, ValueError):
+            existing = {}
+    for key_id, record in records.items():
+        field = ALGORITHM_FIELDS[record.algorithm]
+        existing[key_id] = {"algorithm": record.algorithm, field: _b64(record.material)}
+    path.write_text(
+        json.dumps({"keys": existing}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def load_keyring(root: Path) -> dict[str, bytes]:
+def write_test_keyring(root: Path, keys: Mapping[str, bytes]) -> None:
+    """Install test-issuer secrets (``test_hmac_sha256``) as keyring records."""
+
+    _write_records(root, {key_id: ApprovalKey(TEST_ALGORITHM, secret) for key_id, secret in keys.items()})
+
+
+def write_public_keys(root: Path, keys: Mapping[str, bytes]) -> None:
+    """Install ``ed25519`` **public** keys — what a production keyring will hold.
+
+    A public key is not a secret, so this file may sit in the root; the private half must not, which is
+    why no function here signs anything.
+    """
+
+    _write_records(root, {key_id: ApprovalKey(PRODUCTION_ALGORITHM, key) for key_id, key in keys.items()})
+
+
+def load_keyring(root: Path) -> dict[str, ApprovalKey]:
     path = keyring_path(root)
     if not path.is_file():
         raise AirootError(
@@ -68,16 +130,26 @@ def load_keyring(root: Path) -> dict[str, bytes]:
             evidence=[
                 str(path),
                 "the only issuer is the test one (cli/tests/fake_issuer.py); the core verifies but never mints",
-                "approve/install/env persist/tool gc --apply/uninstall cannot complete on a real machine until this is decided",
+                "approve/install/env persist/tool gc --apply/uninstall cannot complete on a real machine until a protected issuer exists",
             ],
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return {
-            str(key_id): base64.b64decode(str(value))
-            for key_id, value in dict(payload.get("keys", {})).items()
-        }
-    except (OSError, ValueError, KeyError) as exc:
+        records: dict[str, ApprovalKey] = {}
+        for key_id, record in dict(payload.get("keys", {})).items():
+            if not isinstance(record, dict):
+                raise ValueError(f"{key_id}: a keyring entry must be a record, not bare material")
+            algorithm = str(record.get("algorithm", ""))
+            if algorithm not in ALGORITHM_FIELDS:
+                raise ValueError(f"{key_id}: unknown algorithm {algorithm!r}")
+            value = str(record.get(ALGORITHM_FIELDS[algorithm], ""))
+            if not value.startswith("base64:"):
+                raise ValueError(f"{key_id}: {ALGORITHM_FIELDS[algorithm]} must be base64-prefixed")
+            records[str(key_id)] = ApprovalKey(
+                algorithm, base64.b64decode(value[len("base64:") :])
+            )
+        return records
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise AirootError("PROVENANCE_FAILED", f"approval keyring is unreadable: {path}", evidence=[str(exc)]) from exc
 
 
@@ -85,25 +157,51 @@ def signable_bytes(token: dict[str, Any]) -> bytes:
     return signable_payload(token, omit=("signature", "consumed_at"))
 
 
-def verify_signature(token: dict[str, Any], keyring: Mapping[str, bytes]) -> None:
+def verify_signature(token: dict[str, Any], keyring: Mapping[str, ApprovalKey]) -> None:
+    """Verify the token's signature, refusing the algorithm/key combinations that must not verify.
+
+    Three refusals, each for a different reason, and the middle one is why the keyring holds records:
+
+    1. an algorithm this build does not implement — refused by name;
+    2. a key registered for a *different* algorithm — the token names the algorithm, so without this
+       check the same registered bytes would be reinterpreted as whatever the token asked for;
+    3. a signature that simply does not verify against the registered material.
+    """
+
     signature = token.get("signature") or {}
     algorithm = signature.get("algorithm")
     key_id = str(signature.get("key_id", ""))
     value = str(signature.get("value", ""))
 
-    if algorithm == PRODUCTION_ALGORITHM:
+    if algorithm not in ALGORITHM_FIELDS:
         raise AirootError(
-            "PROVENANCE_FAILED",
-            f"ed25519 approval verification is not implemented; {ISSUER_PENDING}",
+            "INVALID_APPROVAL",
+            f"unsupported signature algorithm: {algorithm}",
+            evidence=[f"algorithm={algorithm}", f"supported={sorted(ALGORITHM_FIELDS)}"],
+        )
+    if key_id not in keyring:
+        # Key *ids* are not secrets (a token carries one), and "which keys are registered" is the one
+        # question a reader of this refusal has: a keyring that is not the one they think it is looks
+        # exactly like a bad token otherwise.
+        raise AirootError(
+            "INVALID_APPROVAL",
+            f"unknown signing key: {key_id}",
             evidence=[
-                "the protected approval issuer is P2 (caps/acl.py observes but never writes)",
-                "a test_hmac_sha256 token proves the consumption side only",
+                f"key_id={key_id}",
+                f"registered key ids: {', '.join(sorted(keyring)) or 'none'}",
             ],
         )
-    if algorithm != TEST_ALGORITHM:
-        raise AirootError("INVALID_APPROVAL", f"unsupported signature algorithm: {algorithm}")
-    if key_id not in keyring:
-        raise AirootError("INVALID_APPROVAL", f"unknown signing key: {key_id}")
+    registered = keyring[key_id]
+    if registered.algorithm != algorithm:
+        raise AirootError(
+            "INVALID_APPROVAL",
+            "the signing key is registered for a different algorithm",
+            evidence=[
+                f"token={algorithm}",
+                f"keyring={registered.algorithm}",
+                f"key_id={key_id}",
+            ],
+        )
     if not value.startswith("base64:"):
         raise AirootError("INVALID_APPROVAL", "signature value must be base64-prefixed")
     try:
@@ -111,7 +209,17 @@ def verify_signature(token: dict[str, Any], keyring: Mapping[str, bytes]) -> Non
     except (ValueError, TypeError) as exc:
         raise AirootError("INVALID_APPROVAL", "signature value is not valid base64", evidence=[str(exc)]) from exc
 
-    expected = hmac.new(keyring[key_id], signable_bytes(token), hashlib.sha256).digest()
+    message = signable_bytes(token)
+    if algorithm == PRODUCTION_ALGORITHM:
+        if not ed25519.verify(registered.material, provided, message):
+            raise AirootError(
+                "INVALID_APPROVAL",
+                "approval signature does not verify against the registered public key",
+                evidence=[f"key_id={key_id}", f"algorithm={algorithm}"],
+            )
+        return
+
+    expected = hmac.new(registered.material, message, hashlib.sha256).digest()
     if not hmac.compare_digest(expected, provided):
         raise AirootError("INVALID_APPROVAL", "approval signature does not match the token contents")
 

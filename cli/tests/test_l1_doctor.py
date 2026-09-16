@@ -362,7 +362,7 @@ def test_pending_transaction_is_reported_and_repairable(registry, clock, root) -
     assert pending["status"] == "degraded"
     assert status_exit_code(pending["status"]) == 2
 
-    repair(registry, tx["transaction_id"], clock=clock, keyring={fake_issuer.KEY_ID: fake_issuer.TEST_SECRET})
+    repair(registry, tx["transaction_id"], clock=clock, keyring=fake_issuer.keyring())
 
     after = doctor(root.path, clock=clock, registry=registry)
     assert codes(after) == {"POLICY_ONLY_MODE"}, "repair leaves a clean bill of health"

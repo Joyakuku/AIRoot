@@ -1950,3 +1950,87 @@ Rust broker 有了要复现的东西；`probe_root` 的缺席是**记录在案�
 那段代码插在 `_build_documents` 里，第一版复用了 `plan`/`root`/`registry`/`clock` 这几个名字，把下面的
 `plan_fake_tool` fixture **悄悄改写成 broker 的计划**——抓住它的不是任何文档判据，而是 golden 语料的
 **逐字节再生检查**（`plan_fake_tool.json` 出现在 diff 里）。共享函数里插入的块必须用自己的名字。
+
+
+---
+
+## ADR-0039：批准签名真了，但**签发**仍然是那条边界
+
+**背景**：P2 的第一批工作（§113）刻意只做「受保护边界需要用、但**不需要先有那个边界**就能建成并验证」的
+三件事，本条记录其中两处改动了契约的决定。
+
+* **真实 Ed25519 校验**（`airoot/crypto/ed25519.py`，RFC 8032，**纯 Python**）：不加依赖的代价是自己写曲线
+  运算，收益是"来源证明"第一次有了可执行的判据；它的验收面是 RFC §7.1 的官方向量，不是"自己签自己验"。
+* **读另一个进程的 token**（`caps/identity.py` 的 `probe_process`）：broker 要判"谁在问"，而在此之前这个
+  仓库连**别人**的 SID 都读不出来。它是**观测**，不是授权——读到一个调用方是提权的，不等于它被允许。
+* **ACL 的写一侧**（`caps/acl.py` 的 baseline/apply/verify/restore）：**只作为库**，不接任何动词、不接任何
+  schema；没有 broker 的今天，接上去等于给同用户进程一条改 DACL 的路。
+
+**决策一：keyring 的每一条是「记录」，不是裸材料。**
+
+```json
+{"keys": {"airoot-approver-1": {"algorithm": "ed25519", "public_key": "base64:…"}}}
+```
+
+理由是旧形状有一个真实的洞：**由 token 自己那个 `signature.algorithm` 字段决定跑哪种校验**，于是同一份注册
+材料会被按 token 的声明**重新解释**（登记为 HMAC 的密钥被当成 Ed25519 公钥去用）。现在两边的算法必须一致，
+否则 `INVALID_APPROVAL`(4)；两个方向各有测试。`load_keyring` 拒绝旧形状（报 `PROVENANCE_FAILED`）而不是
+猜它的算法——本仓库没有任何已落盘的旧 keyring（实测：`state/test-keyring.json` 只在测试运行时写），所以
+不需要迁移。
+
+**决策二：`ed25519` 的"未实现"分支删掉，`PROVENANCE_FAILED` 只剩一种触发方式。**
+
+签名不对 → `INVALID_APPROVAL`(4)（"你的 token 不对"）；**整个 root 没有 keyring** → `PROVENANCE_FAILED`(7)
+且带 `ISSUER_PENDING`（"这里没有签发方"）。这两件事以前在两条消息里用同一句话表达，读起来像两个互不相干的
+缺口；现在它们是两件事，各说各的。**这是本轮唯一被删掉的拒绝理由**，也是本文档必须说清的那件事。
+
+**决策三（没变，因此更要说）：本 build 仍然签不出一份批准。**
+
+核心永远不会有签名侧——那是"CLI 不能凭空制造同意"的实现方式。唯一的写者还是测试签发方，
+`approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 五条路径在真机上**仍然**停在
+`PROVENANCE_FAILED`。**"校验已实现"与"本机可以批准"是两件事**，任何把它们混起来的说法都是假的；
+私钥的受保护存放（`caps/acl.py` 的写一侧 + broker）是下一阶段。
+
+**决策四：keyring 的路径名照旧（`state/test-keyring.json`）。** 它唯一的**写者**仍是测试签发方，
+而 ADR-0024/0025 与若干阶段记录都引用了这个名字；改名属于"给它一个生产写者"的那一阶段，到时候连同迁移
+一起做。这一条写下来，是为了让后来的读者知道这个名字不是被忽略的。
+
+**决策五：验证用的公钥必须由边界钉住，不能来自被检查的文档。** RFC 8032 **不**拒绝小阶公钥，所以在退化公钥下 `(R = [S]B, S)` 对**任意**消息都能通过——这不是实现的疏漏，是算法的边界，已由一条点名测试钉住（§113.2）。因此 `verify` 的强度上限等于它的 keyring：今天 keyring 是 root 里一个文件，**任何能写 root 的进程都能换掉它**。这正是受保护阶段要关的那道口，也是为什么本次**没有**把 keyring 或公钥挪到 token、调用方参数或任何被检查的文档里。
+
+**后果与边界**：`probe_process` 仍然回答不了 `application_id`（application identity 得由 broker 自己确立，
+而且 `client` 块本身仍然只是**自述**）；ACL 的写一侧在受保护边界存在之前**不得**接上调用者；真实私钥今天
+没有任何被保护的家，所以"来源证明"这条路在真机上仍走不到底。
+
+
+---
+
+## ADR-0040：ACL 写一侧的两条边界——非空基线**保护式**写入，空基线**拒绝**
+
+**背景**：§113 把 ACL 的写一侧（`caps/acl.py` 的 `acl_baseline`/`verify_baseline`/`apply_baseline`/
+`restore_acl`）作为**库**建起来（不接任何动词、不接任何 schema），过程中量到两件必须在写之前定下的事。
+
+**决策一：非空基线一律用 `PROTECTED_DACL_SECURITY_INFORMATION` 写。** 实测：不带这个标志时，一条显式 ACE
+的基线在 `%TEMP%` 下被**存成 12 条**（1 条显式 + 从父目录活继承来的 11 条），于是 `verify_baseline` 永远
+不可能返回"干净"——**不保护，基线根本落不下去**。代价写进 `apply_baseline` 的 docstring：继承来的 ACE 变成
+显式存储（顺序与掩码不变，`INHERITED_ACE` 位消失），目录不再跟随父目录，既有的子对象保留它们已经继承到的
+东西；第一次写会对每条 ACE 报一条差异，之后每次写都是干净的。
+
+**决策二：空基线（`entries=()` 且 `dacl_present=true`）**拒绝**，作为 finding 而不是异常。** 理由是实测的，
+而且它是本阶段最值得记的一条：**保护式空 DACL 是一扇单向门**。它确实能落下去（0 条、验证通过），随后
+`CreateFileW(path, WRITE_DAC)` 返回 **`ERROR_ACCESS_DENIED`(5)**、`restore_acl` 被同样拒绝、目录既删不掉也
+改不回去——**在提权 token 下也一样**，因为空 DACL 连所有者的隐式 `WRITE_DAC` 都拒。逃生口是"所有者 +
+特权"（备份/还原语义），而**那正是本 build 没有的提权**（§5 第 1 条）。于是一次不经意的库调用会在调用者
+身后关上一扇门，而 `restore_acl` 存在的意义恰恰是承诺"施加基线不是单向门"。**同一个函数里另一条被拒的
+姿态**（`dacl_present=false`，NULL DACL）保持不变：这类东西本模块**报告**而不近似。
+
+**这一决策的实物证据**：那 9 个测试目录（3 个目标 + 6 个探针）带着受保护的空 DACL 留在**被 gitignore 的**
+`cli/tests/.tmp/<agent>/` 里，本进程**无法打开、删除或重新设 ACL**——它们就是"空基线不可回收"的现场；新的
+运行不受影响（夹具的父目录名带每次运行的标签）。
+
+**后果与边界（reviewer 必须先知道）**：**`SetSecurityInfo` 成功不等于调用者活下来**——一条没有匹配调用者
+token 的 allow 的保护式 DACL，会让调用者自己再也打不开那个目录（实测：给 Everyone / BUILTIN\Users /
+Authenticated Users 的 allow 足够；只给 SYSTEM 的 allow、或一条 deny 就不够）。"这条基线是否让调用者活着"
+需要一个关于主体的策略，而那个策略**不在这一层**，属于 broker。本层只保证：畸形输入是 finding/`ValueError`、
+写后可以读回、`restore_acl` 尽力还原并要求调用者自己核对；**一个本模块无法写的 ACE 类型（对象/回调 ACE，
+真实数据根里会有）会让 apply 与 restore 都抛 `ValueError`**，也就是说这类目录的 ACL 本模块还原不了——已写在
+docstring 里，没有在真机上测过。

@@ -18,7 +18,7 @@ from typing import Any
 
 from airoot.clock import Clock
 from airoot.schema_io import validate_self
-from airoot.tx.approval import signable_bytes, write_test_keyring
+from airoot.tx.approval import ApprovalKey, TEST_ALGORITHM, signable_bytes, write_test_keyring
 
 TEST_SECRET = b"airoot-test-only-secret-v1"
 KEY_ID = "fixture-key"
@@ -27,6 +27,17 @@ ISSUER = "test-protected-issuer"
 
 def install_keyring(root: Path, secret: bytes = TEST_SECRET) -> None:
     write_test_keyring(root, {KEY_ID: secret})
+
+
+def keyring(secret: bytes = TEST_SECRET) -> dict[str, ApprovalKey]:
+    """The verifier's own view of the test key — what `verify_approval(keyring=…)` takes.
+
+    Since §113 a keyring is a map of **records** (algorithm + material), not of bare bytes, so a caller
+    that hands one in directly has to say which algorithm the material is for. Tests that did not say
+    used to pass a `{key_id: secret}` dict and would now raise on attribute access.
+    """
+
+    return {KEY_ID: ApprovalKey(TEST_ALGORITHM, secret)}
 
 
 def sign(token: dict[str, Any], secret: bytes = TEST_SECRET) -> dict[str, Any]:

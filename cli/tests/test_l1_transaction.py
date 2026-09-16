@@ -451,7 +451,7 @@ def test_every_boundary_is_recoverable(registry: Registry, clock, root, machine,
     finally:
         reopened.close()
 
-    result = repair(registry, tx["transaction_id"], clock=clock, keyring={fake_issuer.KEY_ID: fake_issuer.TEST_SECRET})
+    result = repair(registry, tx["transaction_id"], clock=clock, keyring=fake_issuer.keyring())
     assert result["state"] == "FINALIZED"
 
     active = registry.bindings(active_only=True)
@@ -461,7 +461,7 @@ def test_every_boundary_is_recoverable(registry: Registry, clock, root, machine,
     assert registry.integrity_problems() == []
 
     # repair is idempotent (T-011)
-    again = repair(registry, tx["transaction_id"], clock=clock, keyring={fake_issuer.KEY_ID: fake_issuer.TEST_SECRET})
+    again = repair(registry, tx["transaction_id"], clock=clock, keyring=fake_issuer.keyring())
     assert again["action"] == "no_action"
 
 
@@ -588,15 +588,23 @@ def test_policy_revision_change_invalidates_approval(registry: Registry, clock, 
     assert err.value.exit_code == 4
 
 
-def test_ed25519_tokens_are_not_accepted_in_p1(registry: Registry, clock, root) -> None:
+def test_an_ed25519_token_with_an_unregistered_key_is_a_bad_token(registry: Registry, clock, root) -> None:
+    """§113: the algorithm is implemented now, so this is a *token* problem, not a missing feature.
+
+    Before §113 an `ed25519` token was refused with `PROVENANCE_FAILED` and the pending-issuer sentence,
+    because no verification existed. It exists now (RFC 8032, `airoot/crypto/ed25519.py`), so a token
+    naming a key nobody registered is refused the way any other bad token is — `INVALID_APPROVAL` — and
+    it must **not** carry the issuer sentence, which would send the reader after the wrong gap.
+    """
+
     plan, token = build(registry, clock, root, version="13.0.0")
     production = dict(token)
     production["signature"] = {"algorithm": "ed25519", "key_id": "prod-key", "value": "base64:AAAA"}
     with pytest.raises(AirootError) as err:
         SimulationRunner(registry, clock=clock).commit(plan, production)
-    assert err.value.reason_code == "PROVENANCE_FAILED"
-    # Both refusals caused by the absent issuer must name the pending decision (draft §67).
-    assert ISSUER_PENDING in err.value.message
+    assert err.value.reason_code == "INVALID_APPROVAL"
+    assert "unknown signing key" in err.value.message
+    assert ISSUER_PENDING not in err.value.message, "a bad token is not the missing issuer"
     assert err.value.evidence, "a refusal must say why it refused"
 
 
@@ -610,38 +618,38 @@ def test_missing_keyring_is_reported(registry: Registry, clock, root) -> None:
     assert err.value.evidence, "a refusal must say why it refused"
 
 
-def test_both_issuer_refusals_name_the_same_pending_decision(registry: Registry, clock, root) -> None:
-    """The two ways to hit the missing issuer used to explain themselves differently.
+def test_the_one_remaining_issuer_refusal_names_the_pending_decision(registry: Registry, clock, root) -> None:
+    """§113 left exactly one refusal that is about the absent issuer, and it must still say so.
 
-    "no keyring is installed" and "ed25519 is not implemented" read like two unrelated gaps.
-    They are one decision nobody has taken yet (ADR-0024), and a reader who hits either path
-    has to be able to tell. The dangerous direction of this guard is the shared sentence
-    being emptied out or the pointer losing its target, so both halves are asserted:
-    the sentence must name ADR-0024, and that ADR must exist.
+    Before §113 the absent issuer was reachable two ways ("no keyring" and "`ed25519` is not
+    implemented") and both had to name the same pending decision. Verification is real for both
+    algorithms now, so the second way is gone: what is left is a root with **no keyring at all**. The
+    pointer must survive that change — the dangerous direction of this guard is the shared sentence
+    being emptied out or losing its target, so the sentence, its ADR, and the ADR it settled are all
+    asserted, plus the new fact that a bad ed25519 token does *not* wear the sentence.
     """
 
     plan = create_plan(registry, version="16.0.0", clock=clock)
     issued = fake_issuer.issue(plan, clock=clock)
-    production = dict(issued)
-    production["signature"] = {"algorithm": "ed25519", "key_id": "prod-key", "value": "base64:AAAA"}
 
     messages = []
-    # No keyring yet: the token never gets as far as its signature algorithm.
+    # No keyring yet: this is the boundary, and it is the only thing left that reports it.
     with pytest.raises(AirootError) as err:
         SimulationRunner(registry, clock=clock).commit(plan, issued)
     assert err.value.reason_code == "PROVENANCE_FAILED"
     messages.append(err.value.message)
 
-    # Keyring installed: the ed25519 token is refused for the other reason.
+    # Keyring installed: an ed25519 token is now refused as a bad token, without that sentence.
     fake_issuer.install_keyring(root.path)
+    production = dict(issued)
+    production["signature"] = {"algorithm": "ed25519", "key_id": "prod-key", "value": "base64:AAAA"}
     with pytest.raises(AirootError) as err:
         SimulationRunner(registry, clock=clock).commit(plan, production)
-    assert err.value.reason_code == "PROVENANCE_FAILED"
-    messages.append(err.value.message)
+    assert err.value.reason_code == "INVALID_APPROVAL"
+    assert ISSUER_PENDING not in err.value.message
 
     assert "ADR-0025" in ISSUER_PENDING, "the shared sentence lost its pointer"
     assert all(ISSUER_PENDING in message for message in messages), messages
-    assert messages[0] != messages[1], "distinct causes still need distinct first halves"
 
     decision_log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
     assert "## ADR-0025" in decision_log, (
@@ -814,7 +822,7 @@ def test_a_rollback_leaves_a_binding_another_transaction_committed_alone(
         registry,
         stopped["transaction_id"],
         clock=clock,
-        keyring={fake_issuer.KEY_ID: fake_issuer.TEST_SECRET},
+        keyring=fake_issuer.keyring(),
     )
     assert recovered["state"] == "ROLLED_BACK"
 

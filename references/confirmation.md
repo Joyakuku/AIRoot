@@ -44,9 +44,12 @@ cancel             取消
 ### 这个 build 里第 3、4 步**没有可用实现**
 
 第 1、2 步（`plan --dry-run` / `plan`）今天就能跑，且需要确认时**不写任何文件**。
-但**没有任何东西能签发 approval token**：核心只做校验，唯一实现过的签发方是测试用的
+但**没有任何东西能签发 approval token**：核心只做校验（§113 起两种算法都真的在验，`ed25519` 是
+RFC 8032），唯一实现过的签发方是测试用的
 `cli/tests/fake_issuer.py`，而 `state/test-keyring.json` 是**测试**密钥——它就写在 root 里，
-任何能写这个 root 的进程都能签，所以**不能**当生产签发方用。
+任何能写这个 root 的进程都能签，所以**不能**当生产签发方用。keyring 的每一条是**记录**
+（`algorithm` + 材料，§113 / ADR-0039），所以同一个文件将来可以只放生产的**公钥**而不因此变成秘密；
+test- 这个名字要等有生产写者时再改。
 
 结果：`install --token-file`、`env persist --token-file`、`tool gc --apply --token-file`、
 `uninstall --token-file`（own 的那一支）以及 `approve --token-file` 在真机上都会返回

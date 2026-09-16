@@ -28,6 +28,31 @@ Three rules, each copied from a sibling module that learned it the hard way:
 enough* for the broker: :meth:`ClientIdentity.is_complete` only says whether the schema's four fields
 can be filled at all, and the policy question (which ``application_id`` values may ask for which
 operations) belongs to the broker, not to the process introducing itself.
+
+**The other half: reading a *different* process's token (draft §113).** Everything above answers "who
+am I", which is the one question a process can answer about itself without any privilege — and,
+precisely because it is self-reported, it proves nothing about a *caller*. The protected broker's job
+(docs/broker §3:52) is to check the client process's token, user SID, integrity level and application
+identity, and that needs the client's token: :func:`probe_process` opens the target with
+``PROCESS_QUERY_LIMITED_INFORMATION`` — the least right that still reads a token — then opens *that*
+process's token with ``TOKEN_QUERY`` and reads the same three facts through the same helpers
+:func:`probe_identity` uses. One implementation of "what does this token say", so the two paths cannot
+drift apart about the machine they share.
+
+The two functions answer different questions, and that difference is the reason there are two. For this
+process, "unreadable" is an oddity; for another process it is the *ordinary* answer — the pid names
+nothing, the process exited mid-probe, it is protected, it belongs to another user, or it runs at a
+higher integrity level. Each of those becomes ``None`` plus an evidence line, never the negative fact:
+``elevated=False`` means the target's token answered the question, while ``elevated=None`` means nobody
+managed to ask. A broker that blurred those two would refuse a legitimate client — or, worse, read
+"could not look" as "looked, and it was fine".
+
+**Observation is not authorisation.** For either function: the fact that a caller is elevated, or
+shares the user, or carries any particular SID says nothing about whether it is *entitled* to the
+operation it asks for. Entitlement is policy — which caller may ask for which operation, under which
+plan and which approval — and no such policy exists in this build (ADR-0025's D1 leaves the whole
+protected broker to P2). Nothing here is a permission decision: :meth:`ProcessIdentity.is_complete`
+reports that the observation succeeded, never that the observed process is welcome.
 """
 
 from __future__ import annotations
@@ -38,10 +63,16 @@ from ctypes import wintypes
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["ClientIdentity", "probe_identity"]
+__all__ = ["ClientIdentity", "ProcessIdentity", "probe_identity", "probe_process"]
 
 #: `TOKEN_QUERY` — enough to read the token, not enough to do anything with it.
 TOKEN_QUERY = 0x0008
+
+#: `PROCESS_QUERY_LIMITED_INFORMATION` — the least process right that still reads a token, and the
+#: only one `probe_process` asks for. `PROCESS_QUERY_INFORMATION` would also work and is wrong here:
+#: the limited right is granted where the full one is not, and a read-only observation that asks for
+#: more than it needs is how a probe turns into a privilege requirement.
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 #: `TOKEN_INFORMATION_CLASS` members this module reads. The numbers are the ABI: they come from
 #: `winnt.h` and are what the OS dispatches on, so they are pinned in a test rather than trusted.
@@ -56,6 +87,12 @@ ERROR_INSUFFICIENT_BUFFER = 122
 #: need a real, nameable Windows status to simulate a refusal with — a made-up number would test the
 #: formatting rather than the path a machine actually takes.
 ERROR_ACCESS_DENIED = 5
+
+#: `ERROR_INVALID_PARAMETER` — what `OpenProcess` answers for a pid that names no process at all.
+#: Exported for the same reason as the denial above, and the pair must not be conflated: a pid that
+#: exists but is protected answers `ERROR_ACCESS_DENIED`, so only this status is evidence that the pid
+#: is free. Two different facts, two different numbers, and a test that must tell them apart.
+ERROR_INVALID_PARAMETER = 87
 
 #: `SECURITY_MANDATORY_*_RID_BASE` from `winnt.h`, and the four words the published schema allows.
 #: Windows compares integrity levels with `>=` against these bases, so the mapping is a threshold
@@ -178,6 +215,8 @@ def _declare_signatures(advapi32: Any, kernel32: Any) -> None:
     advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
     kernel32.GetCurrentProcess.argtypes = []
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.LocalFree.argtypes = [wintypes.HANDLE]
     kernel32.LocalFree.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -200,6 +239,23 @@ def _status_message(status: int) -> str:
     return f"err={status} ({text})" if text else f"err={status}"
 
 
+def _open_token(advapi32: Any, process_handle: Any) -> tuple[Any | None, int]:
+    """Open ``process_handle``'s token for query only. Returns ``(handle, status)``.
+
+    Split out of :func:`_open_process_token` when the process-targeted probe arrived: the call is the
+    same for the current-process pseudo-handle as for a real handle from ``OpenProcess``, and this
+    module's rule is that a token is read through one implementation rather than two that must be kept
+    in step. ``process_handle`` stays the caller's to close — this function never closes what it did
+    not open, and it returns only the token it did open.
+    """
+
+    handle = wintypes.HANDLE()
+    ok = advapi32.OpenProcessToken(process_handle, TOKEN_QUERY, ctypes.byref(handle))
+    if not ok:
+        return None, ctypes.get_last_error() or 0
+    return handle, 0
+
+
 def _open_process_token(advapi32: Any, kernel32: Any) -> tuple[Any | None, int]:
     """Open the *current* process's token for query only. Returns ``(handle, status)``.
 
@@ -208,9 +264,24 @@ def _open_process_token(advapi32: Any, kernel32: Any) -> tuple[Any | None, int]:
     (:func:`probe_identity` looks it up by name at call time).
     """
 
-    handle = wintypes.HANDLE()
-    ok = advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(handle))
-    if not ok:
+    return _open_token(advapi32, kernel32.GetCurrentProcess())
+
+
+def _open_process(kernel32: Any, pid: int) -> tuple[Any | None, int]:
+    """Open another process with the least right that still reads its token. ``(handle, status)``.
+
+    A seam for the same reason :func:`_open_process_token` is one: on a healthy machine the real call
+    succeeds, so the branch that reports "there is no such process" would otherwise never run until
+    the day a broker is handed a stale pid. The handle belongs to the caller, which must close it.
+
+    ``PROCESS_QUERY_LIMITED_INFORMATION`` and not ``PROCESS_QUERY_INFORMATION``: see the constant. A
+    pid that names no process comes back as ``ERROR_INVALID_PARAMETER`` (87), which is a different
+    status from the ``ERROR_ACCESS_DENIED`` (5) a protected process answers with — the caller has to
+    be able to say which of the two happened.
+    """
+
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
         return None, ctypes.get_last_error() or 0
     return handle, 0
 
@@ -279,6 +350,58 @@ def _integrity_word(advapi32: Any, kernel32: Any, sid_bytes: bytes | None) -> tu
     return None, f"integrity SID {label} (rid=0x{rid:04x}) is not one of low/medium/high/system"
 
 
+def _read_token_facts(
+    advapi32: Any, kernel32: Any, handle: Any
+) -> tuple[str | None, str | None, bool | None, list[str]]:
+    """Read the three observable facts off an **open** token handle: SID, integrity word, elevation.
+
+    Shared by both probes, because "what does this token say" is one question whether the token belongs
+    to this process or to another one: the classes, the copy-out, the integrity ladder and the elevation
+    read are the module's, restated nowhere. The evidence lines are therefore identical in both paths,
+    which is also what lets the failure tests pin them once.
+
+    The three reads are independent: a token that answers ``TokenElevation`` but refuses
+    ``TokenIntegrityLevel`` yields ``False``/``None`` rather than nothing at all, because those are two
+    different observations and only one of them failed. The handle is the caller's and is not closed
+    here — the caller opened it and the caller knows when it is done.
+    """
+
+    sid: str | None = None
+    integrity: str | None = None
+    elevated: bool | None = None
+    evidence: list[str] = []
+
+    raw, base, size, status = _get_token_information(advapi32, handle, TOKEN_USER)
+    if raw is None:
+        evidence.append(f"GetTokenInformation(TokenUser) failed: {_status_message(status)}")
+    else:
+        sid_bytes = _extract_sid(raw, base, size)
+        sid = None if sid_bytes is None else _sid_to_string(advapi32, kernel32, sid_bytes)
+        if sid is None:
+            evidence.append("the token's user SID could not be converted to S-1-... form")
+        else:
+            evidence.append(f"TokenUser -> {sid}")
+
+    raw, base, size, status = _get_token_information(advapi32, handle, TOKEN_INTEGRITY_LEVEL)
+    if raw is None:
+        evidence.append(f"GetTokenInformation(TokenIntegrityLevel) failed: {_status_message(status)}")
+    else:
+        integrity, note = _integrity_word(advapi32, kernel32, _extract_sid(raw, base, size))
+        evidence.append(note)
+
+    raw, _base, _size, status = _get_token_information(advapi32, handle, TOKEN_ELEVATION)
+    if raw is None:
+        evidence.append(f"GetTokenInformation(TokenElevation) failed: {_status_message(status)}")
+    else:
+        # The token says yes or no; anything else would be a guess, and a guess is the one thing this
+        # module may not return for this field. A read that *failed* leaves `None`, which is a
+        # different answer from `False` and has to stay one.
+        elevated = bool(int.from_bytes(raw[:4], "little"))
+        evidence.append(f"TokenElevation -> {elevated}")
+
+    return sid, integrity, elevated, evidence
+
+
 @dataclass(frozen=True)
 class ClientIdentity:
     """What this process can prove about itself. Every field is None when it could not be established."""
@@ -319,6 +442,38 @@ class ClientIdentity:
         }
 
 
+@dataclass(frozen=True)
+class ProcessIdentity:
+    """What a *different* process can be observed to be. Every field is None when it could not be read.
+
+    ``pid`` is the one field that is always there, because it is what the caller asked about: a pid
+    that names nothing still yields ``ProcessIdentity(pid=...)`` with everything else unknown, and
+    "unknown" is a legitimate answer rather than a defect. ``elevated=False`` and ``elevated=None``
+    are the two facts this type exists to keep apart — the target's token said no, versus nobody
+    managed to ask it.
+
+    Observation only. Being able to read this is not authorisation for anything; see
+    :func:`probe_process`.
+    """
+
+    pid: int
+    sid: str | None
+    integrity: str | None
+    elevated: bool | None
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+
+    def is_complete(self) -> bool:
+        """True when the three observable facts are all present.
+
+        The contrast with :meth:`ClientIdentity.is_complete` is deliberate: there, completeness is
+        what the *request schema* requires of a client block (SID and integrity; elevation is not one
+        of its required fields), while here nothing outside this observation consumes the answer yet,
+        so completeness means the whole observation — SID, integrity level and elevation — succeeded.
+        """
+
+        return self.sid is not None and self.integrity is not None and self.elevated is not None
+
+
 def probe_identity() -> ClientIdentity:
     """Read-only observation of this process's identity. NEVER raises for an unreadable token."""
 
@@ -339,38 +494,82 @@ def probe_identity() -> ClientIdentity:
             evidence.append(f"OpenProcessToken(TOKEN_QUERY) failed: {_status_message(status)}")
             return ClientIdentity(sid=None, integrity=None, elevated=None, evidence=tuple(evidence))
         try:
-            raw, base, size, status = _get_token_information(advapi32, handle, TOKEN_USER)
-            if raw is None:
-                evidence.append(f"GetTokenInformation(TokenUser) failed: {_status_message(status)}")
-            else:
-                sid_bytes = _extract_sid(raw, base, size)
-                sid = None if sid_bytes is None else _sid_to_string(advapi32, kernel32, sid_bytes)
-                if sid is None:
-                    evidence.append("the token's user SID could not be converted to S-1-... form")
-                else:
-                    evidence.append(f"TokenUser -> {sid}")
-
-            raw, base, size, status = _get_token_information(advapi32, handle, TOKEN_INTEGRITY_LEVEL)
-            if raw is None:
-                evidence.append(
-                    f"GetTokenInformation(TokenIntegrityLevel) failed: {_status_message(status)}"
-                )
-            else:
-                integrity, note = _integrity_word(
-                    advapi32, kernel32, _extract_sid(raw, base, size)
-                )
-                evidence.append(note)
-
-            raw, _base, _size, status = _get_token_information(advapi32, handle, TOKEN_ELEVATION)
-            if raw is None:
-                evidence.append(f"GetTokenInformation(TokenElevation) failed: {_status_message(status)}")
-            else:
-                # The token says yes or no; anything else would be a guess, and a guess is the one
-                # thing this module may not return for this field.
-                elevated = bool(int.from_bytes(raw[:4], "little"))
-                evidence.append(f"TokenElevation -> {elevated}")
+            sid, integrity, elevated, notes = _read_token_facts(advapi32, kernel32, handle)
+            evidence.extend(notes)
         finally:
             kernel32.CloseHandle(handle)
     except Exception as error:  # never raise: a probe that dies teaches the caller nothing
         evidence.append(f"identity probe failed: {error.__class__.__name__}: {error}")
     return ClientIdentity(sid=sid, integrity=integrity, elevated=elevated, evidence=tuple(evidence))
+
+
+def probe_process(pid: int) -> ProcessIdentity:
+    """Read-only observation of another process's token. NEVER raises for an unreadable target.
+
+    ``PROCESS_QUERY_LIMITED_INFORMATION`` on the process, then ``TOKEN_QUERY`` on its token, then the
+    same three ``GetTokenInformation`` classes :func:`probe_identity` reads — through the same helpers,
+    so this is the inverse of that function and not a second implementation of it.
+
+    **This is observation, not authorisation.** It reports what the target's token can be seen to be
+    (user SID, integrity level, whether it is elevated). It says nothing about whether that process is
+    *entitled* to the operation it may be asking for: entitlement is policy — which caller may ask for
+    which operation, under which plan and which approval — and that policy does not exist in this build
+    (ADR-0025's D1 leaves the protected broker to P2). A complete reading means the probe could look,
+    never that the caller is welcome; the decision belongs to the broker's policy layer, which is the
+    next thing to be built (docs/broker §3:52 lists the check this reading feeds).
+
+    Failure is data, never an exception and never a guess. A pid that names no process, a process that
+    exited mid-probe, a protected process whose token refuses to open, a token that will not answer one
+    of the classes — each becomes ``None`` plus an ``evidence`` line naming the call and the Windows
+    status. ``elevated=False`` means the token was read and answered no; ``elevated=None`` means nobody
+    managed to ask, and a caller that conflates the two decides wrongly in one direction or the other.
+    """
+
+    sid: str | None = None
+    integrity: str | None = None
+    elevated: bool | None = None
+    evidence: list[str] = []
+    try:
+        advapi32, kernel32 = _load_libraries()
+        if advapi32 is None or kernel32 is None:  # pragma: no cover - v1 is a Windows provider
+            evidence.append("the Windows token APIs are unavailable on this platform")
+            return ProcessIdentity(
+                pid=pid, sid=None, integrity=None, elevated=None, evidence=tuple(evidence)
+            )
+
+        _declare_signatures(advapi32, kernel32)
+
+        process_handle, status = _open_process(kernel32, pid)
+        if process_handle is None:
+            evidence.append(
+                f"OpenProcess(pid={pid}, PROCESS_QUERY_LIMITED_INFORMATION) failed: "
+                f"{_status_message(status)}"
+            )
+            return ProcessIdentity(
+                pid=pid, sid=None, integrity=None, elevated=None, evidence=tuple(evidence)
+            )
+        try:
+            token_handle, status = _open_token(advapi32, process_handle)
+            if token_handle is None:
+                evidence.append(
+                    f"OpenProcessToken(pid={pid}, TOKEN_QUERY) failed: {_status_message(status)}"
+                )
+                return ProcessIdentity(
+                    pid=pid, sid=None, integrity=None, elevated=None, evidence=tuple(evidence)
+                )
+            try:
+                sid, integrity, elevated, notes = _read_token_facts(advapi32, kernel32, token_handle)
+                evidence.extend(notes)
+            finally:
+                # Closed as soon as the reads are done, not at the end: the token handle is needed for
+                # nothing else, and every path out of here has to leave it closed. The close sits
+                # inside the outer `try` on purpose, so a close that somehow fails becomes evidence
+                # rather than an exception escaping a probe that promises never to raise.
+                kernel32.CloseHandle(token_handle)
+        finally:
+            kernel32.CloseHandle(process_handle)
+    except Exception as error:  # never raise: a probe that dies teaches the caller nothing
+        evidence.append(f"process identity probe failed: {error.__class__.__name__}: {error}")
+    return ProcessIdentity(
+        pid=pid, sid=sid, integrity=integrity, elevated=elevated, evidence=tuple(evidence)
+    )

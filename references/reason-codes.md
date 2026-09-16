@@ -100,7 +100,7 @@ P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用
 ## 7 — 计划/来源问题
 
 `INVALID_PLAN`（hash 不匹配、缺 digest）、`DIGEST_MISMATCH`、`PROVENANCE_FAILED`
-（含"拒绝非 https 来源"与"ed25519 未实现"）、`OWNERSHIP_REQUIRED`
+（含"拒绝非 https 来源"；**`ed25519` 不再是它的理由**——§113 起签名不对的 token 报 `INVALID_APPROVAL`(4)，这个码只剩"整个 root 没有 keyring"）、`OWNERSHIP_REQUIRED`
 （**对 reference 调 `uninstall`**：把绝对路径和 `airoot forget` 建议交给用户）、
 `INSTANCE_CONFLICT`、`UNSUPPORTED_BACKEND`、`ILLEGAL_TRANSITION`（状态机不允许的迁移）。
 
