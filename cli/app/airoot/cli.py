@@ -2486,16 +2486,12 @@ def _runner_for(registry: Any, plan: dict[str, Any], context: Context) -> Any:
     artifact runner: same states, same journal, different bytes.
     """
 
-    from .caps.backends import resolve_backend
-    from .tx.artifact import ArtifactRunner
+    from .tx.runners import runner_for
 
-    metadata = plan.get("metadata") or {}
-    backend_id = metadata.get("backend_id") or metadata.get("backend") or "fake_fixture"
-    if backend_id == "fake_fixture":
-        return SimulationRunner(registry, clock=context.clock)
-    return ArtifactRunner(
-        registry, resolve_backend(str(backend_id), root=context.path()), clock=context.clock
-    )
+    # The decision lives in one place (`tx/runners.py`) because `repair` needs the same one: it
+    # used to always build a SimulationRunner, which resumed real artifact transactions with the
+    # wrong driver (draft §128).
+    return runner_for(registry, plan, clock=context.clock)
 
 
 def cmd_install(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:

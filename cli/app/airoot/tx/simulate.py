@@ -588,7 +588,7 @@ def repair(
     """Journal-driven, idempotent repair (v0.3 §4.3 / §14.4)."""
 
     journal = TransactionJournal(registry, clock=clock)
-    tx, _plan, _token = journal.load_context(transaction_id)
+    tx, plan, _token = journal.load_context(transaction_id)
     action = classify(tx)
     if action.action == "no_action":
         return {"action": "no_action", "state": tx["state"], "transaction_id": transaction_id}
@@ -598,7 +598,11 @@ def repair(
             f"transaction {transaction_id} needs an explicit decision",
             evidence=action.evidence,
         )
-    runner = SimulationRunner(registry, clock=clock, keyring=keyring)
+    from .runners import runner_for
+
+    # Resume with the driver this transaction was created with. Hard-coding the simulation runner
+    # meant a real artifact transaction was finished by the wrong one (draft §128).
+    runner = runner_for(registry, plan, clock=clock, keyring=keyring)
     result = runner.resume(transaction_id)
     return {"action": action.action, "state": result.get("state", tx["state"]), "transaction_id": transaction_id, "result": result}
 

@@ -11101,3 +11101,61 @@ post-bind 校验去核一个真 artifact 实例，失败，回滚。三个读数
 4. 定义文档 §5 的 #14 要等这条测试绿了才能改成 ✅。
 
 **在测试红之前不改 `repair`**：这是这一节留给下一轮的顺序。
+## 128. #14 的修复：`repair` 用**事务自己的** driver —— 以及修完之后露出来的第二个缺陷
+
+§127 把缺陷定位到一行：`repair()` 无论计划什么后端都构造 `SimulationRunner`。这一节按 §127.4 的顺序
+**先写守卫、看它红、再修**（红：`6 failed`）。
+
+### 128.1 修法：把"选 driver"变成一处
+
+新模块 `cli/app/airoot/tx/runners.py` 的 `runner_for(registry, plan, *, clock, keyring=None, injector=None)`，
+按 `plan["metadata"]["backend_id"]` 选（`fake_fixture` → 模拟；其余 → `ArtifactRunner` + `resolve_backend`）。
+两个调用方都改用它：`cli._runner_for`（本来就是这个规则）与 `tx/simulate.repair`（**它原来写死模拟 runner**）。
+`repair` 同时用上 journal 里**本来就取出来又被丢掉的**那份 `plan`（`tx, _plan, _token` → `tx, plan, _token`）。
+两个 runner 在**函数内** import：它们是兄弟模块，模块级互相 import 会成环。
+
+### 128.2 效果（实测）
+
+`STAGED` / `REGISTERED` / `ACTIVE_BOUND` / `EXPOSED` 四个边界现在都恢复到 `FINALIZED`：active binding 恰好
+一条、`generation` 与 binding 一致（**提交点不再被走第二遍**）、`integrity_problems()` 为空、二次 `repair`
+是 `no_action`。**§127 里那个"安装中途崩一次会把装好的东西解绑"的行为没有了。**
+
+### 128.3 修完之后露出来的第二个缺陷（未修，已标）
+
+第五条边界 `FETCHED` **仍然不行**，而且失败方式比回滚更糟：
+
+```text
+AttributeError: 'ArtifactRunner' object has no attribute '_artifact'
+```
+
+`_artifact` 是**进程内**的字段，只在第一次 `drive()` 里被赋值；从 `FETCHED` 恢复时 runner 是新建的，
+`drive()` 的 `if not artifact_path.is_file()` 分支不会重新 fetch（fetch 目录里已经有了），于是后面某处
+直接读 `_artifact` 就炸。**一个 `AttributeError` 逃出来当答复，正是 §62 那条教训禁止的形状**：
+崩溃恢复必须给一个**裁决**（继续或按规则回滚），不是 traceback。
+
+守卫写成一个 `xfail(strict=True)` 的测试（`test_resuming_from_fetched_does_not_crash`）：**strict 是关键**——
+修好那天它会 XPASS，逼迫修的人把标记删掉，而不是让"已知缺陷"变成一个永久豁免。
+
+### 128.4 所以 #14 现在是**一半的一半**，仍然不能打勾
+
+* 真 artifact 事务在**提交点及之后**的恢复：修好了，与模拟 runner 同语义（这是 §127 那个缺陷）；
+* 真 artifact 事务在**提交点之前**（`FETCHED`）的恢复：**仍会崩**，已用 strict xfail 钉住。
+
+判据 #14 的字面要求覆盖前者与后者，所以定义文档 §5 的 #14 **保持 ⚠️**，并在那里写明"缺的是
+`FETCHED` 的恢复"；§4 的括注也相应改写（不是删掉）。**把这一条说成完成，就是把一个 `AttributeError`
+当成已验证。
+
+### 128.5 下一轮要做的一件事
+
+`ArtifactRunner.drive()` 在 `FETCHED` 状态下的恢复路径：要么在 fetch 目录缺文件时**重新 fetch**并把
+`self._artifact` 设起来，要么从 plan/journal 里重建 `Artifact` 描述（`source.locator` + 已校验的
+digest 都在，够重建）。**先让那条 `xfail(strict)` 变成正常测试，再删标记**——顺序与本节相同。
+
+### 128.6 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1359 → 1365**（+6：新文件 `cli/tests/test_l2_recovery_drivers.py`，含五条参数化 + 一条 strict xfail） |
+| 新增模块 | `cli/app/airoot/tx/runners.py` |
+| golden 语料 / schema / ADR | 不变 |
+| 行为变化 | `repair` 对真 artifact 事务在 `STAGED` 及之后**不再回滚**，改为完成 |
