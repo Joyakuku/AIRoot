@@ -410,6 +410,13 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
             )
         problems += document_schema_problems(command, entry, document)
 
+    unpinned = {
+        " ".join(entry["command"]): results[" ".join(entry["command"])][1]
+        for entry in invocations()
+        if not entry.get("document_schema") and " ".join(entry["command"]) in results
+    }
+    problems += report_envelope_problems(unpinned, REPORT_ENVELOPE_KEYS)
+
     assert problems == [], "agents/airoot.json names fields the output does not have:\n" + "\n".join(problems)
     # Exact, not a threshold: every invocation either produced a document or is declared above.
     assert len(covered) == len(invocations()) - len(UNCOVERED)
@@ -499,6 +506,60 @@ def test_the_vacuity_check_reports_what_it_is_for() -> None:
     assert vacuous_paths({"a": [{"b": [{"c": 1}]}]}, ["a[].b[].c"]) == []
     # An `[]` segment the document does not carry at all is `unresolved`'s finding, not this one's.
     assert vacuous_paths({}, ["diagnostics[].code"]) == []
+
+
+#: The keys **every** unpinned report carries, and nothing else (draft §100).
+#:
+#: §94 recorded the unlock for the 29 unpinned lanes as "one report-envelope schema". Measuring it says
+#: that unlock does not exist: the 29 reports have **29 distinct top-level shapes**, so one schema with
+#: `additionalProperties: false` cannot describe them, and one with `additionalProperties: true` would be
+#: the "capability that only looks safe" the doctrine refuses — a published contract that accepts any
+#: extra key pins nothing worth pinning. What *is* shared is exactly these two keys, which is a real
+#: (if small) envelope property, and it is what this guard holds: no report may drop one, and no third
+#: key may become universal without the note in `agents/airoot.json` being rewritten.
+REPORT_ENVELOPE_KEYS = ("reason_code", "schema_version")
+
+
+def report_envelope_problems(documents: dict[str, dict], declared: tuple[str, ...]) -> list[str]:
+    """The keys common to every unpinned report must be exactly `declared`."""
+
+    if len(documents) < 20:
+        return [
+            f"only {len(documents)} unpinned reports were produced; this guard is about the whole set"
+        ]
+    common: set[str] | None = None
+    for document in documents.values():
+        common = set(document) if common is None else common & set(document)
+    common = common or set()
+    return [f"{name} is carried by every report but is not declared" for name in sorted(common - set(declared))] + [
+        f"{name} is declared as an envelope key but not every report carries it"
+        for name in sorted(set(declared) - common)
+    ]
+
+
+def test_the_unpinned_reports_share_exactly_the_declared_envelope() -> None:
+    """§100: one schema cannot pin 29 distinct shapes, so what is pinned is what they share."""
+
+    documents = {"a" * 1: {}, "b": {}}
+    assert report_envelope_problems(documents, REPORT_ENVELOPE_KEYS) != [], (
+        "a population below the floor must be reported, or this guard checks nothing"
+    )
+
+    twenty = {
+        f"report-{index}": {"schema_version": 1, "reason_code": "SUCCESS", f"only_{index}": index}
+        for index in range(20)
+    }
+    assert report_envelope_problems(twenty, REPORT_ENVELOPE_KEYS) == []
+    # A third key becoming universal has to be declared.
+    widened = {name: dict(document, extra=True) for name, document in twenty.items()}
+    assert report_envelope_problems(widened, REPORT_ENVELOPE_KEYS) == [
+        "extra is carried by every report but is not declared"
+    ]
+    # And a report dropping one of the two has to be reported.
+    dropped = {name: {k: v for k, v in document.items() if k != "reason_code"} for name, document in twenty.items()}
+    assert report_envelope_problems(dropped, REPORT_ENVELOPE_KEYS) == [
+        "reason_code is declared as an envelope key but not every report carries it"
+    ]
 
 
 def test_the_read_path_resolver_reports_what_is_actually_missing() -> None:
