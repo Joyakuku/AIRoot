@@ -10205,3 +10205,84 @@ registry              : capability=rust-toolchain, health=healthy, lifecycle_sta
 4. **这次安装没有动 PATH、没有执行 payload、没有提权**。`--no-modify-path` 是 ADR-0001 给 rustup 定的
    规矩，而"给 PATH 加东西"属于 P9（`exposure\bin` launcher，见可选加固）。
 
+## 118. 执行那个 payload：Rust 工具链真的装上了
+
+§117 把 `rustup-init.exe` 装进 store 并登记，但**它只是个安装器**。本节是真的**运行**它——也就是
+ADR-0001 语言切换的前置条件，从"安装器在手"变成"rustc 能编译"。
+
+### 118.1 跑之前先量：本机是干净的
+
+| 检查 | 读数 |
+|---|---|
+| `rustup` / `rustc` / `cargo` | **都不存在**（`Get-Command` 全空） |
+| `%USERPROFILE%\.cargo` / `.rustup` | **都不存在** |
+| `rustup-init -V` | `rustup-init 1.29.1 (d95a37b6a 2026-08-13)` |
+
+**所以是干净安装，不会覆盖任何已有环境。** 这一条是运行前必须量的：`rustup-init` 会改用户级的
+`~\.cargo`/`~\.rustup`，在已有 Rust 的机器上那是一次**迁移**而不是安装。
+
+### 118.2 装到哪：**rustup 自己的默认位置**（记录那个选择）
+
+装之前有两个可选位置，选了 A：
+
+| | 位置 | 为什么 |
+|---|---|---|
+| **A（选中）** | `%USERPROFILE%\.cargo` + `%USERPROFILE%\.rustup` | rustup 在 Windows 上的常规位置，与任何 Rust 文档、IDE、工具链行为一致 |
+| B | 用 `CARGO_HOME`/`RUSTUP_HOME` 定向进 `store` | "删掉 root 就全没了"表面上成立，但偏离标准布局，而且 store 要的是**不可变 payload**语义，工具链不是 |
+
+**无论选哪个都不写 PATH**——`--no-modify-path` 是 ADR-0001 定的规矩，而写 PATH 属于 P9。
+
+### 118.3 实测
+
+| 项 | 读数 |
+|---|---|
+| 命令 | `rustup-init.exe -y --no-modify-path --profile minimal --default-toolchain stable` |
+| 结果 | `stable-x86_64-pc-windows-msvc installed - rustc 1.98.1 (48a229cea 2026-09-01)` |
+| 耗时 | **19.1 秒** |
+| `rustc --version` | `rustc 1.98.1` |
+| `cargo --version` | `cargo 1.98.1 (797e8a9bc 2026-08-05)` |
+| `rustup --version` | `rustup 1.29.1` |
+| 体积 | `.cargo` **12.1 MB**，`.rustup` **576.0 MB** |
+| PATH | **没动**：当前进程 PATH 不含 `.cargo\bin`，**用户级 PATH 注册表长度 1684 未变** |
+
+**`--version` 只证明二进制存在，所以另外真编译了两个程序**（`%TEMP%` 下的临时目录，跑完删掉）：
+
+```text
+rustc 直编 →  airoot-rust-smoke: sum=15      （1 秒）
+cargo new + cargo build →  Hello, world!     （cargo build: OK）
+```
+
+**这才是"能用"的证据**：一个只会打印版本号的 rustc 是坏的工具链。
+
+### 118.4 AIROOT 的账本还诚不诚实（跑完 payload 之后必须复查）
+
+**必须查，因为"AIROOT 装的东西"后来把 576 MB 写到了别处**。复查结果：
+
+| 检查 | 读数 | 读法 |
+|---|---|---|
+| `tool verify rust-toolchain/rustup-init/1.83.0/win-x64` | `verified=true`, `problems=[]` | store 里那份**没被动过**——rustup-init 写的是 `~\.rustup`，不是自己的目录 |
+| `where rust-toolchain` | `found=true`、`usable=true`、`health=healthy`、`executable=…\store\…\rustup-init.exe` | 它指向**自己拥有的**那份（store 里的安装器），**不是** `~\.cargo\bin\rustc.exe` |
+
+**所以没有任何漂移**，而这不是侥幸，是**账的边界清楚**：AIROOT 登记的是"我装了 `rustup-init.exe`"，
+而 rustup 之后把工具链写到它自己的常规位置——那是**另一个所有权域**，不是"我的 payload 变了"。
+
+**这一条要写下来的原因**：它是"AIROOT 不拥有它没装的东西"这条不变量的第一次真实检验。`where` **没有**
+假装知道 `rustc` 在哪，也没有因为 `~\.rustup` 出现了就报漂移。将来若要让 AIROOT **管**这个工具链，
+正确的做法是走 §15.4 的路径（提议 → 冻结 → 白名单），把 `~\.rustup` **认出来**并 `adopt`，而不是让
+`where` 去猜。
+
+### 118.5 如实记录的边界
+
+1. **这个工具链不在 AIROOT 的账上**。`.rustup` 576 MB 与 `.cargo` 12.1 MB 是**不受管的**：
+   AIROOT 不知道它们存在，`doctor` 不会报它们，`uninstall` 不会删它们。**这是诚实的**——
+   它们不是 AIROOT 装的（AIROOT 装的是那个安装器）。若要让它们入账，走 `discover`/`adopt`。
+2. **`rustc` 不在 PATH 上，所以普通 shell 里 `cargo build` 会失败**。这是 `--no-modify-path` 的**直接后果**，
+   不是遗漏。现在要用 Rust，两条路：显式用 `%USERPROFILE%\.cargo\bin\` 下的绝对路径，或者由**人在
+   AIROOT 之外**自己加 PATH。**AIROOT 不替人做这个决定**，而"给 PATH 加条目"属于 P9。
+3. **`--profile minimal` 是刻意的**：只要 `rustc`/`rustup`/`cargo`，不下 docs/clippy/rustfmt——
+   本阶段要的是**能编译**，多下几百 MB 没有对应的验收价值。要补，`rustup component add` 是标准的下一步。
+4. **运行 payload 这件事本身没有经过 AIROOT 的事务**。§117 的 plan/approve/install 管的是
+   "把 artifact 放进 store 并登记"，而**执行**它不在那条链上——这一节是用绝对路径直接跑的。
+   **AIROOT 今天没有"运行一个受管 payload"的动词**，而那正是 P5 Runtime 的题；记在这里，
+   免得读者以为 `install` 会执行它装的东西（它不会，而且不该）。
+
