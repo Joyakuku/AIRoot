@@ -27,6 +27,12 @@
 后者看 `where` 的 `evidence`，它可能写着"对象内有满足约束的版本但未激活"——
 **切不切活跃版本是用户的决定**，不要替他切。
 
+`NOT_IMPLEMENTED`（退出码 1）也在这里，但它说的是另一件事：**这个动词规划里有、这一版刻意没有**
+（`bootstrap`、`reconcile`、`path backup|restore`、`root adopt|relocate`）。`details` 里带着
+`deferred_category` 与 `unblocked_by`（解锁词），`evidence` 指向 `agents/airoot.json` 里那段理由。
+**不要**把它当成"命令打错了"（那是 `INVALID_INPUT`，退出码 8），也**不要**建议用户提权重试
+（那不是 `PRIVILEGE_REQUIRED`：再高的权限也变不出这个命令）。照实说"这一版没有，等 <解锁词>"。
+
 ## 2 — 降级或漂移（结果可用）
 
 | code | 含义 |

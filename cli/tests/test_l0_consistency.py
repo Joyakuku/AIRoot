@@ -24,7 +24,7 @@ from airoot.caps.doctor import DIAGNOSTIC_CODES, INVARIANTS
 from airoot.caps.exposure import PERSIST_SCOPES
 from airoot.caps.inventory import SCOPES as BINDING_SCOPES
 from airoot.caps.planner import SCOPE_DATA_ROOT, SCOPE_PROJECT
-from airoot.cli import EXEC_ALIAS_FLAG, build_parser
+from airoot.cli import DECLARED_ABSENT, EXEC_ALIAS_FLAG, build_parser
 from airoot.exits import EXIT_MEANINGS, REASON_EXIT
 from airoot.schema_io import load_schema, schema_names
 
@@ -3945,3 +3945,77 @@ def test_the_entry_document_says_where_the_stage_record_lives() -> None:
     assert _stage_record_delegation(f"{STAGE_RECORD_MARKER}在 {name} 的 §31–§54 里") == [
         f"{STAGE_RECORD_MARKER}在 {name} 的 §31–§54 里"
     ], "a line carrying both halves must count"
+
+
+# --- Guard group 35: the refusal names what the register declares (draft §101) --------------------
+#
+# §101 measured what a caller got for the six declared-absent verbs: `INVALID_INPUT` (8) carrying
+# argparse's `invalid choice: 'bootstrap' (choose from ...)`. That is the answer a *typo* gets, and it
+# said nothing about the reason the register (`agents/airoot.json` → `deferred`) had been carrying for
+# each of those verbs since §60. The two artefacts had **no relationship at all**, so they could drift
+# apart indefinitely — and a drift here is invisible in a way the §98 lens names: the register could
+# keep saying "the caller is told why", while the CLI never told anyone anything.
+#
+# The fix copies two facts into the core on purpose (`cli.DECLARED_ABSENT`): the deferred category and
+# the word that unlocks it. That copy has a reason — the core must not read the Skill layer at run
+# time, because the protected broker the plan puts above it must not trust a user-writable file — and
+# a deliberate copy is only safe with a guard that makes changing one side alone impossible. This is
+# that guard, and it is exact equality in both directions because each direction is a different lie:
+#
+#   * the register defers a verb the core does not refuse by name → the caller meets argparse again,
+#     and the register's promise ("here is why") silently stops being true;
+#   * the core refuses a verb the register does not defer → the core claims a decision nobody wrote,
+#     which is the §8 honesty rule broken from the other side.
+
+
+def _declared_absent_problems(core: dict[tuple[str, ...], tuple[str, str]], document: dict[str, Any]) -> list[str]:
+    """Verb by verb, both directions: the core's refusal table vs the register's ``deferred``."""
+
+    problems: list[str] = []
+    deferred = document.get("deferred", {})
+    by_name = {" ".join(path): value for path, value in core.items()}
+
+    missing = sorted(set(deferred) - set(by_name))
+    extra = sorted(set(by_name) - set(deferred))
+    if missing:
+        problems.append(f"deferred in the register but not refused by name in the core: {missing}")
+    if extra:
+        problems.append(f"refused by name in the core but not deferred in the register: {extra}")
+
+    for path in sorted(set(by_name) & set(deferred)):
+        category, unlock = by_name[path]
+        entry = deferred[path]
+        if category != entry.get("category"):
+            problems.append(f"{path}: core says {category!r}, register says {entry.get('category')!r}")
+        if unlock != entry.get("unblocked_by"):
+            problems.append(f"{path}: core unlocks on {unlock!r}, register on {entry.get('unblocked_by')!r}")
+    return problems
+
+
+def test_the_core_refuses_a_declared_absent_verb_the_way_the_register_describes_it() -> None:
+    document = json.loads(AGENT_META.read_text(encoding="utf-8"))
+
+    assert _declared_absent_problems(DECLARED_ABSENT, document) == [], "; ".join(
+        _declared_absent_problems(DECLARED_ABSENT, document)
+    )
+
+    # Non-vacuity on synthetic input, so the guard's red direction does not depend on anyone
+    # remembering to break the real table. The mutations are *derived* from the table: §99's probe
+    # hard-coded `"99"` and went green the moment §99 existed, and a hard-coded replacement value here
+    # would do the same the first time a verb's unlock word changed.
+    sample = sorted(DECLARED_ABSENT)[0]
+    category, unlock = DECLARED_ABSENT[sample]
+    other_category = next(word for word in DEFERRAL_CATEGORIES if word != category)
+    other_unlock = next(word for word in DEFERRAL_UNBLOCKERS if word != unlock)
+
+    assert _declared_absent_problems({}, document), "a core that refuses nothing by name must be reported"
+    assert _declared_absent_problems(
+        {**DECLARED_ABSENT, ("teleport",): (category, unlock)}, document
+    ), "a verb the register does not defer must be reported"
+    for mutation, expected in (
+        ({sample: (other_category, unlock)}, "core says"),
+        ({sample: (category, other_unlock)}, "core unlocks on"),
+    ):
+        reported = _declared_absent_problems({**DECLARED_ABSENT, **mutation}, document)
+        assert any(expected in item for item in reported), (mutation, reported)
+

@@ -249,6 +249,75 @@ def test_unknown_command_is_invalid_input(capsys, prepared) -> None:
     assert document["reason_code"] == "INVALID_INPUT"
 
 
+# --------------------------------------------------------------------------- #
+# verbs the register declares and this build deliberately does not carry (draft §101)
+# --------------------------------------------------------------------------- #
+
+
+def registered_deferrals() -> dict:
+    """The register an agent reads, rather than a second copy of it written out here."""
+
+    meta = Path(__file__).resolve().parents[2] / "agents" / "airoot.json"
+    return json.loads(meta.read_text(encoding="utf-8"))["deferred"]
+
+
+def test_a_declared_absent_verb_is_refused_as_deferred_not_as_a_typo(capsys) -> None:
+    """Measured in §101: all six used to answer `INVALID_INPUT` with `invalid choice: 'bootstrap'`.
+
+    That message is what a *typo* gets, so the caller's next move was to re-read their spelling
+    rather than the plan. The refusal now carries the register's two actionable facts in `details`,
+    which is also what makes it checkable instead of prose.
+    """
+
+    for verb, entry in sorted(registered_deferrals().items()):
+        code, refusal = run(capsys, "--json", *verb.split())
+        assert code == 1, (verb, code)
+        assert refusal["reason_code"] == "NOT_IMPLEMENTED", (verb, refusal)
+        assert refusal["details"] == {
+            "command": verb,
+            "deferred_category": entry["category"],
+            "unblocked_by": entry["unblocked_by"],
+        }, (verb, refusal)
+        assert entry["unblocked_by"] in " ".join(refusal["evidence"]), (verb, refusal)
+
+        # The verb is absent in *every* root, so the answer must not depend on one resolving: the
+        # refusal is decided before the root is, and a bogus `--root` in front cannot change it.
+        with_root = run(capsys, "--json", "--root", str(Path.cwd() / "no-such-root"), *verb.split())
+        assert with_root == (code, refusal), (verb, with_root)
+
+
+def test_a_misspelled_verb_is_still_a_usage_error(capsys) -> None:
+    """The new code is only worth having while the two answers stay distinguishable.
+
+    If a typo and a deferral both came back as `NOT_IMPLEMENTED`, the code would be a synonym for
+    "no such command" and §101 would have bought nothing but a longer message.
+    """
+
+    code, document = run(capsys, "--json", "bootstrapp")
+    assert code == 8, document
+    assert document["reason_code"] == "INVALID_INPUT", document
+
+
+def test_a_capability_named_like_a_deferred_verb_is_not_swallowed(capsys, prepared) -> None:
+    """The refusal is decided by the *verb* position, not by the word.
+
+    `bootstrap` is a word this build does not carry as a verb; it may still be the name of a
+    capability or of a path. Only the leading positional token decides, so `where bootstrap` has to
+    reach the lookup and answer as a lookup (`found: False`, exit 1) — a guard that fired on the
+    word would make a legal capability name unusable.
+    """
+
+    code, document = run(capsys, "--json", "--root", str(prepared.path), "where", "bootstrap")
+    assert code == 1, document
+    assert document["found"] is False and document["reason_code"] == "NOT_FOUND", document
+
+    code, document = run(
+        capsys, "--json", "--root", str(prepared.path), "adopt", "bootstrap", "--mode", "reference"
+    )
+    assert document["reason_code"] != "NOT_IMPLEMENTED", document
+
+
+
 def test_global_flags_work_after_the_subcommand(capsys, prepared) -> None:
     """The documented form is ``airoot doctor --json``, not ``airoot --json doctor``."""
 

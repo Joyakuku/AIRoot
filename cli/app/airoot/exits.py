@@ -55,6 +55,13 @@ REASON_EXIT: dict[str, int] = {
     # 1 - nothing usable
     "NOT_FOUND": EXIT_NOT_FOUND,
     "VERSION_UNSATISFIED": EXIT_NOT_FOUND,
+    # A verb the planning document names and this build deliberately does not carry (ADR-0027).
+    # Draft §101 measured what used to happen: all six declared-absent verbs died in argparse as
+    # `INVALID_INPUT` (8) with "invalid choice: 'bootstrap'", which reads as a typo. Neither of the
+    # two neighbouring codes is true: 8 blames the caller's input, and 5 (`PRIVILEGE_REQUIRED`,
+    # "elevate and retry") promises something elevation cannot deliver while the broker does not
+    # exist. What is true is that nothing usable came back, which is exit 1.
+    "NOT_IMPLEMENTED": EXIT_NOT_FOUND,
     # 2 - usable but needs explanation/repair
     "DEGRADED": EXIT_DEGRADED,
     "DRIFT_DETECTED": EXIT_DEGRADED,

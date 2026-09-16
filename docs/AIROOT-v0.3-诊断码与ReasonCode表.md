@@ -16,7 +16,7 @@
 | 退出码 | 含义 | reason code |
 |---:|---|---|
 | 0 | healthy/success | `CURRENT_PROCESS_ENV_OLD`, `POLICY_ONLY_MODE`, `REFERENCE_UNPROBED`, `SIZE_ESTIMATE_UNAVAILABLE`, `SUCCESS`, `UNMANAGED_OBJECT_PRESENT`, `WHITELIST_REVISION_STALE` |
-| 1 | not found | `NOT_FOUND`, `VERSION_UNSATISFIED` |
+| 1 | not found | `NOT_FOUND`, `NOT_IMPLEMENTED`, `VERSION_UNSATISFIED` |
 | 2 | degraded or drift | `AUDIT_PROJECTION_DRIFT`, `CHILD_PROCESS_FAILED`, `CURRENT_SOURCE_DEGRADED`, `DATA_ROOT_ACL_DRIFT`, `DESIRED_NOT_SATISFIED`, `DEGRADED`, `DRIFT_DETECTED`, `EXTENSION_CANCELLED`, `EXTENSION_HEALTH_DEGRADED`, `EXTENSION_TIMEOUT`, `INSTALL_IO_FAILED`, `ORPHANED_STORE_INSTANCE`, `PAYLOAD_OUTSIDE_STORE`, `REFERENCE_DRIFTED`, `REFERENCE_IN_USE`, `REFERENCE_STALE`, `REGISTRY_PROJECTION_STALE`, `PATH_EXPOSURE_VIOLATION`, `SEARCH_FALLBACK_USED`, `SEARCH_INDEX_DEGRADED`, `SEARCH_JOURNAL_GAP`, `SEARCH_PERMISSION_FILTERED`, `SEARCH_RESULT_STALE`, `SEARCH_ROOT_UNAVAILABLE`, `SEARCH_TIMEOUT`, `SESSION_STATE_STALE`, `STALE_GENERATION` |
 | 3 | broken | `BINDING_TARGET_MISSING`, `BROKEN`, `CONFLICT_MANAGED_BROKEN`, `EXTERNAL_REFERENCE_DRIFTED`, `MANIFEST_DIGEST_MISMATCH`, `MULTIPLE_ACTIVE_BINDINGS`, `PAYLOAD_MISSING`, `REGISTRY_INTEGRITY_FAILED` |
 | 4 | approval required/expired | `APPROVAL_EXPIRED`, `APPROVAL_REPLAYED`, `APPROVAL_REQUIRED`, `APPROVAL_REVOKED`, `INVALID_APPROVAL`, `PERSISTENCE_REQUIRES_APPROVAL`, `POLICY_REVISION_MISMATCH`, `SCOPE_CONFIRMATION_REQUIRED`, `SCOPE_UPGRADE_REQUIRES_APPROVAL` |
@@ -63,6 +63,14 @@
   冻结的退出码空间只有 0–9。
 - `ENVIRONMENT_PERSIST_NOT_FOUND`（8）由 `airoot env forget` 发射：没有任何已记录的持久化
   环境可供还原（`forget` 是还原，不是无条件删除）。
+- `NOT_IMPLEMENTED`（1）由 CLI 在**动词位置**上发射（ADR-0027）：规划里有名字、这一版**刻意没有**
+  的命令（`bootstrap`、`reconcile`、`path backup|restore`、`root adopt|relocate`）。它**不是**
+  `INVALID_INPUT`(8)——那条说"你的输入错了"，而这些调用方的输入没有错（draft §101 实测：六个动词
+  原先都死在这一条上，消息是 argparse 的 `invalid choice: 'bootstrap'`，读起来像拼错）；也**不是**
+  `PRIVILEGE_REQUIRED`(5)——那条说"提权再试"，而在这一版里再高的权限也变不出那个命令。
+  拒绝里带着登记表（`agents/airoot.json` 的 `deferred`）的**类别**与**解锁词**：`details` 字段是
+  机器可读的那一半，`evidence` 是给人看的那一半。判断只由**开头的动词**决定，所以叫 `bootstrap`
+  的能力名或路径不会被它吞掉。
 - **`CONFLICT_MANAGED_BROKEN`（3）在 steward-first 之后不再被 `where` 发射**（ADR-0006）：
   "owned 坏了 + reference 健康"现在是正常降级 `CURRENT_SOURCE_DEGRADED`（2）。
   该码仍注册、仍表示"已声明对象不可安全使用"这一语义，保留给 policy 显式要求冲突的将来用途，

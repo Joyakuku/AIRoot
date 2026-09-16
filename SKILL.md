@@ -135,10 +135,14 @@ cancel             取消
 
 ```text
 airoot bootstrap …        # Protected machine mode 的一次性提权窗口（broker 二进制、ACL、machine PATH），属 P2
-airoot reconcile …       # 语义在规划里只有一句"先完成 repair/reconcile"，不足以实现
+airoot reconcile …       # 它要读项目清单，而这一版没有任何东西产出或读它：属 P6
 airoot path backup|restore   # 会写 PATH，属 P2 的受保护 broker
-airoot root adopt|relocate   # 需要完整的 copy/verify/switch 规则
+airoot root adopt|relocate   # copy/verify/switch 规则已由 ADR-0025 决定；剩下的原子切换点属 P2 的受保护状态
 ```
+
+调用这六条**不会**得到"命令打错了"那种回答：CLI 报 `NOT_IMPLEMENTED`（退出码 1），并把登记表里
+那一类（`details.deferred_category`）与解锁词（`details.unblocked_by`）一并给出。照实转述；不要猜，
+也不要建议用户提权重试——提权变不出这个命令（这不是 `PRIVILEGE_REQUIRED`）。
 
 `airoot search` 本身**是可用的**（见命令地图）。它有三件事要记住：
 

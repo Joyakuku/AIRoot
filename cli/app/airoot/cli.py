@@ -2711,6 +2711,75 @@ class _Parser(argparse.ArgumentParser):
         raise AirootError("INVALID_INPUT", message, evidence=[f"usage: {self.prog} --help"])
 
 
+#: Verbs the planning document names and this build deliberately does not carry. The long reason
+#: lives in `agents/airoot.json` (`deferred`), which the core must not read at run time: the Skill
+#: layer is user-writable, and the protected broker the plan puts above it (规划 §8.1) must not
+#: trust it. So the core carries the two facts a caller can *act* on -- the deferred category and
+#: the word that unlocks it -- and `test_l0_consistency.py` holds the two copies equal in both
+#: directions, so neither can drift without the other.
+DECLARED_ABSENT: dict[tuple[str, ...], tuple[str, str]] = {
+    ("bootstrap",): ("needs-admin", "p2-protected-state"),
+    ("reconcile",): ("needs-capability", "p6-project-manifest"),
+    ("path", "backup"): ("needs-admin", "p2-protected-state"),
+    ("path", "restore"): ("needs-admin", "p2-protected-state"),
+    ("root", "adopt"): ("needs-admin", "p2-protected-state"),
+    ("root", "relocate"): ("needs-admin", "p2-protected-state"),
+}
+
+#: Global options that consume the token after them, so `airoot --root <dir> bootstrap` reads
+#: `bootstrap` as the verb instead of as `--root`'s value.
+_GLOBAL_VALUE_OPTIONS = ("--root",)
+
+
+def declared_absent_verb(arguments: list[str]) -> tuple[str, str, str] | None:
+    """The declared-absent verb this command line starts with, if there is one.
+
+    Only the **leading** positional tokens are read, so `airoot where bootstrap` and
+    `airoot adopt bootstrap` are not this: a capability or a path may legitimately be called
+    `bootstrap`, and only the verb position decides.
+    """
+
+    positionals: list[str] = []
+    index = 0
+    while index < len(arguments) and len(positionals) < 2:
+        token = arguments[index]
+        if token in _GLOBAL_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+
+    for depth in (2, 1):
+        path = tuple(positionals[:depth])
+        if path in DECLARED_ABSENT:
+            category, unlock = DECLARED_ABSENT[path]
+            return " ".join(path), category, unlock
+    return None
+
+
+def _declared_absent_error(verb: str, category: str, unlock: str) -> AirootError:
+    """The refusal for a verb that exists in the plan and not in this build (ADR-0027).
+
+    Structured rather than prose-only: `details` carries the two facts an agent can branch on, so
+    the caller does not have to parse the sentence, and the audit guard can compare them with
+    `agents/airoot.json` verb by verb.
+    """
+
+    return AirootError(
+        "NOT_IMPLEMENTED",
+        f"{verb} is named by the planning document and deliberately absent from this build",
+        evidence=[
+            f"deferred category: {category}",
+            f"unlocks when: {unlock}",
+            f"why: agents/airoot.json -> deferred -> '{verb}'",
+        ],
+        details={"command": verb, "deferred_category": category, "unblocked_by": unlock},
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="airoot",
@@ -3249,6 +3318,12 @@ def main(argv: list[str] | None = None) -> int:
     want_json = "--json" in arguments
     args: argparse.Namespace | None = None
     try:
+        # Before argparse: a declared-absent verb is not a typo, and reporting it as one (which is
+        # what `invalid choice` did until §101) tells the caller to re-read their spelling instead
+        # of the plan (ADR-0027).
+        absent = declared_absent_verb(arguments)
+        if absent is not None:
+            raise _declared_absent_error(*absent)
         parser = build_parser()
         args = parser.parse_args(arguments)
         # doctor must be able to describe a broken root, so it resolves the path
