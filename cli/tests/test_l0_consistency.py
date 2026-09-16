@@ -752,26 +752,60 @@ def test_every_machine_readable_outcome_has_a_fixture() -> None:
     assert _outcome_coverage_problems(documents, statuses, reason_codes | {"TELEPORT_FAILED"}) != []
 
 
-#: Every enum `search-response` declares, as `{documented path: values}` — **derived from the schema**,
-#: not listed here. §89 covered `status`, §95 covered `data.freshness.coverage`, and §95 recorded the
-#: weakness of that: a third such field would arrive with nothing to remind anyone. Walking the schema
-#: removes the hand list; §96 then found three values it had been hiding (`results[].kind = directory`,
-#: `results[].verification = verified` / `changed`), each produced by a different request field.
-def _search_response_enums() -> dict[str, list[str]]:
+#: The one document whose enums are checked value-by-value against the corpus (draft §96). The choice
+#: is a **criterion**, not a preference: this rule fits a schema whose enums are *conclusions about one
+#: result* — `status`, `freshness.*`, `results[].verification` — because one fixture is one outcome, so
+#: an example per value is exactly what a corpus is for.
+#:
+#: §97 measured what happens if it is applied to the others, and it would not be honest to do so: of the
+#: 51 enum values in the printed documents that no fixture reports, **32 have no dagger**, and most of
+#: those are not gaps. `transaction.state` misses 15 of 16 because the state vocabulary is covered by
+#: `transaction_transitions.json` (the legal-move table), not by response fixtures; `plan.operation`
+#: misses `gc_apply`/`retire_tool` because those plans are produced by `tool gc`/`tool retire`, whose
+#: *printed* document is a report; `where-response.source` misses `null`, which is not a value a fixture
+#: can report at all. Demanding a fixture per vocabulary word would force either ~32 false daggers or a
+#: pile of fixtures for things already covered elsewhere — a mechanical widening that destroys a
+#: stronger rule, which is what ADR-0021 says to refuse and report.
+COVERAGE_BY_FIXTURE_SCHEMA = "search-response"
+
+#: The spelling the field table uses for a JSON `null` (see `UNTESTABLE` in `test_l1_field_values.py`),
+#: and the reason the walker below must not spell it `None`: it is not a value the corpus can report, so
+#: demanding one would be a permanent false red. §96 shipped that bug (`str(item)` turned a schema's
+#: `null` into `"None"`); it never fired because `search-response` has no null enum, and §97 found it by
+#: trying to widen the rule.
+NULL_SPELLING = "null"
+
+
+def _enum_spelling(item: Any) -> str:
+    return NULL_SPELLING if item is None else str(item)
+
+
+def _enums_in(schema: dict[str, Any]) -> dict[str, list[str]]:
+    """`{documented path: values}` for every `enum` the schema declares, at any depth."""
+
     found: dict[str, list[str]] = {}
 
     def walk(node: Any, prefix: str) -> None:
         if not isinstance(node, dict):
             return
         if isinstance(node.get("enum"), list):
-            found[prefix] = [str(item) for item in node["enum"]]
+            found[prefix] = [_enum_spelling(item) for item in node["enum"]]
         for name, child in (node.get("properties") or {}).items():
             walk(child, f"{prefix}.{name}" if prefix else name)
         if "items" in node:
             walk(node["items"], f"{prefix}[]")
 
-    walk(load_schema("search-response"), "")
+    walk(schema, "")
     return found
+
+
+#: Every enum the checked document declares, **derived from the schema**, not listed here. §89 covered
+#: `status`, §95 covered `data.freshness.coverage`, and §95 recorded the weakness of that: a third such
+#: field would arrive with nothing to remind anyone. Walking the schema removes the hand list; §96 then
+#: found three values it had been hiding (`results[].kind = directory`, `results[].verification =
+#: verified` / `changed`), each produced by a different request field.
+def _search_response_enums() -> dict[str, list[str]]:
+    return _enums_in(load_schema(COVERAGE_BY_FIXTURE_SCHEMA))
 
 
 def _values_at(document: dict[str, Any], path: str) -> set[str]:
@@ -798,13 +832,23 @@ def _values_at(document: dict[str, Any], path: str) -> set[str]:
 def _search_field_coverage_problems(
     documents: dict[str, dict[str, Any]], path: str, values: set[str], daggered: set[str]
 ) -> list[str]:
-    """Every value of `path` needs a fixture, unless the field table says nothing writes it."""
+    """Every value of `path` needs a fixture, unless the table says nothing writes it — or it is a null.
+
+    `UNTESTABLE` comes from the field table (the same convention its own dagger check uses): a JSON
+    `null` is written as `None`, not as a string literal, so a corpus can say nothing about it either
+    way and demanding an example would be a permanent false red (draft §97).
+    """
+
+    from test_l1_field_values import UNTESTABLE
 
     seen: set[str] = set()
     for name, document in documents.items():
         if name.startswith("search_"):
             seen |= _values_at(document, path)
-    return [f"no search fixture reports {path} = {value}" for value in sorted(values - seen - daggered)]
+    return [
+        f"no search fixture reports {path} = {value}"
+        for value in sorted(values - seen - daggered - set(UNTESTABLE))
+    ]
 
 
 @pytest.mark.parametrize("path", sorted(_search_response_enums()))
@@ -834,9 +878,12 @@ def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: st
     )
 
     # Non-vacuity, one mutation per direction: an uncovered value, and a corpus that answers nothing.
+    from test_l1_field_values import UNTESTABLE
+
+    demanded = values - set(UNTESTABLE)
     assert _search_field_coverage_problems(documents, path, values | {"wat"}, daggered) != []
     assert _search_field_coverage_problems({}, path, values, set()) == [
-        f"no search fixture reports {path} = {value}" for value in sorted(values)
+        f"no search fixture reports {path} = {value}" for value in sorted(demanded)
     ], "an empty corpus has to report every value"
     if daggered:
         # Only meaningful where the document actually excuses a value: dropping the daggers must
@@ -850,6 +897,37 @@ def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: st
         )
     assert _values_at({"a": {"b": [{"c": "x"}]}}, "a.b[].c") == {"x"}, (
         "the path walker has to reach a value through a list, or this guard checks nothing"
+    )
+
+
+def test_a_schema_permitted_null_is_never_demanded_from_the_corpus() -> None:
+    """§97: the walker must spell a JSON `null` the way the field table does, and not ask for it.
+
+    §96 used `str(item)`, which turns a schema's `null` into `"None"` — a value no fixture can ever
+    report, so the day this rule is applied to a schema that allows a null (`where-response.source`
+    does) it would go red forever. Measured on a synthetic schema rather than on the real one, because
+    the checked document happens to have no null today; that is why the bug survived a round.
+    """
+
+    synthetic = {
+        "properties": {
+            "source": {"type": ["string", "null"], "enum": ["registry", "path", None]},
+            "nested": {"items": {"enum": ["only"]}},
+        }
+    }
+    found = _enums_in(synthetic)
+    assert found == {"source": ["registry", "path", "null"], "nested[]": ["only"]}, found
+
+    # And the demand skips it: with no fixture at all, every *string* value is reported and `null` is
+    # not. `UNTESTABLE` is the same convention the field-values guard uses.
+    from test_l1_field_values import UNTESTABLE
+
+    assert NULL_SPELLING in UNTESTABLE, (
+        "the field table no longer treats a null as untestable; this guard's exception is now its own"
+    )
+    problems = _search_field_coverage_problems({}, "source", {"registry", "path", NULL_SPELLING}, set())
+    assert problems == ["no search fixture reports source = path", "no search fixture reports source = registry"], (
+        problems
     )
 
 

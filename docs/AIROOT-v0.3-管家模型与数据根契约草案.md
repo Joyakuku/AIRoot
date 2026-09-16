@@ -8089,3 +8089,99 @@ if token["approval_mode"] == "human" and not token.get("approved_by_sid"):   # �
 5. 两份 fixture 都放在搜索小节**末尾**（`execute_search` 读共享 `FakeClock`，§89 的教训），重生成后确认 diff 是外科式的；
 6. 把守卫的手写表换成推导，加"路径走法穿列表"的自检；
 7. 用**两份 fixture 都移走**验红（这是这一轮发现的真实状态），再补空语料与 † 两个方向；回写计数；跑全量 + 旧切片 + 真机验收；提交。
+## 97. 第 97 阶段：把上一轮的守卫往外推一次，量出"不能推"和"推不了"
+
+### 97.1 这一阶段要解决什么
+
+§96 把覆盖率规则的字段表从手抄换成走 schema，并留下一条边界：
+
+> **走 schema 只覆盖 `search-response`。** 其他有枚举的文档……**没有**做同样的覆盖率检查……要不要把这条推广到每一份 schema 是**下一次判断**，而且代价明显更大。
+
+这一轮做那次判断。判断的办法只有一个：**真的去量**。
+
+### 97.2 实测：推广的代价是 32 个"没有 † 也没有 fixture"的取值——而其中大多数不是缺口
+
+把 §96 的判据套到**每一份被打印的文档**（`SCHEMA_FOR_FIXTURE` 里那 9 个 schema 的全部枚举）上：
+
+| schema | 值没有 fixture 的字段 | † 能解释几个 |
+|---|---|---|
+| `doctor-response` | `diagnostics[].remediation`：`inspect` / `repair`（`reapprove` 有 †） | ❌ 两个解释不了 |
+| `extension-envelope` | `status`：`degraded` / `error` / `timed_out`（`cancelled` 有 †） | ❌ 三个解释不了 |
+| `plan` | `operation`（6 个）、`operations[].kind`（`delete`） | 部分：`import_tool`/`recreate_runtime`/`root_relocate`/`rollback` 有 † |
+| `reference-plan` | `exposure.scope`（`machine`）、`exposure.value_kind`（`REG_SZ`）、`operations[].target_scope`（`machine`） | ❌ 三个都没有 † |
+| `registry-projection` | `external_references[].capability_kind`（`tool`）、`management`（三个） | `project_owned` 有 † |
+| `transaction` | `state`：**16 个里 15 个** | ❌ 一个都没有 |
+| `where-response` | `source`：`project` / `search`（有 †）、以及 **`null`** | ✅ 两个有 †，`null` 是另一回事 |
+| `search-response` | 两个（都有 †，§96 已覆盖） | ✅ |
+
+**合计：51 个取值没有 fixture，其中 32 个连 † 都没有。** 逐个看这 32 个，它们分成三类，而**没有一类是"漏了语料"**：
+
+1. **词表由别的工件覆盖**：`transaction.state` 的 15 个状态——它们的覆盖物是 `transaction_transitions.json`（那张合法移动表，§45），不是响应语料。要求每个状态都有一份事务 fixture，等于把"转移合法"这件事重复证一遍。
+2. **计划由别的命令产出**：`plan.operation` 的 `gc_apply` / `retire_tool` 确实有写者，但写它们的是 `tool gc` / `tool retire`，而**那条命令打印的是报告**（§94 量过：报告没有 schema）。所以"没有 fixture"是真的，原因是结构性的。
+3. **`null` 不是取值**：`where-response.source` 的枚举里有 JSON `null`（`"type": ["string","null"]`）。**语料永远报不出它**。
+
+于是这一轮的判断是：**不推广。** 理由不是"太麻烦"，而是 ADR-0021 明确点名的那种情形——**机械推广会摧毁一条更强的规则**：要让 32 个变绿，要么给它们打 32 个 †（其中大多数是假话，那些取值**真的**有写者），要么为已经被别的工件覆盖的东西造一批 fixture（重复证明，还会让"语料 = 一次结果"这件事失去意义）。
+
+**规则仍然只适用于 `search-response`，但理由是判据而不是偏好**：这条规则适合"枚举是**关于一次结果的结论**"的 schema（`status`、`freshness.*`、`results[].verification`），因为**一份 fixture 就是一次结果**，一个取值一份例子正是语料的用途。像 `transaction.state` 那样是**词汇表**的，覆盖物是拥有那份词汇表的工件（`transaction_transitions.json`）或字段取值表的 †。
+
+判断写进了代码：`COVERAGE_BY_FIXTURE_SCHEMA = "search-response"` 连同上面这段判据就在它旁边——**范围是命名的一处，不是散在判据里的**。
+
+### 97.3 顺带抓到一处缺陷：那个"`null`"会变成一个永远红的假警报
+
+量 `where-response.source` 的时候发现的：§96 的走法写的是
+
+```python
+found[prefix] = [str(item) for item in node["enum"]]
+```
+
+JSON 的 `null` 过一遍 `str()` 就变成 Python 的字符串 `"None"`。**语料永远报不出 `"None"`**（一个字段要么是字符串、要么是 `null`，不会是 `"None"` 这个字符串），所以哪天真把规则推到 `where-response`，`source` 这一格会**永远红**——一个假警报，而且看起来像"语料缺一个例子"。
+
+它今天不响，只是因为 `search-response` 的枚举里没有 `null`。**这是我上一轮刚交付的代码里的缺陷**，而且是被"试着往外推一次"逼出来的。修法两条，都用项目已有的约定：
+
+1. **拼写**：按字段取值表的写法把 `null` 写成 `"null"`（`UNTESTABLE = {"null"}` 就是那套约定）。
+2. **不索要**：`null` **不是语料能证的东西**（写它是 `None` 而不是字符串字面量），所以覆盖率判据**跳过它**——与取值表自己那组守卫的判断完全一致。跳过的是**从 `test_l1_field_values` 读来的 `UNTESTABLE`**，不是这一轮新写的名单。
+
+### 97.4 做了什么
+
+1. **把走法拆成纯函数** `_enums_in(schema)` + 一层 `_search_response_enums()`，后者读 `COVERAGE_BY_FIXTURE_SCHEMA`；判据与范围写在那个常量旁边。
+2. **修 `null` 的两处**：`_enum_spelling()`（`None` → `"null"`）与覆盖率判据里的 `- set(UNTESTABLE)`。
+3. **新增一条测试**（`test_a_schema_permitted_null_is_never_demanded_from_the_corpus`）：**在合成 schema 上**验两件事——`null` 拼成 `"null"`、且空语料**不**索要它；同时断言 `"null" in UNTESTABLE`（那条例外的所有权仍在字段取值表里）与路径走法能穿过 `items`。
+4. 空语料那一条变异的期望值也跟着减去 `UNTESTABLE`——否则它会要求一个语料不可能报出的值。
+
+### 97.5 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| **把 `_enum_spelling` 改回 `str(item)`**（§96 的写法） | 红 | ✅ 红：`{'nested[]': ['only'], 'source': ['registry', 'path', 'None']}` |
+| 把 `- set(UNTESTABLE)` 去掉 | 红 | ✅ 红（合成用例会索要 `null`） |
+| 各字段原有的四个方向（漏取值 / 空语料 / † 去掉 / 有 † 的字段） | 红 | ✅ 红（沿用 §96） |
+
+**第一个变异是上一轮的真实代码**，不是这一轮新造的：把它放回去，新用例当场指名 `'None'`。这正是"只有把规则往外推，才知道它哪里不许推"的实例——**它今天不响，不是因为它是对的，而是因为被检查的 schema 恰好没有那一格。**
+
+### 97.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **856 → 857**（新增 1 条） |
+| 审计检查（`test_l0_consistency.py`） | **95 → 96**（多了一个测试函数） |
+| golden fixture | **35 → 35**（不变——这一轮**没有**造新语料，判断就是不推广） |
+| 被修的代码 | **1 处**（覆盖率走法：`null` 的拼写与"不索要"） |
+| schema / 语料 / policy | **一个字节没动** |
+
+### 97.7 如实记录的边界
+
+1. **"不推广"是一个判断，它今天由一段散文守着，没有守卫。** 没有任何机械检查会阻止下一个人把 `COVERAGE_BY_FIXTURE_SCHEMA` 改成别的 schema——**改了就会红 32 处**，所以它会立刻被看见，但**看见的是红，不是"你为什么改这个"**。这是有意接受的：一条"这个常量只许是 X"的守卫就是一份手抄名单，而这里真正的保护是那 32 处红 + 这段理由。
+2. **那 32 个取值里，有几个可能真是缺口**，我**没有**逐个判死。最可疑的是 `reference-plan.exposure.scope = machine`（有写者、没有 †、没有 fixture：`machine` 级持久化要提权，`--scope machine` 现在报 `PRIVILEGE_REQUIRED`，所以**它可能确实只在 P2 才写得出来**——那就该打 †，而不是造 fixture）。**这一轮没有改它**：逐个判定 32 个取值是**一次独立的审计**，混进"要不要推广规则"这一轮会让两件事都做不干净。
+3. **`null` 的例外现在有两处**（取值表的 `UNTESTABLE`、覆盖率判据里的 `- set(UNTESTABLE)`），但它们**是同一个来源**（判据从字段取值表读），所以不会漂移；合成用例里那句 `assert NULL_SPELLING in UNTESTABLE` 就是防它变成第二份名单。
+4. **`_enums_in` 仍然只认 `properties` / `items` / `enum` 三种形状。** `oneOf` / `allOf` 里的枚举、`$defs` 里没被 `$ref` 到的枚举**都收不到**。今天 `search-response` 没有这些形状（所以 §96 的结论仍然成立），但规则本身**看不出"有枚举没收全"**——下一次有人用 `oneOf` 写枚举，这一组会**静默少一个字段**。
+5. **合成用例证明的是走法，不是真实 schema。** 真实被检查的文档恰好没有 `null` 枚举——这正是缺陷活过一轮的原因；**用合成输入补救，等于承认"在没有真实例子的地方，这条守卫只能靠构造的输入"**。
+
+### 97.8 实施顺序
+
+1. 先把 §96 的判据**真的套到每一份被打印的文档**上（而不是先决定要不要套）——量出 51 / 32 这两组数；
+2. 把 32 个逐个归到三类原因里（别的工件覆盖 / 别的命令产出 / `null` 不是取值），确认**没有一类是"漏了语料"**；
+3. 于是这一轮的产出从"补 fixture"变成"**写下判据、限定范围**"，并把范围命名为一个常量放在判据旁边；
+4. 量 `where-response.source` 时发现 `str(item)` 把 `null` 变成 `"None"` ⇒ 上一轮的缺陷；
+5. 修两处（拼写 + 不索要），例外**从字段取值表读**，不新开一份名单；
+6. 用**上一轮的真实写法**验红（把它改回 `str(item)`），再补"去掉 `UNTESTABLE` 跳过"这个方向；
+7. 回写计数（测试 +1、审计检查 +1）；跑全量 + 旧切片 + 真机验收；提交。
