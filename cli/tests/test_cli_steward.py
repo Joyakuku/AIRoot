@@ -44,7 +44,12 @@ def data_root(tests_tmp: Path) -> Path:
     path = tests_tmp / "dr-env"
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True)
-    yield path
+    # Hand out the spelling the product's own writers produce (`paths.canonicalize` resolves),
+    # not the raw one. A session temp root can contain an 8.3 alias
+    # (`C:\Users\PROFIL~1\...`), and then this fixture's value and the CLI's canonical report are
+    # two spellings of one directory — which made the assertions below depend on where the
+    # checkout lives (draft §111, measured by cloning to `%TEMP%`).
+    yield path.resolve()
     shutil.rmtree(path, ignore_errors=True)
 
 

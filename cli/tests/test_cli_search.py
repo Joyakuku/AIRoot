@@ -56,7 +56,9 @@ def data_root(tests_tmp: Path) -> Iterator[Path]:
     (path / "java" / "bin" / "java.exe").write_bytes(b"MZ-placeholder\n")
     (path / "loose.exe").write_bytes(b"MZ-placeholder\n")
     try:
-        yield path
+        # The spelling the product writes, for the reason spelled out in
+        # `test_cli_steward.py`'s `data_root` (draft §111).
+        yield path.resolve()
     finally:
         shutil.rmtree(path, ignore_errors=True)
 
@@ -144,7 +146,7 @@ def test_without_a_data_root_search_refuses_instead_of_scanning_everything(capsy
 def test_an_explicit_search_root_wins_over_the_data_roots(
     capsys, cli_root: Path, registered: Path, tests_tmp: Path
 ) -> None:
-    other = Path(tempfile.mkdtemp(prefix="cli-search-other-root-", dir=tests_tmp))
+    other = Path(tempfile.mkdtemp(prefix="cli-search-other-root-", dir=tests_tmp)).resolve()
     (other / "java.exe").write_bytes(b"MZ")
 
     code, document = search(capsys, cli_root, "java", "--search-root", str(other))
@@ -419,3 +421,92 @@ def test_query_given_twice_is_refused(capsys, cli_root: Path) -> None:
 
     assert code == 8
     assert document["reason_code"] == "INVALID_INPUT"
+@pytest.fixture
+def registered_non_canonical(registry, data_root: Path) -> Path:
+    """A data root and a reference registered in a spelling that is not the canonical one.
+
+    `.` and `..` segments are the deterministic stand-in for an 8.3 alias: `Path.resolve()` folds
+    them, a raw string comparison does not, and unlike the `PROFIL~1` spelling this host's `%TEMP%` happens to
+    have, they exist everywhere. This is the state `test_cli_search.py` used to reach *by accident* (its fixture handed out
+    whatever spelling the session temp root had) — reaching it on purpose is what makes the two
+    guards below able to go red (draft §111).
+    """
+
+    # Forward slashes rather than a `.`/`..` segment: the latter is folded somewhere in the
+    # search/index chain, so a guard built on it could not go red. `Path.resolve()` normalises these
+    # and `caps/searchindex.covers` does not (it lowercases and strips trailing backslashes only) —
+    # which is exactly the disagreement these two guards exist to catch.
+    root_spelling = str(data_root).replace("\\", "/")
+    reference_spelling = root_spelling + "/java"
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_data_root(
+            connection,
+            DataRoot(
+                data_root_id="dr-alias",
+                path=root_spelling,
+                role="runtime",
+                volume_serial=volume_serial(data_root),
+                added_at="2024-01-01T00:00:00Z",
+                whitelist_revision="wl-4",
+            ),
+        )
+        registry.upsert_external_reference(
+            connection,
+            ExternalReference(
+                external_id="external/dr-alias/java",
+                capability_id="java",
+                path=reference_spelling,
+                management="external_reference",
+                health="healthy",
+                observed_at="2024-01-01T00:00:00Z",
+                capability_kind="runtime",
+                data_root_id="dr-alias",
+                version="25.0.2.0",
+                architecture="x64",
+                entrypoints=("bin/java.exe",),
+                probe_level=2,
+                source_kind="pe_static",
+            ),
+        )
+    return data_root
+
+
+def test_a_non_canonical_registry_spelling_is_still_managed(
+    capsys, cli_root: Path, registered_non_canonical: Path
+) -> None:
+    """§111: the claim side is resolved, so a row's spelling cannot turn a managed path unmanaged.
+
+    Measured before the fix: `matched == 0` with `--managed-only` (the match was tagged `unmanaged`),
+    while the same tree registered canonically reported it as an `external_reference`. A wrong tag is
+    worse than a missing answer here, because `--managed-only` is what a caller uses to *exclude*
+    things.
+    """
+
+    code, document = search(capsys, cli_root, "java", "--ext", ".exe", "--managed-only")
+
+    assert code in (0, 2), document.get("reason_code")
+    results = document["data"]["results"]
+    assert results, "a path inside a registered reference must not be hidden by --managed-only"
+    assert {item["management"] for item in results} == {"external_reference"}
+
+
+def test_explain_and_search_agree_when_the_registry_spelling_is_not_canonical(
+    capsys, cli_root: Path, registered_non_canonical: Path
+) -> None:
+    """§111: the coverage question has one spelling, or `explain` predicts a different answer.
+
+    `search` resolves its roots; `explain` used the raw registry strings, so with a non-canonical row
+    it said "a live crawl answers" (exit 2) while `search` answered from the index (exit 0). Two
+    commands disagreeing about the same index is a bug in whichever one the caller believed.
+    """
+
+    code, document = search(capsys, cli_root, "refresh")
+    assert code == 0, document.get("reason_code")
+
+    explain_code, explain = search(capsys, cli_root, "explain", "java")
+    search_code, answer = search(capsys, cli_root, "java", "--ext", ".exe")
+
+    assert explain["would_answer_from"] == "index", explain.get("reason")
+    assert explain_code == 0
+    assert answer["data"]["fallback"] is None, "search answered from a crawl while explain predicted the index"
+    assert search_code == 0

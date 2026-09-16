@@ -489,7 +489,11 @@ def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any
     try:
         target = canonicalize(args.path, must_exist=True)
         owner = next(
-            (row for row in registry.data_roots() if Path(row["path"]) == target.parent),
+            (
+                row
+                for row in registry.data_roots()
+                if Path(_claim_spelling(str(row["path"]))) == target.parent
+            ),
             None,
         )
         if owner is None:
@@ -2321,6 +2325,26 @@ SEARCH_EXTENSION_ID = "airoot-native-search-extension"
 SEARCH_IMPLEMENTATION_ID = "airoot-native-search-crawl"
 
 
+def _claim_spelling(path: str) -> str:
+    """The spelling a registry path *claim* is compared in.
+
+    Every writer canonicalizes (`paths.canonicalize` resolves) and so does the crawl (`caps/search.py`
+    `_canonical_root`), so the two sides of this comparison normally hold the same string already.
+    They are not guaranteed to: a caller can register a directory through an 8.3 alias
+    (`C:\\Users\\PROFIL~1\\…`) or spell it with a `.`/`..` segment, and the registry row then carries a
+    spelling the crawl's recorded paths never do. Measured (draft §111): with such a row the
+    classifier answered `unmanaged` for paths **inside** a registered reference, and `--managed-only`
+    then hid real matches — a silent wrong answer rather than a visible failure. Resolving the claim
+    costs one call per registry row, not one per search result, and `resolve()` on a missing tail is a
+    no-op rather than an error (it is not `strict`).
+    """
+
+    try:
+        return str(Path(path).resolve())
+    except OSError:  # pragma: no cover - resolve() is best-effort by design
+        return path
+
+
 def _search_classifier(registry: Any, context: Context) -> Any:
     """Build a path → (management, capability_id) tagger from a *snapshot* of declared state.
 
@@ -2333,14 +2357,14 @@ def _search_classifier(registry: Any, context: Context) -> Any:
 
     claims: list[tuple[str, str, str | None]] = []
     for row in registry.external_references():
-        claims.append((str(row["path"]), "external_reference", row["capability_id"]))
+        claims.append((_claim_spelling(str(row["path"])), "external_reference", row["capability_id"]))
     for row in registry.instances():
         try:
             store_dir = from_root_relative(str(row["store_path"]), context.path())
         except (KeyError, TypeError, ValueError):
             continue
         capability = row["capability_id"] if "capability_id" in row.keys() else None
-        claims.append((str(store_dir), "managed", capability))
+        claims.append((_claim_spelling(str(store_dir)), "managed", capability))
 
     prepared = sorted(((path.lower().rstrip("\\") + "\\", management, capability) for path, management, capability in claims))
 
@@ -2356,6 +2380,30 @@ def _search_classifier(registry: Any, context: Context) -> Any:
         return "unmanaged", None
 
     return classify
+
+
+def _canonical_data_roots(data_roots: list[str]) -> list[str]:
+    """The data roots in the spelling `search` asks its coverage question with.
+
+    `search` resolves them (`caps/search.py` `resolve_roots` → `_canonical_root`); `explain` asked
+    with the raw registry strings, so the two commands could disagree about one index: a row spelled
+    through an alias made `explain` predict a live crawl while `search` answered from the index
+    (draft §111 — measured, and the reason this is one function now). A root that cannot be resolved
+    is kept as it is rather than dropped: `explain` is a *prediction*, and quietly predicting over
+    fewer roots would be a second way for the two to disagree.
+    """
+
+    from .caps import search as search_caps
+
+    resolved: list[str] = []
+    for candidate in data_roots:
+        try:
+            roots, _origin = search_caps.resolve_roots([candidate])
+        except AirootError:
+            resolved.append(candidate)
+            continue
+        resolved.extend(roots)
+    return resolved
 
 
 def cmd_search(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
@@ -2588,7 +2636,7 @@ def _search_reserved(
     elif not state.readable:
         source = "crawl"
         reason, reason_code = "no index has been built yet; a live crawl answers instead", "SEARCH_FALLBACK_USED"
-    elif not state.covers(data_roots or []):
+    elif not state.covers(_canonical_data_roots(data_roots)):
         source = "crawl"
         reason = "the index does not cover the current data roots; a live crawl answers instead"
         reason_code = "SEARCH_FALLBACK_USED"
