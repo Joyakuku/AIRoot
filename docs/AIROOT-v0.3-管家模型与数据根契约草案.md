@@ -10682,3 +10682,118 @@ data_root=dr-rustup   recorded=wl-4   current=wl-5
    未测的**，不是"应该也会"。
 
 
+## 122. 签发是一个动词（ADR-0049）
+
+**这一节修的是一个"能力真实存在、但接口里没有名字"的缺陷。** §117 已经在真机上走完 `plan` → 签发 →
+`install` 报 `FINALIZED` 的全程，§119 又把"这一版没有生产签发方"这类旧话逐面收干净。可是到这一轮才发现：
+那一步在 CLI 里**没有动词**，只能 `import airoot.tx.issuer`。于是一个按 `agents/airoot.json` 工作的
+agent 读完 lane 表会得出结论——"安装这条路在这个 build 里走不通"——而它其实只差一次显式签发。
+**一个真实但没有名字的能力，等于一个没人能用的能力**；这是 ADR-0049 的全部理由。
+
+### 122.1 动词的形状（一个薄封装）
+
+```text
+airoot issue <plan_file> --out <token.json> [--provision] [--mode policy|human]
+             [--approved-by-sid <SID>] [--ttl-minutes N] --json
+```
+
+**它是 `tx/issuer.py` 的薄封装，一行决策都不留在自己手里**：token 里的事实（`plan_hash`、
+`root_instance_id`、`machine_id`、`policy_revision`）全部**读自计划**，`--provision` 走模块的
+`provision`，`--mode human` 不带 `--approved-by-sid` 由模块拒绝（"an agent request is never a human
+approval"），`--ttl-minutes` 只是把默认 5 分钟换掉。真机根上的一次真实调用：
+
+```text
+issue D:\env\plan_rust-toolchain_1.83.0_5e63c3f68c3a.json --out D:\env\token-probe.json --json
+  exit 0  approval_id=approval/17d6e8fe3b7f  approval_mode=policy  key_id=airoot-local-issuer-1
+  provisioned=false  permission_proof=false  reason_code=SUCCESS
+```
+
+**输出文档里必须带着那句"这值多少钱"。** 调用方会把这份文档引用回来，所以
+`permission_proof: false` 与 `note` 中的 ADR-0046 指针是**文档的一部分**，不是文档旁边的一行注释——
+它们由 `test_cli_issue.py` 单独守卫（把 `permission_proof` 改成 `true`，那条测试立刻红）。
+
+### 122.2 没有新增任何协议面
+
+| 问题 | 答案 |
+|---|---|
+| 新 schema？ | **没有**。token 是既有的 `approval-token`，输出报告没有 schema（§94 的 `document_schema: null`） |
+| 新 reason code / 退出码？ | **没有**。`SUCCESS`、`INVALID_INPUT`(8)、`PROVENANCE_FAILED`(7)、`INVALID_APPROVAL`(4) 全部是既有的码 |
+| 核心会不会自己签发？ | **不会**。`approve`/`install` 仍然是**消费**方：`test_consuming_an_approval_never_provisions_a_signing_key` 断言走完 `approve` 之后 root 里**没有** `state/issuer-key.json` |
+| 有没有给它新权力？ | **没有**。同用户进程本来就能 `import` 这个模块或换掉 keyring；动词增加的是**可发现性**，而这一点写在它自己的输出里而不是留给人猜 |
+| `fake_issuer.py` 要改吗？ | **不用**。测试路径仍然用它（不需要操作者的 root 里已经 provision 过密钥），两条路互不影响 |
+
+### 122.3 守卫与"验红"
+
+新文件 `cli/tests/test_cli_issue.py`（10 条）。除端到端三步（`provision` → `issue` → `approve`）之外，
+每条守卫都对应一个具体的坏法，并且**逐个把坏法放回去验过红**：
+
+| 放回去的缺陷 | 被哪条守卫抓住 |
+|---|---|
+| 文档不再说"这不是授权证明"（`permission_proof: true`） | `test_the_document_says_the_approval_is_not_a_permission_proof` |
+| `provision` 的拒绝被吞掉，动词继续往下签 | `test_provision_refuses_to_overwrite_a_key_and_the_refusal_is_passed_through` |
+| `--ttl-minutes` 解析了但没传给签发方 | `test_ttl_minutes_reaches_the_token` |
+| `human` 模式自己编一个 SID | `test_human_mode_without_a_sid_is_refused_by_the_module` |
+| `--provision` 变成无条件执行（普通 `issue` 会轮换密钥） | `test_a_plain_issue_rotates_nothing_and_writes_only_the_token` |
+
+**`PROVENANCE_FAILED` 那一条要分清两个不同的拒绝**：没有**密钥**时是 `tx/issuer.py` 的
+"no signing key is provisioned"（并点名 `provision` 这个补救步骤），没有**keyring** 时才是
+`ISSUER_PENDING`。测试断言的是前者，因为 `issue` 走的是模块的 `load_private_key`；把两者混起来写，
+测试会在"拒绝理由对不对"这件事上说假话。
+
+### 122.4 这个动词让哪些话变成了假话（§119 的同一类，又长出来一次）
+
+§119 记的是"裁决改了、五个面还在说旧结论"。这一次是"**新动词出现了，五个面还在说没有动词**"——
+同一类缺陷的第二个实例，所以修法也一样：**不许把那句话改软，只能改成真的**。
+
+| 面 | 原来那句 | 现在 |
+|---|---|---|
+| `agents/airoot.json` 的 `approve.why_no_lane` | "no CLI verb mints one" | 承认动词已存在，剩下的是**决定**而不是缺口：要不要让 agent 无人值守地走完 approve/install，是 ADR-0025 D1 留给 P2 的问题 |
+| 同文件 `install.why_no_lane` | 同上 | 同上；计划那一半仍然有 lane（`plan`、`scope decide`） |
+| 同文件 `unmapped_verbs.uninstall` | "needs a token that no CLI verb mints" | 指向命令地图里新加的那一行（`issue`） |
+| `SKILL.md` 命令地图 | 没有这一行 | 新增一行，且**只教 `airoot issue`**：`approve`/`install` 在 `uncovered_verbs` 里带着非空解锁词，命令地图**不许**把它们教成可执行的 |
+| `references/confirmation.md`、`references/reason-codes.md` | "没有 CLI 动词会替你签" | 写成 `airoot issue … --provision`，并保留"已有密钥时拒绝覆盖"这条 |
+| `tx/approval.py` 的 `ISSUER_PENDING` 证据行 | 指向 `airoot.tx.issuer` 这个**模块** | 指向 `airoot issue` 这个**动词**（句子本身不动：指向 ADR-0046 的那句仍由 §119 的守卫钉着） |
+| `AGENTS.md` §6 的 `--token-file` 命令块 | "先 provision 本 root 的密钥（`airoot.tx.issuer`）" | 三步命令写全（`issue` → `approve` → `install`），并写明 `--provision` 只在第一次 |
+
+**顺带发现并补上了一条守卫。** `honesty.document_schema_note` 一直写着"这 30 份报告有 30 个互不相同的
+顶层形状"，而 §100 的论证（"一个 schema 描述不了 N 个不同形状，所以不收口"）**整个压在"形状互不相同"
+这句话上**——此前没有任何东西度量它。这一轮加了 `shape_distinctness_problems`：把同一批未固定的报告按
+`frozenset(document)` 分组，任何一组多于一份即报缺陷，并配一条反向用例（两个键集相同的报告必须被抓）。
+加上 `issue` 之后实测是 **31 份报告 / 31 个形状**，那句话现在是**被度量的**而不是被相信的。
+
+**这一轮的“验红”有一半是自然发生的**：动词加进去之后，整套测试以 **7 条红灯**报出七个面各自的缺口
+（`issue` 没有 lane、有 lane 却在命令地图里没被教、命令地图教了它不该教的 `approve`、`run` 的 lane 注释
+丢了“怎么拿到 token”、`AGENTS.md` 的 read 路径计数、审查报告的测试总数、草案计数链的终点）。
+**“加一个动词要动多少面”这件事是这 7 条红灯数出来的，不是想出来的**——这正是这些守卫存在的理由。
+
+### 122.5 一个具体的记账修正
+
+`AGENTS.md` §7 原写"**34 条** agent lane 里只有 5 条读的文档被已发布 schema 描述"。§120 加 `run`
+之后 lane 数是 35，本节加 `issue` 之后是 36——**这句话在 §120 那一轮就已经旧了，只是没人查**。
+它与 `honesty.document_schema_note` 是同一事实的两处手抄；后者由测试逐字比对（5 of 36），前者靠人。
+这一节把前者改成 36，并记下**它没有守卫**这件事：想让它有守卫，得让 §7 引用文件里的数字而不是自己写。
+
+### 122.6 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1330 → 1340**（+10：新增 `cli/tests/test_cli_issue.py` 十条；守卫加严用的是既有测试函数，不新增计数） |
+| 常驻一致性检查（`test_l0_consistency.py`） | **109 → 109** |
+| golden 语料 | **43 → 43**（`issue` 的输出是报告、不进语料；没有改任何被语料固定的文档） |
+| schema | **20 → 20** |
+| `agents/airoot.json` | +1 lane（`issue`，11 条 `read` 路径）、3 处理由重写、`document_schema_note` 的计数 35→36 / 30→31 |
+| 新增 ADR | **ADR-0049** |
+| 新守卫 | `shape_distinctness_problems` + `test_cli_issue.py` 的 10 条；`AGENTS.md` 的 read 路径计数 151 → 162 |
+
+### 122.7 这一节没有做的事
+
+1. **`approve`/`install` 仍然没有 lane**，只是理由改成了真的。要不要给它们 lane 是一个**裁决**（agent
+   能不能无人值守走完安装），本节刻意不顺手回答——顺手回答就会变成"用一次改文档代替一次裁决"。
+2. **受保护签发方仍然不做**（ADR-0044 的结论不变）。这个动词不让私钥变得更安全：它仍然可被同用户进程
+   读取，`permission_proof: false` 就是这句话的机器可读形式。
+3. **没有给 `issue` 加策略**：它不判断这个计划该不该被批准，也不记 `approved_by_sid` 以外的"谁批准了"。
+   批准是账本，不是授权——把它当授权用是使用方（上游 harness）的责任（ADR-0045）。
+4. **没有动 `env persist` / `tool gc --apply` / `uninstall` 的 token 路径**：它们本来就是消费侧，本节只在
+   `AGENTS.md` 与两份参考文档里把"怎么拿到 token"写全。
+5. **`--mode human` 不会去读本机 SID**：调用方给什么就记什么，不给就拒。自动填一个 SID 会让
+   "human"这个取值变成装饰。

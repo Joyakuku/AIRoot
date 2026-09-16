@@ -1,7 +1,8 @@
 """Test-only approval issuer.
 
 The core never mints an approval as a side effect of anything (``airoot approve`` only consumes one),
-and since ADR-0046 it *can* mint one as an explicit local step (``airoot.tx.issuer``). This module
+and since ADR-0046 it *can* mint one as an explicit local step (``airoot issue``, ADR-0049; the
+implementation is ``airoot.tx.issuer``). This module
 stays the test path's issuer for a different reason: a test that needs a token must not depend on a
 key being provisioned in the operator's root, and ``test_hmac_sha256`` plus a well-known secret keeps
 the fixture cheap. Neither is a production mechanism — ``docs/schema/README.md`` permits this

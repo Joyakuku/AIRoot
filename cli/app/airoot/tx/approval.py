@@ -165,7 +165,7 @@ def load_keyring(root: Path) -> dict[str, ApprovalKey]:
             evidence=[
                 str(path),
                 "the core never mints a token on its own: `airoot approve` only consumes one, so the "
-                "signer is a separate, explicit local step (`airoot.tx.issuer`)",
+                "the signer is a separate, explicit local step: `airoot issue <plan.json> --out <token.json> --provision` (ADR-0049 gave the step a verb)",
                 "provision this root's key, then hand the token to approve/install/env persist/"
                 "tool gc --apply/uninstall — the missing thing is this root's key, not the build's issuer",
                 "an approval is an audit record, not a proof of permission (decided: ADR-0046)",

@@ -2512,3 +2512,60 @@ revision，所以 golden 要重生）；任何装了 Rust 的机器上，`discov
 
 **状态：已裁决。** 落地读数（`discover` / `adopt` / `uninstall` / `forget` / `doctor` / `where` 六项断言
 与扫描成本）记在草案 §121。
+
+## ADR-0049：**签发成为一个 CLI 动词**（`airoot issue`）——推翻 §116.2 的"签发不是动词"
+
+**被推翻的原话**（`cli/app/airoot/tx/issuer.py` 模块 docstring 第 17–21 行，写于 §116 / ADR-0046）：
+
+> **Why the signer is not a CLI verb and not in the core.** The invariant is that the core never has a
+> signing side — `airoot approve` only *consumes* an approval — because a CLI that can mint consent has
+> stopped being a record and started being an authority. Keeping the signer a separate module that a
+> human invokes is how that invariant stays visible in the code's shape: signing is something done
+> **to** AIROOT from outside, not something AIROOT does.
+
+**那句话当时是对的**，而且它守的是 ADR-0046 的核心结论——**批准是账本，不是授权证明**。它错的地方只有
+一处：**"人工步骤"被写成了"只能由人写 Python 调用"**。它把"这件事必须由一个明确的人发起"和"这件事不能
+由 CLI 表达"当成了同一件事，而它们不是。
+
+**今天为什么不再成立**：最小版本的定义要求"**通过 CLI 签发批准**"（判据 #4），理由是**没有动词就没有
+agent lane**——一个 agent 读 `agents/airoot.json` 时看到 `approve`/`install` 都没有 lane，理由是"没有
+任何 CLI 动词会签发 token"，于是**整条安装路径对 agent 不存在**，只能由人在旁边敲 Python。那不是"更安全"，
+那是**把能力藏起来**：工具能做而接口不说，读文档的人只会以为这条路还没做（而它已经做完了，§117 走通过）。
+
+**决策一：新增动词 `airoot issue <plan_file> --out <token.json>`。**
+
+- `--provision`：先调 `tx.issuer.provision(root)`。**已存在密钥时报 `INVALID_INPUT`，原样透传这个拒绝**
+  ——不吞、不自动换钥（"密钥换了而没人发现"正是 §116.3 那条守卫在防的事）。
+- `--mode`：只允许 `policy`（默认）与 `human`；`human` 而不给 `--approved-by-sid` 时**透传**
+  `tx/issuer.py` 的 `INVALID_APPROVAL`（原话："它不会凭空造一个 SID"）。
+- `--ttl-minutes` 默认 **5**，直接转发给 `issue` 的 `ttl_minutes`。
+- 输出文档里**必须**带一句：**签发是审计记录，不是授权证明**；私钥在本 root 内、同用户进程可读可签。
+- **不做**：不提权、不写受保护状态、不动密钥文件、不自动 provision、**不把批准塞进 `install`**。
+
+**决策二：它不给出任何新的权力，这一点要写在动词的文档里。**
+
+同用户进程本来就能 `import airoot.tx.issuer`、读 `state/issuer-key.json`、或者干脆换掉 keyring ——
+`issue` 只是把**同一个动作**换成一个可被文档与 agent 面引用的入口。**所以它带来的不是权限，而是可发现性**：
+从此"签发"在命令地图、lane 表与 golden 语料里都是有名字的东西。**代价照实说**：agent 驱动它的门槛降低了
+（以前要写 Python，现在一行命令）。这条代价是**被接受的**，因为按 ADR-0045/ADR-0046 的归属，**挡同用户进程
+不是 AIROOT 的职责**——上游 harness 才是决定"要不要让 agent 自己签"的那一方，而它现在**有了可用的动词**
+可以拒绝或批准。
+
+**决策三：三段一一对应，动词名固定为 `issue`。** `provision → issue → approve`：`--provision` 是第一步，
+`issue` 是第二步（写出一份 token 文件），`approve` 是第三步（消费并记账）。**三个动词各自只做一件事**，
+不合并。
+
+**被否决的路（各一条附代价）：**
+
+1. **把签发藏进 `install`**：最省事，但它抹掉 ADR-0046 的结论——"签发是一次**显式**的步骤"。那会让
+   "AIROOT 在装东西的时候顺便批准了它"，即 ADR-0046 明确拒绝的形状（核心有签名侧）。代价：这条路要重开
+   ADR-0046 的裁决。
+2. **给 `approve` 加一个 `--issue`**：同一个动词有两种输入形状（给 token 文件 / 造一份 token），
+   `--token-file` 从必填变成条件必填，动词契约被削弱；而 §120 已经在 `exec` 上踩过同一类问题的反面——
+   **一个动词按参数的种类改变语义**是这一层最该避免的形状。代价：省一个动词名。
+
+**后果**：判据 #4 成立；`approve`/`install` 的 lane 从"没有动词"变成"有动词但需要一次显式签发"，两者都要
+在 agent 面（`agents/airoot.json` / `SKILL.md`）与 `references/confirmation.md` 里如实写清。
+`cli/tests/fake_issuer.py` **保持原样**：它服务测试路径，核心的签发方是 `tx/issuer.py`。
+
+**状态：已裁决。** 实现与实测读数记在草案 §122。

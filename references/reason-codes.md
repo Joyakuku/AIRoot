@@ -73,8 +73,9 @@
 **唯一正确的行为**：把 `plan_hash` 与 plan 文件路径交给用户，等人工批准。
 `airoot approve` 只消费批准，永远不制造它。
 
-**自 ADR-0046 起，签发是一个显式步骤，而且它是账本**：先在本 root 里签一次（`airoot.tx.issuer` 的
-`provision` + `issue`），再由上面这些命令带 `--token-file` 消费。**没有 keyring 的 root 会拒绝**，消息里带
+**自 ADR-0046 起，签发是一个显式步骤，而且它是账本**：先在本 root 里签一次
+（`airoot issue <plan.json> --out <token.json> --provision --json`；`--provision` 只有第一次要，
+已有密钥时它拒绝覆盖），再由上面这些命令带 `--token-file` 消费。**没有 keyring 的 root 会拒绝**，消息里带
 `no approval keyring is installed in this root; provision a signing key first (decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)`。
 批准**不是授权证明**（ADR-0046）：私钥在 root 里、同用户进程可读可签，验签通过只证明**一致性**
 （这份 plan 由该 root 信任的钥匙签过、没被改动或重放），不证明调用方被允许——挡同用户进程是使用方的职责。

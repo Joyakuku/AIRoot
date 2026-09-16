@@ -399,6 +399,19 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
             ),
         )
     record("run", "run", runnable_id, "--", "--version")
+    # `issue` is the explicit signing step (ADR-0046/ADR-0049), and it is recorded for the same reason
+    # `run` is: it is the only verb that makes a token exist, so a lane telling an agent which fields to
+    # read off it would otherwise point at a document nothing in this suite ever produced.
+    lane_plan = tmp_path / "issue-lane-plan.json"
+    lane_plan.write_text(json.dumps(plan), encoding="utf-8")
+    record(
+        "issue <plan_file> --out <token_file> --provision",
+        "issue",
+        str(lane_plan),
+        "--out",
+        str(tmp_path / "issue-lane-token.json"),
+        "--provision",
+    )
     # Without a token this stops at the approval boundary and hands the caller the plan to approve.
     record("env persist <external-id>", "env", "persist", REFERENCE)
     record("env forget <external-id>", "env", "forget", REFERENCE, "--dry-run")
@@ -458,6 +471,7 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         if not entry.get("document_schema") and " ".join(entry["command"]) in results
     }
     problems += report_envelope_problems(unpinned, REPORT_ENVELOPE_KEYS)
+    problems += shape_distinctness_problems(unpinned)
 
     assert problems == [], "agents/airoot.json names fields the output does not have:\n" + "\n".join(problems)
     # Exact, not a threshold: every invocation either produced a document or is declared above.
@@ -579,6 +593,26 @@ def report_envelope_problems(documents: dict[str, dict], declared: tuple[str, ..
     ]
 
 
+def shape_distinctness_problems(documents: dict[str, dict]) -> list[str]:
+    """The honesty note says the unpinned reports have **distinct** top-level shapes; measure it.
+
+    §100's argument for having no report schema is that one `additionalProperties: false` schema cannot
+    describe N distinct shapes — so the note's "31 distinct shapes" is load-bearing, not decoration. It
+    is a fact about the **population**, which no per-report check can see, and until this function existed
+    the sentence was pinned by nothing (the same hole §99 found for vacuous read paths: a claim about a
+    set that only a set-level measurement can hold).
+    """
+
+    by_shape: dict[frozenset[str], list[str]] = {}
+    for name, document in documents.items():
+        by_shape.setdefault(frozenset(document), []).append(name)
+    return [
+        f"{sorted(names)} share one top-level shape {sorted(shape)}; the note calls the shapes distinct"
+        for shape, names in sorted(by_shape.items(), key=lambda item: sorted(item[1]))
+        if len(names) > 1
+    ]
+
+
 def test_the_unpinned_reports_share_exactly_the_declared_envelope() -> None:
     """§100: one schema cannot pin 29 distinct shapes, so what is pinned is what they share."""
 
@@ -592,6 +626,12 @@ def test_the_unpinned_reports_share_exactly_the_declared_envelope() -> None:
         for index in range(20)
     }
     assert report_envelope_problems(twenty, REPORT_ENVELOPE_KEYS) == []
+    # The distinctness claim the note makes about the same population, and both directions of it: two
+    # reports with the same keys are the finding, two with different keys are not.
+    assert shape_distinctness_problems(twenty) == []
+    assert shape_distinctness_problems({"a": {"x": 1}, "b": {"x": 2}}) != [], (
+        "a shared shape must be reported, or the note's 'distinct shapes' is unguarded prose again"
+    )
     # A third key becoming universal has to be declared.
     widened = {name: dict(document, extra=True) for name, document in twenty.items()}
     assert report_envelope_problems(widened, REPORT_ENVELOPE_KEYS) == [

@@ -14,11 +14,15 @@ altered or replayed since"* — consistency and traceability. It does **not** te
 authorised. AIROOT's answer to "is this allowed?" is the steward's own record of what it did, plus whatever
 the upstream harness decided before calling in.
 
-**Why the signer is not a CLI verb and not in the core.** The invariant is that the core never has a signing
-side — `airoot approve` only *consumes* an approval — because a CLI that can mint consent has stopped being
-a record and started being an authority. Keeping the signer a separate module that a human invokes is how
-that invariant stays visible in the code's shape: signing is something done **to** AIROOT from outside, not
-something AIROOT does.
+**Why the signer has a CLI verb now (ADR-0049, which overturns what this paragraph used to say).** The
+invariant is still that the core never signs as a *side effect* — `airoot approve` only *consumes* an
+approval, and nothing mints one on its own. What changed is the claim that the step must therefore be
+reachable only by writing Python: an agent reads the lane table, found no verb for signing, and
+concluded the whole install path did not exist for it — while section 117 had already walked that path
+on this machine. A capability that is real but unnamed in the interface is a capability nobody can use.
+So `airoot issue` names it. **The verb grants no new power**: a same-user process could always import
+this module or replace the keyring; what it adds is discoverability, and the honest statement of that
+is in its own output document.
 
 **What it deliberately does not do.** It does not choose the policy revision, the machine id or the root
 instance id — those are facts, so they are read from the plan and the root. It does not decide whether the

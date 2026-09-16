@@ -36,6 +36,7 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足 |
 | "这台机器上都有什么" | `airoot inventory --class … --json` | 不把 `unmanaged` 说成"AIROOT 管的" |
 | "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（需要本机签一次：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
+| "这次改动我批了，你去执行" | `airoot issue <plan.json> --out <token.json> --provision --json` 签出 token，再按《批准》那一节交回消费侧（需要本机签一次：见《批准》） | 不把签发当授权：`permission_proof` 是 `false`，批准是**账本**不是许可（ADR-0046）；已有密钥时不为省事删掉重签 |
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
 | "这个目录（D:\env 之类）交给 AIROOT 看着" | `airoot data-root add <path> --id <data_root_id> --role <runtime\|tool\|mixed> --json` | **注册不写任何文件**（`files_touched` 是 0）；这是管家域的第一步：没有数据根，`discover`/`adopt` 无事可做 |
@@ -112,13 +113,16 @@ cancel             取消
 - `airoot approve` 只**消费**批准，永远不会凭空制造它；你也不得把"我调用了 approve"
   解释成"用户批准了"。
 - 没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户。
-- **自 ADR-0046 起这条路是通的，但签发是一个显式步骤**：先在本 root 里签一次（`airoot.tx.issuer` 的
-  `provision` + `issue`），再由 `install` / `env persist` / `tool gc --apply` / `uninstall` 带
+- **自 ADR-0046 起这条路是通的，而自 ADR-0049 起"签一次"还有了动词**：
+  `airoot issue <plan.json> --out <token.json> --provision --json` 在本 root 建密钥对并签出一份
+  `approval-token`（**只有第一次**要 `--provision`；已有密钥时它**拒绝覆盖**，因为换密钥会让所有旧 token
+  失效，那必须是显式动作）。再由 `approve` / `install` / `env persist` / `tool gc --apply` / `uninstall` 带
   `--token-file` 消费。**没有 keyring 的 root 会拒绝**，消息里带这一句：
   `no approval keyring is installed in this root; provision a signing key first (decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)`。
 - **批准是账本，不是授权证明**（ADR-0046）：私钥在 root 里，同用户进程读得到、也能自己签，所以验签通过
   只说明"这份 plan 由这个 root 信任的钥匙签过、且此后没被改动或重放"。**挡同用户进程属于使用方
-  （上游 harness）的职责**，不是 AIROOT 的。裁决见 **ADR-0046**；它取代的 ADR-0025 D1 与 ADR-0044
+  （上游 harness）的职责**，不是 AIROOT 的。裁决见 **ADR-0046**（把这个步骤变成动词的是 **ADR-0049**）；
+  它取代的 ADR-0025 D1 与 ADR-0044
   仍然可读，且实测读数全部仍然成立。
 - **不要**试图自己造一个 token（伪造正是消费侧要拒绝的东西），也不要引用测试 keyring。
 

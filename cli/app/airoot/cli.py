@@ -2263,6 +2263,68 @@ def cmd_approve(args: argparse.Namespace, context: Context) -> tuple[dict[str, A
     return document, EXIT_SUCCESS
 
 
+def cmd_issue(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
+    """Sign a plan into an approval token — the explicit local step, now a named verb (ADR-0049).
+
+    It is a thin wrapper on `tx/issuer.py` on purpose: the decisions (what the token may carry, what a
+    human approval requires, where the private key lives) stay in that module, and this command only
+    gives them a name an agent can find. `--provision` is the first of the three steps
+    (`provision → issue → approve`); it refuses to overwrite an existing key and that refusal is
+    passed through untouched, because "the key was replaced and nobody noticed" is the thing the
+    provisioning guard exists to prevent.
+
+    **The output document says what the approval is worth.** Signing here does not authorise anything:
+    the private key is in this root and a same-user process can read it and sign too, so a verified
+    token proves consistency, not permission (ADR-0046). That sentence is part of the document rather
+    than only of this docstring because the document is what a caller quotes back.
+    """
+
+    from .tx import issuer as issuer_module
+
+    plan = _load_plan(args.plan_file)
+    root = context.path()
+    provisioned: dict[str, Any] | None = None
+    if args.provision:
+        provisioned = issuer_module.provision(root)
+    token = issuer_module.issue(
+        plan,
+        root=root,
+        clock=context.clock,
+        mode=args.mode,
+        ttl_minutes=args.ttl_minutes,
+        approved_by_sid=args.approved_by_sid,
+    )
+    destination = issuer_module.write_token(root, token, Path(args.out))
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "approval_id": token["approval_id"],
+        "plan_hash": token["plan_hash"],
+        "approval_mode": token["approval_mode"],
+        "issuer": token["issuer"],
+        "token_file": str(destination),
+        "expires_at": token["expires_at"],
+        "key_id": token["signature"]["key_id"],
+        "provisioned": provisioned is not None,
+        "permission_proof": False,
+        "reason_code": "SUCCESS",
+        "note": (
+            "an approval is an audit record, not a proof of permission (ADR-0046): the private key "
+            "lives in this root and any process running as this user can read it and sign as well"
+        ),
+    }
+    _emit(
+        document,
+        as_json=args.json,
+        lines=[
+            f"issued {token['approval_id']} ({token['approval_mode']}) -> {destination}",
+            f"  expires {token['expires_at']}",
+            "  an approval is an audit record, not a proof of permission (ADR-0046)",
+            f"  next: airoot approve {args.plan_file} --token-file {destination}",
+        ],
+    )
+    return document, EXIT_SUCCESS
+
+
 def _runner_for(registry: Any, plan: dict[str, Any], context: Context) -> Any:
     """Pick the transaction driver by the backend the plan was built with (draft §21.5).
 
@@ -2966,6 +3028,29 @@ def build_parser() -> argparse.ArgumentParser:
     approve_parser.add_argument("plan_file")
     approve_parser.add_argument("--token-file", required=True)
 
+    issue_parser = subparsers.add_parser(
+        "issue",
+        help="sign a plan into an approval token (the explicit local step)",
+        description=(
+            "Sign a plan with this root's key and write the token `approve`/`install --token-file` "
+            "consumes. It is a local, explicit step by decision (ADR-0046/ADR-0049): the private key "
+            "lives in this root and any process running as this user can read it and sign as well, so "
+            "an approval is an audit record, not a proof of permission. `--provision` (first run) "
+            "creates the key pair; it refuses to overwrite an existing key."
+        ),
+        parents=[common],
+    )
+    issue_parser.add_argument("plan_file")
+    issue_parser.add_argument("--out", required=True, help="where to write the approval token")
+    issue_parser.add_argument(
+        "--provision", action="store_true", help="create this root's signing key first (once per root)"
+    )
+    issue_parser.add_argument("--mode", choices=["policy", "human"], default="policy")
+    issue_parser.add_argument(
+        "--approved-by-sid", default=None, help="required with --mode human; the signer will not invent one"
+    )
+    issue_parser.add_argument("--ttl-minutes", type=int, default=5)
+
     install_parser = subparsers.add_parser("install", help="run the simulated controlled transaction", parents=[common])
     install_parser.add_argument("plan_file")
     install_parser.add_argument("--token-file", required=True)
@@ -3300,6 +3385,9 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Context], tuple[dict[str, Any]
     "extension.status": cmd_extension_status,
     "plan": cmd_plan,
     "approve": cmd_approve,
+    # The explicit local signing step, named (ADR-0049). `approve` consumes, `issue` signs; the core
+    # never signs as a side effect of anything else.
+    "issue": cmd_issue,
     "install": cmd_install,
     "repair": cmd_repair,
     # Derived state can be rebuilt; authority cannot (draft §24).
