@@ -113,3 +113,8 @@ python .\cli\tests\..\fake_vertical_slice\fake_vertical_slice.py validate-schema
 python -m pytest cli/tests -q                                                      # L0/L1 suite, includes schema checks
 ```
 
+## 本次迭代的兼容性修正
+
+- `where-response` 新增**可选**属性 `launcher`（§123 / ADR-0050）：稳定入口的路径，没有就是 `null`。
+  可选而不是必填——加必填按上面的兼容规则要新 schema id；而这一版**总是**把它写出来，这一点由
+  CLI 测试钉住（"可选"与"总是发"是两件事，后者才是给调用方的承诺）。

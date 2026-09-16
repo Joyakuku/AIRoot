@@ -78,5 +78,44 @@
 > 带走它们且 `where` 不会去猜它们；崩溃可从 journal 恢复；全程不需要管理员权限、
 > `security_mode=policy_only`；X 项测试通过（其中 Y 项跳过），golden 语料与全部计数守卫一致，
 > 真机验收脚本逐项通过。
+>
+> **但这话仍要带两个括注**：判据 #11（切换活跃版本不改 PATH、不重写入口）与 #14（崩溃恢复/回滚）
+> 目前是**机制 + pytest 覆盖**，真机闭环上还没走那两步——要按 §5 的实测状态说，不要把它们说成
+> 已经在真机上验过。
 
 **不允许说**：AIROOT 已实现 / 已可用 / 具备 Everything 级性能 / 已具备受保护边界。
+## 5. 结果：本轮结束时的实测状态
+
+**"起点"那一列不动**（它自称是起点的实测状态，改它就等于改历史）。这一节是它的另一半：每条判据现在
+是什么状态、由什么证据支撑、**哪一条没有做全**。
+
+| # | 判据 | 结束时 | 证据 |
+|---|---|---|---|
+| 1 | 能力在冻结清单里 | ✅ | `cap-3` 未变 |
+| 2 | 从可信上游取得真实 artifact | ✅ | §117（真机、上游校验和） |
+| 3 | 摘要来自上游且逐字节一致 | ✅ | §117：12 721 664 B，SHA256 与上游相同 |
+| 4 | **通过 CLI 签发批准** | ✅ | §122 / ADR-0049：`airoot issue`，10 条测试，5 个坏法验红 |
+| 5 | 批准被消费并记进账本 | ✅ | §116 |
+| 6 | 安装到 `store` 并 `FINALIZED` | ✅ | §117 真机 + §124 闭环（`state=FINALIZED`，generation 从 1 起） |
+| 7 | `tool verify` 与上游一致 | ✅ | §124：`verified=true`，`problems=[]` |
+| 8 | `where <capability>` 解析到它 | ✅ | §124：`management=managed`、`source=registry` |
+| 9 | 有动词真的把受管 payload 跑起来 | ✅ | §120 / ADR-0047 + §124：`run --capability` 的 `exit_status=0`、`persisted=false` |
+| 10 | 不依赖 machine PATH 的稳定入口 | ✅ | §123 / ADR-0050 + §124：`cli\exposure\bin\archive.cmd` 真实存在、**由 `cmd.exe` 真的转发**、`launcher_present=true` |
+| 11 | 切换活跃版本不改 PATH、不重写入口 | ⚠️ **一半** | 入口字节不变有测试（`test_a_new_version_rewrites_no_launcher_bytes`）；machine PATH 一字未写（没有任何动词写它）。**缺的是把这两件事放进真机闭环**——目前它们是 pytest 里的断言，不是 `real_machine_acceptance.py` 的一步 |
+| 12 | `retire` + `gc` 真的删掉真实 payload | ✅ | §124：`gc --apply` 之后那个 store 目录不在了 |
+| 13 | `doctor` 无 error | ✅ | §124：`status=healthy`、无 error/warning |
+| 14 | 中途崩溃能恢复或按规则回滚 | ⚠️ **一半** | `tx/rollback.py` 是唯一实现、pytest 里有故障注入覆盖（§109 / ADR-0035）。**缺的是在真实闭环上逐个状态注入一次**——§124 只跑了成功路径与真实删除 |
+| 15 | 账本能表述"安装器又装了别人" | ✅ | §121 / ADR-0048：`.cargo`/`.rustup` 是 `external_reference`，`uninstall` 报 `OWNERSHIP_REQUIRED`(7)，`forget` 后文件一字节未少 |
+| 16 | 全程不提权、不写 machine PATH、`policy_only` | ✅ | 全轮无 UAC；`path verify` 的 `path_written=false`；五份文档的 posture 未变 |
+
+**所以这一版可以说的和不可以说的，界线就在这里**：16 条里 **14 条完整、2 条一半（#11、#14）**。两条的
+共同点是"机制在、真机闭环上还没有那一步"，而不是"没做"——所以 §4 那句话现在**不能再原样说**，
+必须把这两条点出来（见 §4 的括注）。
+
+**顺带记下这一轮的三个口径变化**，免得下一轮把它们当成回退：
+
+1. `launcher_present` 从"那个目录在不在"改成"**至少有一个稳定入口**"（§123）：判据 #10 问的是后者。
+2. `run` 的位置参数从"可选 instance + REMAINDER"改成"**单个 REMAINDER + 显式切分**"（§123.2）：前者让
+   `--` 之后的第一个 token 被喂给可选位置参数。
+3. `where` 新增**可选**属性 `launcher`（`schema_version` 仍是 1）：加必填是破坏性变更，而"可选"与
+   "总是发"是两件事，后者由测试钉住。
