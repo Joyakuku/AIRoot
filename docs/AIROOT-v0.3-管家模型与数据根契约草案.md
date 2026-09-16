@@ -11001,3 +11001,23 @@ CLI 一路没踩到，是因为 `Context` 在入口把 root 规范化过一次�
 | 测试 | **1357 → 1359**（+2：`cli/tests/test_l1_paths.py` 两条——两种拼写都要被接受、真的越界仍然拒绝。**跳过的那条也算一条测试**：它在没有 8.3 拼写的卷上 skip，但仍然被收集） |
 | 行为变化 | `canonicalize` 的**接受集变宽**（同一目录的另一种拼写不再被误判），**拒绝集不变**（真的越界仍然拒绝）——按 ADR-0021 属"放宽"，而它修的是一条被错误实现的规则，不是放松一条约束 |
 | golden 语料 / schema / ADR | 不变 |
+
+### 126.5 修好之后试注入：**注入器没有触发，而且直驱与 CLI 走出来的结果不一样**
+
+路径缺陷修掉之后，同一条直驱路径能跑完了，但它量出的东西与预期不同，**两条都必须先解释清楚**：
+
+```text
+commit returned without interruption (injector did not fire)
+where (parked)            exit=0 instance=archive/probe-tool/9.9.9/win-x64 health=healthy
+repair                    exit=0 action=reconcile_binding_then_resume_or_revert
+                          repaired[0].result: state=ROLLED_BACK journal_seq=10
+                          failure.code=VERIFY_FAILED 'post-bind verification failed'
+                          generation_before=0 generation_after=2
+where (after repair)      exit=1 NOT_FOUND
+doctor                    exit=0 healthy
+```
+
+1. **`StopAfter("ACTIVE_BOUND")` 一次都没触发**：`checkpoint(state)` 收到的参数显然不等于 `ACTIVE_BOUND`（要么传的是**目标**状态、要么传的是别的名字）。**先读 `tx/journal.py` 里 `checkpoint` 的调用点**，别再猜——这一条一次读取就能定。
+2. **同一条直驱路径的结果与 CLI 不同**：`adopt --mode import` 的同一份计划，走 CLI 的 `install` 报 `FINALIZED`（§124/§125 实测），直驱 `ArtifactRunner.commit(plan, token)` 却在 post-bind 校验处 `VERIFY_FAILED` 并回滚（`tree_digest(store_dir) != row["artifact_digest"]`）。**同一个 API、同一份计划、两种结果**，说明两者之间有一处我们没看见的差异（时钟、registry 句柄、还是 `drive()` 的入口条件）。**在解释它之前，任何 #14 断言都会把其中一个当成"对的那个"。**
+
+**这两条是这一轮的实际产出**：路径缺陷是真缺陷（已修、已守卫）；而注入本身还差"读一处调用点 + 解释一处差异"，不是"设计还缺什么"。**#14 仍然是 16 条里唯一只做了一半的那条。**
