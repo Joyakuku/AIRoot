@@ -48,7 +48,12 @@ ONLINE = "--online" in sys.argv
 #: is the rolling installer), so this only labels the resolution; the digest is what identifies it.
 RUST_VERSION = "1.83.0"
 
-ROOT = Path(tempfile.mkdtemp(prefix="airoot-acceptance-")) / "root"
+#: Created **lazily** by `main_run`, not at import. It used to be a module-level `mkdtemp`, which meant
+#: every exit that never reached `main_run`'s cleanup — the "no data root here" refusal, an exception
+#: before the registry block — left an empty `airoot-acceptance-*` directory behind. Measured: three of
+#: them were sitting in the temp directory, alongside 39 more from earlier one-off development scripts
+#: (draft §134). The audit below reports leftovers; this is the half that stops making them.
+ROOT: Path | None = None
 
 
 def run(*argv: str) -> tuple[int, dict]:
@@ -56,6 +61,7 @@ def run(*argv: str) -> tuple[int, dict]:
     import contextlib
     import io
 
+    assert ROOT is not None, "main_run() has not been called, so there is no root to run against"
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         code = main(["--json", "--root", str(ROOT), *argv])
@@ -69,6 +75,8 @@ def show(label: str, code: int, document: dict, keys: tuple[str, ...] = ()) -> N
 
 
 def main_run() -> int:
+    global ROOT
+    ROOT = Path(tempfile.mkdtemp(prefix="airoot-acceptance-")) / "root"
     shutil.rmtree(ROOT, ignore_errors=True)
     init_root(ROOT, root_instance_id="root-verify-step89", machine_id="host-verify-step89")
     registry = Registry.initialize(
@@ -703,7 +711,10 @@ def closed_loop() -> int:
 #   * `D:\env` itself -- `(files, bytes, newest mtime)`, because a per-file manifest of ~190 000 entries
 #     taken twice is a lot of memory for a check whose answer is "no file was written". The summary
 #     catches an added, a deleted or a resized file and any write that moves the newest mtime forward;
-#     it does not catch a same-size edit with the timestamp put back, and nothing would.
+#     it does not catch a same-size edit with the timestamp put back, and nothing would;
+#   * the system temp directory -- *leftovers only*: every scratch directory this script makes carries
+#     `SCRATCH_PREFIX`, and one that survives the run is reported by name. "It cleans up after itself"
+#     was a sentence in the docstring; this is the measurement of it.
 #
 # The surfaces deliberately *not* here, named so their absence is a decision rather than an oversight:
 # the process environment (a child cannot change its parent's), PATH (this script never writes it) and
@@ -712,6 +723,29 @@ def closed_loop() -> int:
 WATCHED_TREES = (DATA_ROOT / ".airoot", Path.home() / ".cargo", Path.home() / ".rustup")
 
 MACHINE_ENVIRONMENT = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+#: The prefix every scratch directory of this script uses, so "it cleans up after itself" is a
+#: measurement rather than a sentence in the docstring: leftovers are reported by name.
+#:
+#: **Directories only**, and that is a measurement too: the first version of this check counted every
+#: entry with the prefix and reported 48 where the directories were 42. The other six were files — this
+#: session's own redirected logs and `airoot-rust-*.json` artifacts from an earlier one — which share
+#: the prefix without being scratch roots. A check that can be moved by a log filename is measuring the
+#: wrong thing.
+SCRATCH_PREFIX = "airoot-"
+
+
+def _scratch_entries() -> list[str]:
+    """Scratch directories under the system temp directory that this pass could have created."""
+
+    try:
+        return sorted(
+            item.name
+            for item in Path(tempfile.gettempdir()).iterdir()
+            if item.name.startswith(SCRATCH_PREFIX) and item.is_dir()
+        )
+    except OSError:
+        return []
 
 
 def _environment_block(hive: int, subkey: str) -> dict[str, str]:
@@ -775,6 +809,7 @@ def host_state() -> dict:
         "user environment": _environment_block(winreg.HKEY_CURRENT_USER, "Environment"),
         "trees": {str(path): _file_manifest(path) for path in WATCHED_TREES},
         "data root": {"path": str(DATA_ROOT), "summary": _tree_summary(DATA_ROOT)},
+        "scratch entries": _scratch_entries(),
     }
 
 
@@ -803,6 +838,11 @@ def isolation_problems(before: dict, after: dict) -> list[str]:
             f"{before['data root']['path']}: summary moved {before['data root']['summary']} "
             f"-> {after['data root']['summary']}"
         )
+    # Leftovers only. An entry that was already there when the pass started is not the pass's doing —
+    # a crashed earlier run can leave one — so the question is "did this run add any?".
+    left = sorted(set(after["scratch entries"]) - set(before["scratch entries"]))
+    if left:
+        problems.append(f"the pass left {len(left)} scratch entr(y/ies) behind: {left}")
     return problems
 
 
@@ -810,8 +850,9 @@ def isolation_report(before: dict, after: dict) -> int:
     """Compare the two snapshots, and prove the comparison is not vacuous on this machine's own data.
 
     The run is *supposed* to find nothing, so a comparison that can never find anything would look
-    exactly like a clean machine. Three synthetic snapshots derived from `before` close that: a file
-    appearing, an environment value changing, and the data-root summary moving must each be reported.
+    exactly like a clean machine. Four synthetic snapshots derived from `before` close that: a file
+    appearing, an environment value changing, the data-root summary moving and a scratch leftover must
+    each be reported.
     """
 
     problems = isolation_problems(before, after)
@@ -826,9 +867,16 @@ def isolation_report(before: dict, after: dict) -> int:
     grown = copy.deepcopy(before)
     files, total, newest = grown["data root"]["summary"]
     grown["data root"]["summary"] = (files + 1, total, newest)
+    littered = copy.deepcopy(before)
+    littered["scratch entries"] = sorted(before["scratch entries"] + [f"{SCRATCH_PREFIX}planted-by-the-self-check"])
 
     self_check = []
-    for label, snapshot in (("a planted file", planted), ("a changed value", moved), ("a moved summary", grown)):
+    for label, snapshot in (
+        ("a planted file", planted),
+        ("a changed value", moved),
+        ("a moved summary", grown),
+        ("a scratch leftover", littered),
+    ):
         if not isolation_problems(before, snapshot):
             self_check.append(label)
 
@@ -837,13 +885,24 @@ def isolation_report(before: dict, after: dict) -> int:
     print("\nisolation audit (nothing outside a scratch root may change)")
     print(
         f"  compared: {environment_values} environment value(s), {watched} file(s) in "
-        f"{len(before['trees'])} watched tree(s), and a {before['data root']['summary'][0]}-file "
-        f"summary of {before['data root']['path']}"
+        f"{len(before['trees'])} watched tree(s), a {before['data root']['summary'][0]}-file "
+        f"summary of {before['data root']['path']}, and {len(before['scratch entries'])} scratch "
+        "entr(y/ies) under the system temp directory"
     )
     for problem in problems:
         print(f"  [FAIL] {problem}")
     for label in self_check:
         print(f"  [FAIL] the comparison does not report {label}")
+    # Pre-existing debris is reported, never failed on: it is not this run's doing, and a check that
+    # fails on history is a check people learn to ignore. It is still worth seeing, because it can only
+    # grow — 42 entries from earlier one-off session scripts were sitting there when this line was
+    # written (draft §134), and the operator decides whether they go.
+    if before["scratch entries"]:
+        oldest = before["scratch entries"][0]
+        print(
+            f"  [note] {len(before['scratch entries'])} scratch entr(y/ies) were already there, e.g. "
+            f"{oldest}; not created by this pass, and not removed by it either"
+        )
     if not problems and not self_check:
         print("  [ok ] no tracked surface moved, and the comparison reports a planted change")
     print(f"isolation: {'PASS' if not problems and not self_check else 'FAIL'} "
@@ -855,6 +914,14 @@ if __name__ == "__main__":
     if not DATA_ROOT.is_dir():
         raise SystemExit(f"this check needs a real data root to look at: {DATA_ROOT} is missing")
     # Both halves always run: an early failure must not hide whether the closed loop still works.
-    # The snapshots bracket them, so the pass is inert on the host or it says so.
-    before = host_state()
-    raise SystemExit(main_run() | closed_loop() | isolation_report(before, host_state()))
+    # The snapshots bracket them, so the pass is inert on the host or it says so. The `finally` is the
+    # second half of "it cleans up after itself": `main_run` removes its own scratch root on the way
+    # out, but only if it gets that far, and an exception in between used to leave the directory (and
+    # the empty one created at import) behind.
+    try:
+        before = host_state()
+        failures = main_run() | closed_loop() | isolation_report(before, host_state())
+    finally:
+        if ROOT is not None:
+            shutil.rmtree(ROOT.parent, ignore_errors=True)
+    raise SystemExit(failures)

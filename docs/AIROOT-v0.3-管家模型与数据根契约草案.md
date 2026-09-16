@@ -11538,3 +11538,77 @@ ACL 写入、受保护 broker 仍然全部不在真机路径上（§8 的排除�
 | 测试 | **1368 → 1368**：契约写在真机脚本里，不进 pytest。理由与 §132.5 同源——套件必须能在没有真机、没有 `winreg`、没有 `D:\env` 的地方跑完；契约的**非空性**因此由脚本每次运行时自己做（§133.2），不靠套件 |
 | 真机脚本 | +1 段（快照 / 比较 / 自检 / 打印）；两次额外盘遍历，实测约 9 秒/次 |
 | 行为 | 无产品行为变化 |
+## 134. 真机测试第二步：唯一会碰网络的那条路径也进契约，并量"跑完自己收干净"
+
+§133 把"不碰宿主机"变成两次快照之间的判据。这一节做两件事：**唯一会碰网络的那一步**也走同一份契约，
+以及把"它跑完会自己清理"从模块开头的一句话变成一次点名——点名的结果当场查出了两条真缺陷。
+
+### 134.1 `--online`：真实上游、真机、仍然只读
+
+`--online` 是本脚本唯一会碰网络的一步（也是这一版对真实上游取 artifact 的那条路）。本轮实测：
+
+| 读数 | 值 |
+|---|---|
+| 解析出的 artifact URL | `static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe` |
+| 期望摘要的**来源** | 上游发布的校验和文件（`offline=false`，`sha256:6f4bef66…`） |
+| 取回字节数 | **12 721 664**（与 §117 那次真机安装一致） |
+| 摘要校验 | `verified=true` |
+| 边界 | **止于 fetch + verify**：stage/commit 要批准，而签发批准是显式本机步骤（ADR-0046）——脚本**报告**这条边界，不代替操作者签 |
+
+它把文件写进**临时 scratch root**，所以隔离审计同时覆盖了这一步：整轮仍是 **0 处不同**（§134.3）。
+"访问网络"与"改宿主机"是两件事，这一节量的是后者没有发生。
+
+### 134.2 "自清理"被点名之后：两条真缺陷
+
+`host_state()` 增加了临时目录那一格，`isolation_problems()` 只把**本次新增**的算作问题（早先崩掉的一次
+运行留下的不算——一条会因为历史而变红的检查会被学会忽略），并加了一条合成变异（种一个
+`airoot-planted-*`）证明这一格真的会报。第一次跑就查出：
+
+**缺陷 1：这个脚本自己有一条漏的路。** `ROOT` 曾经在**导入时**就 `mkdtemp`，于是任何没走到 `main_run`
+清理的出口——"这里没有数据根"的拒绝、跑到一半抛异常——都会留下一个空目录。实测：临时目录里有 3 个
+`airoot-acceptance-*` 就是它留下的。**修法**：`ROOT` 改成 `main_run` 里惰性创建，`__main__` 用
+`try/finally` 兜住两个半边。**验红**：修之前 `python -c "import real_machine_acceptance"` 会创建目录；
+修之后实测 `ROOT after import: None`，且临时目录里 `airoot-*` **目录数 42 → 42**。
+
+**缺陷 2：新加的那一格自己在量错东西。** 第一版按"前缀匹配的所有条目"计数，报 **48**；而目录只有
+**42**。多出来的 6 个是**文件**——本次会话重定向的日志，以及更早一次会话留下的 `airoot-rust-*.json`
+产物——它们与前缀相撞但不是 scratch root。**修法**：只数**目录**。一个会被日志文件名推动的检查，量的
+不是它声称的东西。
+
+**顺带量到的、没有动的东西**：那 42 个目录共 **7 030 657 字节**，按前缀是 `golden` 21、`fault` 4、
+`acceptance`/`readprobe` 各 3、`fake`/`r4`/`r5a` 各 2、`art`/`doctor88`/`diff`/`ed25519`/`probe` 各 1。
+`golden`/`fake`/`readprobe`/`r4`/`r5a` 这些前缀来自**更早会话里的一次性开发脚本**，不是这个脚本。
+**只报告，不删**：那是操作者的磁盘，而且"AIROOT 自己删自己以前留下的东西"正是本项目一直守的那条边界，
+要有明确指示才做。
+
+### 134.3 实测（真机，本轮，`--online`）
+
+```text
+source resolve (online, real upstream)  exit=0 {artifact_url=…static.rust-lang.org/…
+                                                expected_digest=sha256:6f4bef66…, offline=false}
+    fetched 12721664 bytes -> rustup-init.exe digest=sha256:6f4bef66261261fc
+https_artifact fetch + verify           exit=0 {"verified": true, "size": 12721664}
+    boundary: stage/commit need an approval token, and signing one is an explicit local step
+              (airoot.tx.issuer, ADR-0046) - not taken here, reported not faked
+step 5-6 + 8-9 + 31-34 real-machine acceptance: PASS (0 failed check(s))
+closed loop: PASS (0 failed check(s))
+isolation audit (nothing outside a scratch root may change)
+  compared: 42 environment value(s), 181 file(s) in 3 watched tree(s), a 191750-file summary of
+            D:\env, and 42 scratch entr(y/ies) under the system temp directory
+  [note] 42 scratch entr(y/ies) were already there, e.g. airoot-acceptance-15_v1cr6; not created by
+         this pass, and not removed by it either
+  [ok ] no tracked surface moved, and the comparison reports a planted change
+isolation: PASS (0 difference(s))        exit code 0
+```
+
+跑完之后临时目录里的 `airoot-*` **目录**仍然是 **42**——不是 43 也不是 41：这一次运行什么都没留下，
+也什么都没删。（`[note]` 里举的例子是**按名字排第一**的那个，不是最老的那个——打印语句只说 "e.g."，
+而"最老"这个说法在原始输出里没有任何依据。）
+
+### 134.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1368 → 1368**（契约与自清理都在真机脚本里，不进 pytest，理由同 §133.6） |
+| 真机脚本 | +1 格快照（临时目录**目录**条目）+1 条合成变异；`ROOT` 惰性创建；`__main__` 的 `try/finally` |
+| 行为 | 无产品行为变化；`--online` 仍是 opt-in，且现在有"它也不碰宿主机"的实测 |
