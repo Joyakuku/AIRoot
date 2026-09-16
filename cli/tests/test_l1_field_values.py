@@ -90,7 +90,11 @@ DISTINCTIVE = (
 
 SECTION_RE = re.compile(r"^##\s+`([a-z0-9-]+)\.schema\.json`\s*$", re.MULTILINE)
 EXEMPT_RE = re.compile(r"^##\s+不在这张表里的 schema\s*$", re.MULTILINE)
-ROW_VALUE_RE = re.compile(r"`([A-Za-z0-9_.]+)`(" + DAGGER + r"?)")
+#: A value token in the 取值 column. The character class used to be `[A-Za-z0-9_.]`, which cannot see
+#: a hyphen — so `jcs-rfc8785-compatible` (§106's `canonicalization` row) parsed as **no value at
+#: all**: the row looked empty and three guards went quiet about it. Widened, and the reason is the
+#: same one §104/§105 kept finding: the reader was narrower than the document it reads.
+ROW_VALUE_RE = re.compile(r"`([A-Za-z0-9_.\-]+)`(" + DAGGER + r"?)")
 BACKTICK_RE = re.compile(r"`([^`]+)`")
 
 
@@ -217,32 +221,46 @@ def resolve(name: str, path: str) -> list:
     node = _deref(node)
     if "enum" in node:
         return list(node["enum"])
+    if "const" in node:
+        # §106: a `const` is a one-valued vocabulary, so the table documents it too.
+        return [node["const"]]
     if "anyOf" in node:
         values: list = []
         for branch in node["anyOf"]:
-            values.extend(_deref(branch).get("enum", []))
+            branch_node = _deref(branch)
+            values.extend(branch_node.get("enum", []))
+            if "const" in branch_node:
+                values.append(branch_node["const"])
         return values
-    raise AssertionError("no enum at %s in %s" % (path, name))
+    raise AssertionError("no enum or const at %s in %s" % (path, name))
 
 
 def spell(value: object) -> str:
-    return "null" if value is None else str(value)
+    """One spelling for a schema value, shared with the walk (§104's "one definition").
+
+    Booleans are JSON-spelled (`true`), because a `const` can be one and the table writes it the way
+    the document does; a JSON `null` is `null` and never `None` (§97).
+    """
+
+    return schema_walk.spell(value)
 
 
 def vocabulary_with_paths(name: str) -> dict[str, list[str]]:
-    """Every vocabulary the schema **can carry**, `$ref` followed, keyed by the referencing path.
+    """Every vocabulary the schema **can carry** — `$ref` followed, `const` included (§105, §106).
 
-    The question here is the document's, not the file's (§105): a reader of `where-response` may meet
-    `common`'s five health values, so `where-response.health` reports them. The path is kept because
-    an undocumented vocabulary has to be *named* to be exempted, and a value-set alone cannot say
-    which field it came from.
+    The question here is the document's, not the file's: a reader of `where-response` may meet
+    `common`'s five health values, so `where-response.health` reports them; and a `const` is a
+    one-valued vocabulary, so `error-response.status` reports `failed`. The path is kept because an
+    undocumented vocabulary has to be *named* to be exempted, and a value-set alone cannot say which
+    field it came from.
 
-    The fixture-coverage guard deliberately does **not** follow refs: only a document's own
-    vocabulary is one its producer controls, and demanding a fixture for an inherited shared
-    vocabulary is the false-dagger pile §97 refused. Same walk, two questions.
+    The fixture-coverage guard deliberately does **not** follow refs and does not count consts: only
+    a document's own vocabulary is one its producer controls, a fixture demonstrates an enum's
+    members, and demanding a fixture for either of the other two is the false-dagger pile §97
+    refused. Same walk, three questions.
     """
 
-    return schema_walk.enums_by_path(schema_document(name), resolve=RESOLVER)
+    return schema_walk.vocabularies_by_path(schema_document(name), resolve=RESOLVER)
 
 
 def schema_files() -> list[str]:
@@ -478,19 +496,34 @@ UNDOCUMENTED_BY_DESIGN = {
 }
 
 
+#: Field names whose only value is the envelope version pin: `{"const": 1}` on all twenty schemas,
+#: one shared fact rather than twenty vocabularies. Documented by `docs/schema/README.md` rule 1
+#: ("`schema_version: 1` is the only accepted major version") and machine-checked in
+#: `test_l1_schema_catalog.test_every_schema_pins_the_version_its_documents_carry`, so it belongs to
+#: that guard rather than to a table row — naming it here keeps the decision visible (draft §106).
+VERSION_PIN_FIELDS = ("schema_version", "protocol_version", "schemaVersion")
+
+
 def test_every_vocabulary_a_published_schema_can_carry_is_documented_or_named() -> None:
-    """§105: the coverage rule now asks the **document's** question, not the file's.
+    """§105-§106: the coverage rule asks the **document's** question, and a `const` is a vocabulary.
 
     It used to walk each in-scope schema's *own* text and compare against the whole table, which
     made the answer depend on which list a schema was in: a vocabulary reachable only through
     `$ref` (`where-response` inherits `health` from `common`) was covered **because `common` happened
     to be in scope**, and nothing said so. Measured: following `$ref` takes `where-response` from 1
-    to 7 vocabularies, `plan` from 4 to 10, `managed-tool-instance` from 0 to 10 — and every one of
-    them is documented, so the stronger rule holds today and no longer depends on the lists.
+    to 7 vocabularies, `plan` from 4 to 10, `managed-tool-instance` from 0 to 10.
 
-    Both directions are asserted: an undocumented vocabulary must be named in
-    `UNDOCUMENTED_BY_DESIGN`, and every name there must still be an undocumented vocabulary — a
-    stale exemption is how a deliberate hole becomes an accidental one.
+    §106 then found the same question still stopped at `enum`: the published set carries **33**
+    value-position `const`s, and ten of them are meaningful single-valued vocabularies
+    (`error-response.status = "failed"`, `search-response.data.fallback.kind = "crawl"`,
+    `plan.canonicalization`, …) that no row mentioned. A `const` under `if` is *not* one of them —
+    that is a dispatch condition, not a value the document carries — which is why the walk skips it
+    rather than counting eight dispatch patterns as vocabularies.
+
+    Both directions are asserted: an undocumented vocabulary must be documented, named in
+    `UNDOCUMENTED_BY_DESIGN`, or be a version pin; and every name in `UNDOCUMENTED_BY_DESIGN` must
+    still be an undocumented vocabulary — a stale exemption is how a deliberate hole becomes an
+    accidental one.
     """
 
     assert schema_files(), "no published schemas; this guard is about nothing"
@@ -498,15 +531,25 @@ def test_every_vocabulary_a_published_schema_can_carry_is_documented_or_named() 
     assert everywhere, "the table parsed no rows; the comparison below would be vacuous"
 
     found_undocumented: set[tuple[str, str]] = set()
+    pins_seen: set[str] = set()
     examined = 0
     for name in schema_files():
-        reachable = vocabulary_with_paths(name)
-        examined += len(reachable)
-        for path, values in reachable.items():
-            if frozenset(values) not in everywhere:
-                found_undocumented.add((name, path))
+        for path, values in vocabulary_with_paths(name).items():
+            examined += 1
+            if frozenset(values) in everywhere:
+                continue
+            if path.split(".")[-1] in VERSION_PIN_FIELDS:
+                pins_seen.add(path.split(".")[-1])
+                assert values == ["1"], (
+                    "%s.%s is treated as a version pin but its value is %s" % (name, path, values)
+                )
+                continue
+            found_undocumented.add((name, path))
 
-    assert examined >= 60, "only %d vocabularies were walked; the reachable walk is not reaching" % examined
+    assert examined >= 90, "only %d vocabularies were walked; the reachable walk is not reaching" % examined
+    assert set(VERSION_PIN_FIELDS) <= pins_seen, (
+        "no schema carries these as a version pin any more: %s" % sorted(set(VERSION_PIN_FIELDS) - pins_seen)
+    )
 
     unnamed = sorted(found_undocumented - UNDOCUMENTED_BY_DESIGN)
     stale = sorted(UNDOCUMENTED_BY_DESIGN - found_undocumented)
@@ -553,16 +596,15 @@ def test_the_in_scope_schemas_are_the_ones_an_agent_reads() -> None:
         "runtime-instance",
         "transaction",
         "common",
-    }
-    # `error-response` joined §102: the failure document has no enum either — `status` is a const and
-    # `reason_code`'s values are the reason-code tables' business, not this table's.
-    assert set(EXEMPT) == {
-        "broker-request",
-        "broker-response",
+        # §106: both joined because a `const` is a vocabulary too — `managed-tool-instance.kind`
+        # (`managed_tool`) and `error-response.status` (`failed`) had nowhere to be documented.
         "managed-tool-instance",
-        "root-marker",
         "error-response",
     }
+    # `managed-tool-instance` and `error-response` left this list in §106 (they have const rows now);
+    # what is left is the unbuilt `broker-*` and the marker file, whose vocabularies are either named
+    # in `UNDOCUMENTED_BY_DESIGN` or are version pins.
+    assert set(EXEMPT) == {"broker-request", "broker-response", "root-marker"}
     assert len(ROWS) >= 50, "the table lost rows: %d" % len(ROWS)
 
 

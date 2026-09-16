@@ -31,6 +31,14 @@
 | `diagnostics[].severity` | `info` / `warning` / `error` / `critical` | 单条诊断的严重度。`critical` 是"AIROOT 连自己在哪台机器上都不确定"这一档（根标记/卷身份/registry 元数据读不出来）——它和 `error` 一样把 `status` 推成 `broken`，但**repair 不再是它建议的动作** | `caps/doctor.py` |
 | `diagnostics[].remediation` | `none` / `inspect` / `repair` / `rebuild` / `reapprove`† / `recover` | 建议你下一步做什么：`none` 不用管；`inspect` 人看一眼（AIROOT 没有对应命令）；`repair` → `airoot repair`；`rebuild` → `airoot rebuild`（**只重建派生投影，数据库永不重建**）；`recover` → 按 journal 做恢复。`reapprove` 表示"需要重新拿一次批准"，但**这一版没有生产批准签发方**——所以谁也产生不出它，遇到它请当作版本不一致 | `caps/doctor.py` |
 
+## `error-response.schema.json`
+
+一份**失败文档**的取值。它没有枚举字段，但有一个"唯一值"字段（schema 写的是 `const`，§106 起这种字段也进这张表）：
+
+| 字段 | 取值 | 含义 | 本版谁写出 |
+|---|---|---|---|
+| `status` | `failed` | 恒为 `failed`：这份文档只表示"命令没能回答"。`reason_code` 的**取值表不在这里**——它是 `docs/AIROOT-v0.3-诊断码与ReasonCode表.md`（权威，速查在 `references/reason-codes.md`）；`details` 的键是**数据**，按码而不同（§101 的 `NOT_IMPLEMENTED` 是第一个写它的） | `exits.py` |
+
 ## `search-request.schema.json`
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
@@ -48,8 +56,10 @@
 | `data.freshness.coverage` | `complete_for_roots` / `partial` / `none` | 索引覆盖请求的这些 root 的程度：`partial` = 建索引那次遍历被记录数上限截断或超时（`truncated`/`timed_out`），`none` = 没有可用的索引 | `caps/searchindex.py`, `caps/search.py` |
 | `data.results[].kind` | `file` / `directory` | 命中的是文件还是目录 | `caps/search.py` |
 | `data.results[].verification` | `indexed` / `verified` / `changed` / `unverified` | 这条结果有多可信：`indexed` 来自索引、**没有再核过**；`verified` 这一轮核过且一致；`changed` 核过但**已经和索引不一样**（不能当 current 事实用）；`unverified` crawl 直接给的、没核过 | `caps/search.py`, `caps/searchindex.py` |
+| `operation` | `search` | 这份文档是**搜索**的回答（信封里区分文档种类的那个字段）。它与 `plan`/`reference-plan`/`extension-envelope` 里的同名 `operation` 是**同形不同域**：各自枚举自己的操作名 | `caps/search.py` |
+| `data.fallback.kind` | `crawl` | 回落方式**只有一个取值**（schema 写的是 `const`）：这一版没有 native 索引，回落就只有受控遍历这一条路。`data.fallback` 为 `null` 时它不出现 | `caps/search.py` |
 
-`data.fallback` 不是枚举：非 `null` 时它的 `kind` 恒为 `crawl`，`reason` 是一句人话，说明为什么没走索引。
+`data.fallback` 的 `reason` 是一句人话，说明为什么没走索引。
 
 ## `plan.schema.json`
 
@@ -59,6 +69,7 @@
 | `target.kind` | `managed_tool` / `runtime`† | 计划作用的对象是受控工具实例还是运行时实例。这一版没有 runtime 实例，所以 `runtime` 不会出现 | `registry/entities.py`, `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py` |
 | `operations[].kind` | `fetch` / `verify` / `stage` / `commit` / `expose` / `rollback`† / `delete` | 九步协议里的步骤名：取回 / 校验来源与摘要 / 进暂存区 / 提交进 store / 暴露（绑定或环境）/ 删除 payload。`rollback` 不会出现在计划里——回滚是状态机在失败/恢复时做的事（`ROLLBACK_PENDING`），不是计划的一步 | `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py`, `caps/exposure.py` |
 | `operations[].source_mutation` | `none` / `delete`† / `move`† / `overwrite`† | 这一步对**源**做了什么。这一版两个 backend 都声明 `none` 并被强制要求是 `none`（`caps/backends/base.py` 会拒绝别的）——**AIROOT 不动你的源文件** | `caps/backends` |
+| `canonicalization` | `jcs-rfc8785-compatible` | `plan_hash` 用哪个规范化算法算（README 规则 4）。**它不是可选项、也不是标签**：换一个算法，同一份计划就是另一个 hash，而批准是绑在那个 hash 上的 | `tx/artifact.py`, `tx/simulate.py`, `caps/exposure.py`, `caps/lifecycle.py` |
 
 ## `reference-plan.schema.json`
 
@@ -69,12 +80,26 @@
 | `exposure.scope` | `user` / `machine` | 与上一条同义，这是计划顶层的那个字段 | `caps/exposure.py`, `caps/environment.py` |
 | `exposure.value_kind` | `REG_SZ` / `REG_EXPAND_SZ` | 用哪种注册表值类型写：`REG_SZ` 按字面存；`REG_EXPAND_SZ` 会展开 `%VAR%`。**值里含 `%...%` 就必须是 `REG_EXPAND_SZ`**（声明成 `REG_SZ` 会被拒，否则你会得到一个永远不展开的路径） | `caps/exposure.py`, `caps/environment.py`, `registry/db.py` |
 | `exposure.variables.propertyNames.not` | `PYTHONPATH` / `PYTHONHOME` / `PYTHONSTARTUP` / `NODE_OPTIONS` / `NODE_PATH` / `LD_PRELOAD` / `LD_LIBRARY_PATH` / `DYLD_INSERT_LIBRARIES` / `GIT_SSH_COMMAND` / `GIT_EXTERNAL_DIFF` / `GIT_CONFIG_GLOBAL` / `PATHEXT` / `COMSPEC` / `BASH_ENV` / `ENV` / `ZDOTDIR` / `PROMPT_COMMAND` | **禁止持久化**的变量名：它们要么"加载任意代码"，要么"加一个执行触发点"，写到 user/machine 级就是全局代码注入面。用这些名字持久化会被 `INVALID_INPUT`(8) 拒 | `caps/environment.py` |
+| `operation` | `record_reference_exposure` | 这份计划只做一件事：把一次暴露记进声明（`caps/exposure.py` 的 `PLAN_OPERATION`）。它**不碰 payload**——外部引用没有 AIROOT 拥有的载荷 | `caps/exposure.py` |
+| `target.management` | `external_reference` | 计划作用的对象恒是外部引用：这份 schema 存在的理由就是引用域没有自己的计划形状（ADR-0003 的 `reference-plan` 边界） | `caps/exposure.py` |
 
 ## `gc-plan.schema.json`
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
 | `items[].kind` | `managed_tool`† / `runtime`† | 待回收对象的种类。判据是"AIROOT 装的 + 已退役 + 无人引用"三者同时成立。**这一版连这份文档本身都没有写者**：`gc-plan` 是一份**批量**回收计划，而本版的 `build_gc_plan` 出的是 `plan.schema.json`（一次一份 payload，`operation=gc_apply`）；`tool gc --plan` 打印的那份 `operation=gc_plan` 是**报告信封**，不是这份 schema。这一栏原来写的三个模块写的是 `plan` 的 `target.kind`——**同样两个词、不同字段**，于是那是一次**同名词假覆盖**：（§74/§77 记的正是这条盲点，§92 把它修掉） | （没有写者） |
+| `items[].reason` | `retired_and_unreferenced`† | 为什么可以回收：已退役**且**没有任何 binding 引用。这个字段只有**一个取值**（schema 写的是 `const`），所以它不是枚举而是"唯一值"；† 的理由与上一行相同——这一版没有任何代码写出这份文档 | （没有写者） |
+| `requires_approval` | `true`† | 批量回收必须走批准：`gc_plan` 这份文档的语义就是"批量、要批"，与 `plan` 的 `operation=gc_apply`（一次一份）不同。† 同上 | （没有写者） |
+
+## `managed-tool-instance.schema.json`
+
+这个文件**自己**没有枚举字段，但有两个"唯一值"字段（`const`，§106 起也进这张表）：
+
+| 字段 | 取值 | 含义 | 本版谁写出 |
+|---|---|---|---|
+| `kind` | `managed_tool` | 受控工具实例。`runtime-instance` 那份 schema 的同一个字段是 `runtime`——两份 schema 靠这个字段把自己和对方分开 | `registry/entities.py`, `tx/simulate.py`, `cli.py` |
+
+`instances[].kind` 在 `registry-projection` 那一节有枚举形式的行；这里说的是**这份 schema 自己的**那个常量字段。
 
 ## `registry-projection.schema.json`
 
@@ -122,6 +147,7 @@
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
 | `runtime_family` | `python`† / `node`† / `java`† / `dotnet`† / `custom`† | 运行时家族。**这五个值这一版一个都不会出现**：runtime 实例要到 P5 才创建（现在 `runtime` 这个词只出现在计划与清单的**种类**里，不出现为实例） | （没有写者） |
+| `kind` | `runtime`† | 唯一取值（`const`）：这份 schema 只描述运行时实例；受控工具实例是 `managed-tool-instance`，同一个字段的值是 `managed_tool`。**† 是量出来的**：这一版没有任何函数构造出 `runtime-instance` 文档（`managed_tool` 那一份有），所以它与上面的 `runtime_family` 同属"P5 才有写者" | （没有写者） |
 
 ## `transaction.schema.json`
 
@@ -285,9 +311,7 @@
 |---|---|
 | `broker-request.schema.json` | P2 未实现：没有任何代码写出或读入它，方案在 `docs/broker/`。它的 `operation`/`integrity` 现在还只是设计 |
 | `broker-response.schema.json` | 同上；`status`/`security_mode`/`enforcement` 里的 `acl_and_broker` 这一版不会出现 |
-| `managed-tool-instance.schema.json` | 这个文件**自己**没有枚举字段（全是字符串/数组/摘要），但它**能携带** 10 套词汇，全部来自 `common`（`platform`/`architecture`/`lifecycle_status`/…），在那里记录。§105 量过：它的可达词汇里**没有一条**是没人记录的，所以这里不重复一遍（这条原先只写"没有枚举字段"，那句话对这个**文档**是假的） |
-| `root-marker.schema.json` | 同上：没有枚举字段。它是 AIROOT 自己的根标记文件，不是给 agent 读的输出 |
-| `error-response.schema.json` | 同上：没有枚举字段。`status` 是 `const: "failed"`；`reason_code` 的**取值表是** `docs/AIROOT-v0.3-诊断码与ReasonCode表.md`（权威，速查在 `references/reason-codes.md`）——那份表本来就是它的取值表；`details` 的键是**数据**，按码而不同（§101 的 `NOT_IMPLEMENTED` 是第一个写它的），逐键说明归发出它的那条命令 |
+| `root-marker.schema.json` | 同上：没有枚举字段（`schema_version`/`protocol_version` 是版本钉，不算词汇；见取值表末尾那段）。它是 AIROOT 自己的根标记文件，不是给 agent 读的输出 |
 
 这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105）：**任何一个已发布
 schema 能携带的词汇**（跟 `$ref` 走），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`

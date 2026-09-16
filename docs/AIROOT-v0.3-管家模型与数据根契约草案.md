@@ -9006,3 +9006,115 @@ AGENTS.md states more than one current test total: [100, 871]
 6. 新增目录级 `$ref` 判据（含"解析器要能说不"的非空判据）；
 7. 改掉 `managed-tool-instance` 那条说错的理由，并在取值表末尾写清"两张表各回答什么"；
 8. 回写计数、写 ADR-0031 与本记录；跑全量 + 旧切片 + 真机验收；提交。
+## 106. 第 106 阶段：`const` 也是词汇，但 `if` 里的不是
+
+### 106.1 这一阶段要解决什么
+
+§105.8 留下的最后两条边界：
+
+> **走法仍然只认 `enum`，不认 `const`**（`error-response.status` 是唯一一处）。
+> **豁免理由说的是文件、表问的是文档**——只有一处被量过。
+
+这一轮做前一条，并在过程中撞出两个新的缺陷。
+
+### 106.2 实测：41 个 `const`，一半是"值"、一半是"条件"
+
+把 20 个已发布 schema 的 `const` 全走一遍（跟 `$ref`）：
+
+| 类 | 数 | 说明 |
+|---|---:|---|
+| 可达的 `const` 总数 | **41** | |
+| **值位置**（`properties`/`items`/`then`/`additionalProperties`…） | **33** | 文档真的会携带的值 |
+| **测试位置**（`if` 之下） | **8** | `binding.scope = "project"` 的真实含义是"**当** scope 是 project 时 `project_id` 必填"，**不是**"scope 恒为 project" |
+| 其中**版本钉**（`schema_version`/`protocol_version`/`schemaVersion` = `1`） | **22** | 同一个事实，出现在 19 份文档里 |
+| **有意义的唯一取值**（去掉版本钉） | **11** | 见下表 |
+| 这 11 条里表里**一行都没有**的 | **10** | 只有 `error-response.status` 在一句豁免理由里被提过 |
+
+11 条有意义的：`error-response.status="failed"`、`search-response.operation="search"`、
+`search-response.data.fallback.kind="crawl"`、`plan.canonicalization`、`reference-plan.operation`、
+`reference-plan.target.management`、`reference-plan.canonicalization`、`managed-tool-instance.kind`、
+`runtime-instance.kind`、`gc-plan.items[].reason`、`gc-plan.requires_approval`。
+
+**顺手量出两个别的缺陷：**
+
+1. **取值表的取值正则看不见连字符**（字符类是 `[A-Za-z0-9_.]`）。于是新增的
+   `jcs-rfc8785-compatible` 被解析成**空取值**——三条守卫（值对齐、† 是否过期、取值是否在 schema 里）
+   **同时安静了**。这是第四次同一形状：**读的人比被读的文档窄**（§104 只认两个关键字、§105 不跟
+   `$ref`、§106 不认 `const`，现在是正则不认 `-`）。
+2. **`runtime-instance` 这一版根本没有构造者**（`managed-tool-instance` 有）。
+   守卫 `test_no_row_claims_a_writer_for_a_document_this_build_never_builds` 当场纠正了第一版那一行
+   ——它把 `registry/entities.py` 记成写者，是错的。
+
+### 106.3 裁定（ADR-0032）
+
+1. **一个走法多一个问法**：`vocabularies_by_path` = `enum` **加上值位置的 `const`**；
+   **测试位置（`if` 之下）一律不算**。与 §105 的 `resolve` 参数并列，不是第二个走法。
+2. **fixture 覆盖规则仍然只数 `enum`**：fixture 证明的是**枚举的成员**，一个 `const` 只有一个取值，
+   没有"成员"可证。三个问法、一个走法。
+3. **版本钉是一类，不是一个值**：字段名在 `VERSION_PIN_FIELDS` 里的按"由 README 规则 1 与
+   `test_l1_schema_catalog` 守着"处理，不写表行（22 次同一件事写成 22 行是噪声），
+   并**断言这类字段的值就是 `1`**。
+4. **10 条有意义的 `const` 进表**：`managed-tool-instance` 与 `error-response` **从豁免升级为一节**
+   （各自有一个 `const` 字段），豁免表缩到 3 个（两个 `broker-*` + `root-marker`）。
+5. **取值只有一个拼法**：`schema_walk.spell` 是唯一定义（`null` 不是 `None`、布尔写 JSON 的
+   `true`/`false`），表这边的 `spell` 改成调它——`const` 让布尔第一次真的出现在表里。
+6. **取值正则放宽到连字符**，理由写进注释。
+
+### 106.4 做了什么
+
+1. 量两种位置、两种性质（值/条件、版本钉/有意义）的分布；
+2. `schema_walk`：`vocabularies_by_path` + `TEST_KEYWORDS` + `spell` 的 JSON 布尔；
+3. 表这边：行解析器学会 `const`（`resolve` 与 `spell` 都改），新增 10 行、2 节、豁免缩到 3 个；
+4. 覆盖判据改用 `vocabularies_by_path` + `VERSION_PIN_FIELDS` 这一类（值必须是 `1`）；
+5. 合成判据：值位置的 `const` 算、`if` 之下的不算、`then` 之下的算、三种拼法（字符串/布尔/`null`）；
+6. 修掉取值正则的连字符盲点；把 `runtime-instance.kind` 的写者改成"（没有写者）"+ †（守卫纠正的）。
+
+### 106.5 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 把 `if` 之下的 `const` 也算进来 | 红 | ✅ 红（合成判据直接比对两份字典；真实语料里会多出 8 条"没人点名的词汇"） |
+| 不计 `const`（§105 的行为） | 红 | ✅ 红（10 条有意义的唯一取值变成"没人点名"） |
+| `VERSION_PIN_FIELDS` 里某个字段不再是 `1` | 红 | ✅ 红（那一类里断言 `values == ["1"]`） |
+| 取值正则退回不含连字符 | 红 | ✅ 红（`plan::canonicalization: schema=[...] doc=[]`——这一条**当场红过**） |
+| `runtime-instance.kind` 记一个并不存在的写者 | 红 | ✅ 红（`no function builds any runtime-instance document, so the writer column cannot name code`——也**当场红过**） |
+| 真实状态 | 绿 | ✅ 绿（152 套可达词汇：有行、被点名、或属于版本钉三类之一） |
+
+### 106.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **871 → 872**（+1 合成 `const` 判据） |
+| 审计检查（`test_l0_consistency.py`） | **100 → 101** |
+| schema / 对外输出 / 退出码 | **一个字节没动** |
+| 取值表 | **+10 行、+2 节**（`managed-tool-instance`、`error-response`），豁免 **5 → 3** |
+| 判据 | 覆盖规则从"枚举"扩到"枚举 + 唯一取值"；新增版本钉这一类 |
+| 新增 ADR | **ADR-0032** |
+
+### 106.7 如实记录的边界
+
+1. **`if` 的排除按关键字，不按语义**：今天 `if` 之下没有任何"文档携带的值"（量的就是这个），
+   但判据说不出"某个 `if` 里的 `const` 其实是取值"——那种写法要人来判。
+2. **`then`/`else`/`not` 一律算约束**：`not` 之下今天只有 `propertyNames` 的黑名单（本来就有行）；
+   若有人写 `not: {const: ...}` 表示"禁止这个值"，它会被当成一套词汇——**这条没量过**。
+3. **一个节点同时有 `enum` 与 `const` 是自相矛盾的**，走法取 `enum`；**没有任何判据拦这种 schema**
+   （目录守卫只查 meta-schema 合法性与版本钉）。
+4. **取值正则仍然只认 `[A-Za-z0-9_.-]`**：带 `:`、`/`、`%` 的取值（digest、URL 片段之类）在表里
+   **仍然看不见**——今天没有这样的行，但这条边界现在是**写下来的**，而不是靠没人写。
+5. **"受检 schema"从 15 变 17**（新增两节）："哪个 schema 该有一节"仍然是人定的，判据只能保证
+   "定了之后两边一致"。
+6. **§105.8-1 的另一半没有做**：豁免理由"说的是文件还是文档"只在 `managed-tool-instance` 那一处
+   被量过并改对；剩下三条（两个 `broker-*` + `root-marker`）**这一轮没有逐条复核**——它们的理由
+   读起来都是关于"未实现"的，而判据现在把它们的词汇按"点名豁免 / 版本钉"两类处理，所以那句话
+   即使措辞不精确也不会让覆盖出错。
+
+### 106.8 实施顺序
+
+1. 先量 `const` 的分布（值位置 vs `if` 之下、版本钉 vs 有意义），把"要处理多少"变成数字；
+2. 走法加 `vocabularies_by_path`（`if` 之下不算），fixture 规则保持枚举口径；
+3. 表这边学会读 `const`（行解析器），把 10 条有意义的写进去，两节从豁免升级为独立节；
+4. 覆盖判据接上新走法 + 版本钉这一类（值必须为 `1`）；
+5. 合成判据覆盖"算/不算"与三种拼法；
+6. **让守卫把两个错误揪出来**：连字符取值解析成空（值对齐红）、`runtime-instance` 记了不存在的写者
+   （写者判据红）——两处都按守卫说的改；
+7. 回写计数；写 ADR-0032 与本记录；跑全量 + 旧切片 + 真机验收；提交。

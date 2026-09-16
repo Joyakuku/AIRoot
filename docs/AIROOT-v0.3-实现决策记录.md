@@ -1553,6 +1553,67 @@ reason_code: DATA_ROOT_MISSING        # 退出码 6
 - **跨文件的 `$ref` 只解析"集合内"的文件**：指向集合外的引用不会报错，只会**什么都不贡献**——
   正是因此才新增了目录级判据（实测目前一个都没有）。
 
+## ADR-0032：`const` 也是词汇，但 `if` 里的不是；版本钉由别的判据守
+
+**状态：已裁决。** 本条关掉 §105.8 留下的最后一个洞：走法只认 `enum`，而**一个 `const` 就是一套
+只有唯一取值的词汇**。
+
+### 实测（不是推断）
+
+把 20 个已发布 schema 里的 `const` 全走一遍（跟 `$ref`）：
+
+| 类 | 数 | 例子 / 说明 |
+|---|---:|---|
+| 可达的 `const` 总数 | **41** | |
+| 值位置（`properties`/`items`/`then`/…） | **33** | 真的是文档携带的值 |
+| 测试位置（`if` 之下） | **8** | `binding.scope = "project"` 的含义是"**当** scope 是 project 时 `project_id` 必填"，不是"scope 恒为 project" |
+| 其中版本钉（`schema_version`/`protocol_version`/`schemaVersion` = `1`） | **22** | 同一个事实出现在 19 份文档里 |
+| 有意义的唯一取值（去掉版本钉） | **11** | `error-response.status="failed"`、`search-response.operation="search"`、`data.fallback.kind="crawl"`、`plan.canonicalization`、`reference-plan.operation`/`target.management`、`managed-tool-instance.kind`、`runtime-instance.kind`、`gc-plan.items[].reason`/`requires_approval` |
+| 这 11 条里**表里一行都没有的** | **10** | 只有 `error-response.status` 在一句豁免理由里被提过 |
+
+**顺手量出两个别的缺陷**：
+
+1. **取值表的取值正则看不见连字符**（`[A-Za-z0-9_.]`）。于是 `jcs-rfc8785-compatible`（§106 加的那一行）
+   被解析成**空取值**——三条守卫（值对齐、† 是否过期、取值是否在 schema 里）**同时安静了**。
+   第四次同一类：**读的人比被读的文档窄**（§104/§105 也是这个形状）。
+2. **`runtime-instance` 这一版根本没有构造者**（`managed-tool-instance` 有）。所以它的 `kind` 与
+   `runtime_family` 一样是"P5 才有写者"——守卫 `test_no_row_claims_a_writer_for_a_document_this_build_never_builds`
+   当场把它纠了出来（第一版那一行把 `registry/entities.py` 记成写者，是错的）。
+
+### 裁定
+
+1. **走法多一个问法**：`vocabularies_by_path` = `enum` **加上值位置的 `const`**，
+   **测试位置（`if` 之下）一律不算**。不是第二个走法：同一个 `_walk`，`consts=True/False` 与
+   §105 的 `resolve` 参数并列。
+2. **fixture 覆盖规则仍然只数 `enum`**：fixture 证明的是**枚举的成员**，而一个 `const` 只有一个取值、
+   没有"成员"可证。三个问法、一个走法。
+3. **版本钉是一类，不是一个值**：凡字段名在 `VERSION_PIN_FIELDS` 里的，按"由 README 规则 1 与
+   `test_l1_schema_catalog` 守着"处理，不写表行——一份 22 次的同一件事写成 22 行是噪声。
+   守卫**同时断言这类字段的值就是 `1`**，所以"叫 `schema_version` 但不是版本钉"的字段不能混进来。
+4. **10 条有意义的 `const` 进表**：`managed-tool-instance` 与 `error-response` **从豁免变成有自己的一节**
+   （它们各自有一个 `const` 字段），豁免表缩到 3 个（两个 `broker-*` + `root-marker`）。
+5. **取值的唯一拼法**：`schema_walk.spell` 是唯一定义（`null` 不是 `None`，布尔写 JSON 的 `true`/`false`），
+   表这边的 `spell` 也改成调它——`const` 让布尔第一次真的出现在表里。
+6. **取值正则放宽到连字符**，并把理由写进注释。
+
+### 没有改变什么
+
+- **没有改任何 schema 文件、没有改任何对外输出、没有改退出码**：改的还是**读者**与**表**。
+- **`enum` 那部分一条没动**：`enums_by_path` 的行为与 §105 完全一致（`vocabularies_by_path` 是它的超集）。
+
+### 这一版仍然挡住的（诚实清单）
+
+- **`if` 的排除是按关键字，不是按语义**：今天 `if` 之下没有任何"文档携带的值"（量的就是这个），
+  但这条判据说不出"某个 `if` 里的 `const` 其实是取值"——那种写法需要人来判。
+- **`then`/`else`/`not` 一律算约束**：`not` 之下今天只有 `propertyNames` 的黑名单（本来就有行），
+  但如果有人写 `not: {const: ...}` 表示"禁止这个值"，它会被当成一套词汇——**这条没量过**。
+- **一个节点同时有 `enum` 与 `const` 是自相矛盾的**，走法取 `enum`；**没有任何判据拦这种 schema**
+  （目录守卫只查 meta-schema 合法性与版本钉）。
+- **取值正则仍然只认 `[A-Za-z0-9_.-]`**：带 `:`、`/`、`%` 的取值（例如 digest、URL 片段）在表里
+  **仍然看不见**——今天没有这样的行，但这条边界现在是写下来的，而不是靠没人写。
+- **新增的两节（`managed-tool-instance`/`error-response`）让"受检 schema"从 15 变 17**：
+  "有没有一节"这件事仍然是人定的，判据只能保证"定了之后两边一致"。
+
 ## 尚未决策（本日志自己的一份清单）
 
 **§86 更正了标题。** 它原来写的是"（仍属规划 §23 的未冻结项）"——**那句话从来不是真的**：规划 §23

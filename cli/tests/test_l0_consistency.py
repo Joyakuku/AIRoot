@@ -27,7 +27,7 @@ from airoot.caps.planner import SCOPE_DATA_ROOT, SCOPE_PROJECT
 from airoot.cli import DECLARED_ABSENT, EXEC_ALIAS_FLAG, build_parser
 from airoot.exits import EXIT_MEANINGS, REASON_EXIT
 from airoot.schema_io import load_schema, schema_names
-from schema_walk import enums_by_path
+from schema_walk import enums_by_path, vocabularies_by_path
 
 REPO = Path(__file__).resolve().parents[2]
 APP = REPO / "cli" / "app" / "airoot"
@@ -1068,6 +1068,46 @@ def test_the_enum_walk_follows_a_ref_only_when_asked_and_terminates_on_a_cycle()
         "local": ["one"],
         "health": ["healthy", "broken"],
         "direct": ["one"],
+    }
+
+
+def test_the_vocabulary_walk_counts_a_const_but_not_one_under_if() -> None:
+    """§106: a `const` is a one-valued vocabulary; a `const` under `if` is a dispatch condition.
+
+    Measured on the published set: 41 consts, **33** in value position and **8** under `if`. The
+    eight are conditions — `binding.scope = "project"` means "when the scope is project, `project_id`
+    is required", not "the scope is always project" — so counting them would demand table rows for
+    dispatch patterns, while missing the 33 hid ten real vocabularies (`error-response.status =
+    "failed"`, `plan.canonicalization`, …). Both halves, plus the spellings a const can have, are
+    asserted here because the coverage rule now depends on all of it.
+    """
+
+    synthetic = {
+        "properties": {
+            "status": {"const": "failed"},
+            "flag": {"const": True},
+            "nothing": {"const": None},
+            "choice": {"enum": ["a", "b"]},
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"scope": {"const": "project"}}},
+                "then": {"properties": {"expected": {"const": "project"}}},
+            }
+        ],
+    }
+
+    # Without consts, the walk reports the enums only — the fixture rule's question.
+    assert enums_by_path(synthetic) == {"choice": ["a", "b"]}
+
+    assert vocabularies_by_path(synthetic) == {
+        "status": ["failed"],
+        "flag": ["true"],
+        "nothing": ["null"],
+        "choice": ["a", "b"],
+        # `then` is a consequence and therefore a constraint on the document's values; the `if` above
+        # it is the test, and nothing under an `if` is counted.
+        "expected": ["project"],
     }
 
 
