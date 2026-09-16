@@ -12,6 +12,7 @@ When one fails it names the artifact and the disagreement, so the fix is mechani
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -3832,12 +3833,12 @@ def test_the_audit_file_does_not_appear_to_cite_a_scenario() -> None:
 
 
 def test_the_corpus_counts_are_the_same_everywhere() -> None:
-    """Three counts that nothing checked: golden fixtures, acceptance scenarios, audit checks.
+    """Two counts that nothing checked: golden fixtures and acceptance scenarios.
 
-    All three had already drifted, which is the argument for guarding them: `AGENTS.md` and the
-    review report said 27 golden fixtures when 25 existed; no document said how many acceptance
-    scenarios the two contracts define; and the review report still said 48 audit checks after §48
-    had raised the number to 49, because only the *test* count was ever compared.
+    Both had already drifted, which is the argument for guarding them: `AGENTS.md` and the review
+    report said 27 golden fixtures when 25 existed, and no document said how many acceptance scenarios
+    the two contracts define. The third count this test used to carry — the audit checks — moved to
+    its own check below, because unlike these two it cannot be derived from a file alone (draft §114.5).
 
     The draft is exempt from the fixture check because its mentions are per-stage history ("第 19 个
     fixture", "23 个既有 fixture 逐字节不变") — the same boundary §48 drew for the review snapshot.
@@ -3859,30 +3860,75 @@ def test_the_corpus_counts_are_the_same_everywhere() -> None:
         assert stated, f"{path.name} no longer states how many acceptance scenarios exist"
         assert stated == {total}, f"{path.name} states {sorted(stated)} scenarios; the documents define {total}"
 
-    checks = _audit_check_count(Path(__file__).read_text(encoding="utf-8"))
+
+def _audit_check_count(request: pytest.FixtureRequest) -> int:
+    """How many of this module's checks were collected — asked of pytest, not read off the source.
+
+    This replaced a source scan, and the reason is the interesting part. The scan matched
+    ``@pytest.mark.parametrize(...[...])`` and counted the list's items; but this module's biggest
+    parametrization takes ``sorted(_search_response_enums())`` — a **call**, evaluated at import — so
+    the scan counted one decorator's cases, ignored the other, and stated **102** where pytest
+    collected **106**. Nothing compared the two for several stages, because the only consumer was a
+    document (draft §114.5). The collection is the authority for what is collected; any other
+    derivation is a guess about someone else's evaluation order.
+
+    ``-k``/``-m`` narrow the collection, so this counts what is actually running. The caller below
+    skips rather than compares when that has happened.
+    """
+
+    return len([item for item in request.session.items if item.path == Path(__file__)])
+
+
+def test_the_audit_count_cannot_be_read_off_the_source() -> None:
+    """Why the count above must come from the collection: one case list is computed, not written out.
+
+    `test_every_search_result_value_has_a_fixture_or_a_written_exception` is parametrized over
+    `sorted(_search_response_enums())`, so no static reading of this file can know how many items it
+    collects. If that ever becomes a literal list, a source scan would become possible again and this
+    check goes red — which is the moment to re-decide, not to quietly keep both numbers.
+    """
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    computed = [
+        ast.unparse(case_list)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "parametrize"
+        and node.args
+        and not isinstance(node.args[-1], (ast.List, ast.Tuple))
+        for case_list in [node.args[-1]]
+    ]
+    assert computed, (
+        "no parametrize case list is computed any more, so the audit-check count could be read off "
+        "the source; either restore that reason or replace this check with a source derivation"
+    )
+
+
+def test_the_audit_check_count_is_the_one_this_module_collects(
+    request: pytest.FixtureRequest,
+) -> None:
+    """`AGENTS.md` and the review report must state the number pytest actually collects.
+
+    The comparison is the whole point: the previous arrangement compared the document against a
+    source-derived guess, so the two could disagree for stages without anything going red (§114.5).
+    """
+
+    collected = _audit_check_count(request)
+    functions = len(re.findall(r"(?m)^def test_", Path(__file__).read_text(encoding="utf-8")))
+    if collected <= functions:
+        pytest.skip(
+            f"only {collected} of this module's {functions}+ checks were selected (-k/-m filter), so "
+            "the collection is not the module; an unfiltered run compares the documented number"
+        )
     for path in (AGENTS, REVIEW):
         stated = {
             int(value)
             for value in re.findall(r"(\d+)\*{0,2}\s*项常驻跨工件", path.read_text(encoding="utf-8"))
         }
-        assert stated == {checks}, f"{path.name} states {sorted(stated)} audit checks; this module collects {checks}"
-
-
-_PARAMETRIZE_LIST = re.compile(r"(?m)^@pytest\.mark\.parametrize\([^)]*?\[([^\]]*)\]")
-
-
-def _audit_check_count(text: str) -> int:
-    """How many checks this module collects, derived from its own source.
-
-    Almost every check is one function; the schema check is parametrized over a literal list, so its
-    extra cases are counted from the decorator. Deriving the number keeps it a fact of the file
-    rather than a constant someone must remember to bump — and a decorator whose list is a *variable*
-    makes this count wrong and the guard loud, which is the right failure direction.
-    """
-
-    functions = len(re.findall(r"(?m)^def test_", text))
-    extra = sum(len([item for item in group.split(",") if item.strip()]) - 1 for group in _PARAMETRIZE_LIST.findall(text))
-    return functions + extra
+        assert stated == {collected}, (
+            f"{path.name} states {sorted(stated)} audit checks; this module collected {collected}"
+        )
 
 
 # --- Guard group 19: the on-demand reference must agree with the code (draft §51) ---------------

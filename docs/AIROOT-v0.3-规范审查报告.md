@@ -169,7 +169,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 **本节随实现推进而更新：它描述的是当前状态，不是写入时的快照。** 前文（§「已生成的实现前基线」及以上）
 是审查当时的记录，其中的计数按当时为准。
 
-**当前规模**：`cli/schema/` **20** 个 JSON Schema；`pytest cli/tests` **1104 项**（含 **102** 项常驻跨工件
+**当前规模**：`cli/schema/` **20** 个 JSON Schema；`pytest cli/tests` **1198 项**（含 **108** 项常驻跨工件
 一致性审计 `cli/tests/test_l0_consistency.py`）；golden 语料 **41** 个 fixture
 （`cli/tests/fixtures/golden/`，Rust 版逐字节验收面）；两份契约文档合计定义 **108 个场景编号**，
 台账见 `cli/tests/fixtures/golden/scenario_ledger.json`；决定拒绝的每个数值（搜索上限三件套、
@@ -189,7 +189,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 | **管家域步骤 1–9、11–12**：数据根注册（可跨卷）、只读 PE 静态探测、能力白名单发现、`adopt --mode reference`、依赖分流与确认、会话级环境激活、**user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、删除语义分级、能力边界、`rebuild`、来源清单、`desired` 层与 `tool pin`、只读观察面、session 快照栈 | `cli\app\airoot\caps\`、`policy\{discovery-whitelist,sources,selection-policy,capabilities}.json` |
 | **`search` 协议面与 crawl 建的持久索引**（**不是** USN 索引）：请求/实现上限/root 规则/cursor 绑定索引 generation、有界 crawl、`cache\search\index.db` 整文件原子替换、索引状态接进 D7、**只读** USN 能力探测 | `cli\app\airoot\caps\{search,searchindex,usn}.py`、`policy\search-policy.json` |
 | **Skill 适配层**：`SKILL.md` 是仓库根的唯一 Skill 入口，另有机器可读调用元数据与按需参考 | `SKILL.md`、`agents\airoot.json`、`references\` |
-| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**1104 项**）、`cli\tests\fixtures\golden\`（**41 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
+| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**1198 项**）、`cli\tests\fixtures\golden\`（**41 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
 
 **P1 退出条件已验证**：
 
@@ -224,9 +224,21 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
   token、`broker\protocol.py` 造/验 `broker-request` 并解 `broker-response`、`broker_unavailable()`
   报 `NOT_IMPLEMENTED`(1)，外加第一份 broker 语料。**它不证明信任边界**：broker 本体、named pipe、
   对客户端 token 的校验、machine PATH / launcher 仍全部未交付；
+- **P2 的第二阶段：受保护边界要问的第一个问题已作为库交付**（草案 §114 / ADR-0041）：
+  `caps\identity.py` 对**别人**的观测补齐到九件事（SID / 完整性级别 / 是否提权 / 提权类型 / 会话 id /
+  是否 AppContainer 及其 SID / 进程创建时间），其中两道**交叉核对**（`elevated` 与 `elevation_type`、
+  `TokenSessionId` 与 `ProcessIdToSessionId`）不一致时报"这个事实读不出来"，而不是取其中一边；
+  `broker\policy.py` 的 `admit_caller(identity, expectation)` **只吃观测到的 token**——请求里的 `client`
+  块结构上进不来（`ProcessIdentity` 没有 `application_id` 字段，函数签名里也没有"声明"参数），拒绝时
+  报新增的 `CALLER_NOT_AUTHORIZED`(5)，`details.rule` 指认是哪条规则。**它仍不是那条边界**：没有
+  named pipe、没有提权进程、**没有任何动词走到它**——连 `allowed_sids` 与 `minimum_integrity` 都只是
+  显式入参，本阶段刻意没有发明策略文件，也没有把根目录的 owner 当成"谁可以问"（Protected machine mode
+  下它很可能是 Administrators，那会把合法用户拒掉）；
 - 第 7 条（`machine_id`/`session_id`/`project_id` 生成算法）**刻意未发明**：只接受夹具注入或显式入参；
 - **machine 级**环境变量持久化、machine PATH 写入、`exposure\bin` launcher：均属 P2；
-- **ACL 的写一侧**（把基线**强加**回目录，`WRITE_DAC` + broker）：属 P2。**读一侧已交付**（§58）：
+- **ACL 的写一侧已作为库交付**（§113 / ADR-0040：baseline/apply/verify/restore，`SetSecurityInfo`，
+  非空基线保护式写入、空基线作为发现被拒）；**缺的是调用者**——把基线**强加**回目录要有 broker，以及一条
+  "调用者写完还活着"的判据（§114 只把那条判据要读的**别人 token**补齐了）。**读一侧已交付**（§58）：
   `cli\app\airoot\caps\acl.py` 只读 owner/DACL（`ctypes`，无需提权、无新依赖），`doctor` 在数据根基线
   漂移时发射 `DATA_ROOT_ACL_DRIFT`。ADR-0023 定下语义：基线是**观测**，所以"漂移"意为"与我们记录的不同"
   而不是"你违反了某条要求的 ACL"，`remediation=repair` 是**重新记录基线**，不是"把 ACL 恢复回去"

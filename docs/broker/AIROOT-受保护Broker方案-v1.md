@@ -51,6 +51,13 @@ User compatibility mode 可以运行无 elevated Broker 的同用户模拟，但
 
 生产 Windows 实现使用受 ACL 保护的 named pipe，例如 `\\.\\pipe\\airoot-broker-v1`。Broker 启动时只接受本机客户端，并校验客户端进程 token、用户 SID、完整性级别和 application identity。TCP、临时文件轮询和任意可写 socket 不属于 v1 IPC。
 
+**§114 量到的一句话**（ADR-0041）：这里的"application identity"对**普通 Win32 调用方无从校验**——token 里
+没有这个事实，只有 AppContainer 进程带得动一个 application identity（`TokenAppContainerSid`，普通进程读到的是
+`TokenIsAppContainer=False`）。所以判定只能用 broker **自己观测到**的 token 事实；`broker-request` 的 `client`
+块是**自述**、是诊断信息，**不是凭据**（它可以谎报 SID 与 `application_id`，而观测不会跟着变）。
+`application_id` 这一项对普通调用方只能记为"**这个事实不存在**"，不能记为"已核对"。观测到的九件事与五条拒绝
+规则见 `cli/app/airoot/broker/policy.py`；**它只是库**：没有 pipe、没有提权进程，也没有任何动词走到它。
+
 一次提交请求必须是一个完整 envelope，不能由客户端分段拼接安全字段：
 
 ```json

@@ -27,6 +27,24 @@ broker has in front of it (docs/broker §3:52). The additions below pin what tha
   module's own seams (the same shape as the unreadable own-token test above);
 * **`None` and `False` are different facts about a target** — "could not look" must never be reported
   as "looked, and it is not elevated", and each side is asserted against the other.
+
+Draft §114 widens that half to the facts a *server* has to read for itself, because the `client` block
+cannot carry them (docs/broker §3:52 asks for token, user SID, integrity level and application
+identity; `broker-request`'s `client` block has four frozen fields). What the tests below pin:
+
+* **every new field on a real process** — this one and a spawned child, with `session_id` checked
+  against `ProcessIdToSessionId` called directly rather than through the probe;
+* **two readings are held to each other** — `elevation_type` against `elevated`, the token's session
+  against the kernel's; agreement is what lets either be believed, and disagreement withdraws the
+  fact instead of picking a side (both numbers named);
+* **`None` is not a synonym for "no"** — a non-AppContainer token has *no* application identity and
+  says so in words, which is a different answer from "the flag could not be read";
+* **an injected failure per read** — a machine's healthy calls cannot be made to fail on demand, so
+  every refusal branch is driven through the module's own seams, and each refusal has to name the call
+  and the Windows status;
+* **a null in a `client` block is refused at the source** — the document it used to emit fails the
+  published schema, and that failure would be blamed on the caller, so `to_document` raises
+  `SELF_VALIDATION_FAILED` (exit 8) naming the schema field instead.
 """
 
 from __future__ import annotations
@@ -40,6 +58,7 @@ import pytest
 
 from airoot import schema_io
 from airoot.caps import identity
+from airoot.exits import AirootError
 
 #: A plausible-looking application id: the schema's `id` pattern needs a lowercase first character.
 APPLICATION_ID = "airoot-cli"
@@ -47,6 +66,14 @@ APPLICATION_ID = "airoot-cli"
 #: A SID that satisfies the schema's pattern but belongs to no real token — for the "complete
 #: identity" case, where the point is the *shape*, not the value.
 SYNTHETIC_SID = "S-1-5-21-1000-1000-1000-1001"
+
+#: The exact evidence line an ordinary (non-AppContainer) target must produce (draft §114), asserted
+#: as a literal rather than imported from the module. The words are the contract: a reader has to be
+#: able to tell "this token carries no application identity" apart from "nobody managed to look".
+NOT_AN_APP_CONTAINER = (
+    "TokenIsAppContainer -> False; not in an AppContainer: there is no application identity in the "
+    "token to read"
+)
 
 
 def complete(sid: str = SYNTHETIC_SID, integrity: str = "medium", pid: int = 4242) -> identity.ClientIdentity:
@@ -73,6 +100,15 @@ def test_the_token_information_classes_are_the_abi_numbers() -> None:
     assert identity.TOKEN_USER == 1
     assert identity.TOKEN_ELEVATION == 20
     assert identity.TOKEN_INTEGRITY_LEVEL == 25
+    # draft §114 added four classes to the same dispatch table, and they are pinned here for exactly
+    # the same reason as the three above: a typo reads a *different* token fact and says so
+    # confidently.
+    assert identity.TOKEN_SESSION_ID == 12
+    assert identity.TOKEN_ELEVATION_TYPE == 18
+    assert identity.TOKEN_IS_APP_CONTAINER == 29
+    assert identity.TOKEN_APP_CONTAINER_SID == 31
+    assert identity._ELEVATION_TYPES == {1: "default", 2: "full", 3: "limited"}
+    assert (identity._APP_CONTAINER_FALSE, identity._APP_CONTAINER_TRUE) == (0, 1)
 
 
 def test_probe_identity_returns_an_object_and_the_real_pid() -> None:
@@ -567,6 +603,11 @@ def test_every_handle_the_probe_opens_is_closed_on_both_paths(
     monkeypatch.setattr(identity, "_declare_signatures", lambda *_args: None)
     monkeypatch.setattr(identity, "_open_process", lambda _kernel32, _pid: (process_handle, 0))
     monkeypatch.setattr(identity, "_open_token", lambda _advapi32, _handle: (token_handle, 0))
+    # The two §114 reads that do not go through `_read_token_facts` are stubbed to *succeed* and say
+    # nothing: this test is about which handles get closed, and a refusal line would only add noise to
+    # the evidence equality asserted below. The peer facts themselves are covered by their own tests.
+    monkeypatch.setattr(identity, "_process_creation_time", lambda *_args: (1234567890, 0))
+    monkeypatch.setattr(identity, "_read_peer_facts", lambda *_args: (None, None, None, None, []))
 
     # The read fails: the handles still have to be closed, and the failure still has to be reported.
     monkeypatch.setattr(
@@ -696,3 +737,833 @@ def test_process_is_complete_needs_all_three_observable_facts() -> None:
     assert identity.ProcessIdentity(
         pid=99, sid=None, integrity=None, elevated=None
     ).evidence == ()
+
+
+# --- draft §114: the facts the broker needs about a caller ----------------------------------------
+
+
+def _sid_bytes(*sub_authorities: int, authority: int = 5) -> bytes:
+    """A real-shaped SID. `ConvertSidToStringSidW` converts these for real, so the injected paths
+    exercise the module's own conversion instead of a stub of it.
+
+    ``authority`` is the identifier authority (5 = NT, 15 = AppContainer, 16 = mandatory label), so
+    the SIDs this builds are the ones the classes really carry rather than merely SID-shaped bytes.
+    """
+
+    raw = bytes([1, len(sub_authorities)]) + authority.to_bytes(6, "big")
+    for value in sub_authorities:
+        raw += value.to_bytes(4, "little")
+    return raw
+
+
+#: `S-1-5-21-1000-1000-1000-1001`, the synthetic user identity as its own bytes.
+USER_SID = _sid_bytes(21, 1000, 1000, 1000, 1001)
+#: `S-1-16-8192` — `SECURITY_MANDATORY_MEDIUM_RID_BASE`, i.e. the integrity word `medium`.
+MEDIUM_INTEGRITY_SID = _sid_bytes(0x2000, authority=16)
+#: `S-1-15-4660` — the application identity an injected AppContainer token carries.
+CONTAINER_SID = "S-1-15-4660"
+#: The AppContainer SID itself, in the same bytes the token class would carry it in.
+CONTAINER_SID_BYTES = _sid_bytes(0x1234, authority=15)
+
+
+def _record(sid: bytes) -> tuple[bytes, int, int]:
+    """A `SID_AND_ATTRIBUTES` buffer the way the OS fills it: a pointer, then the SID it aims at."""
+
+    raw = bytearray(16 + len(sid))
+    raw[0:8] = (16).to_bytes(8, "little")
+    raw[16:] = sid
+    return bytes(raw), 0, len(raw)
+
+
+def _dword(value: int) -> tuple[bytes, int, int]:
+    """A class that answers with one DWORD: `TokenElevation`, `TokenSessionId`, the two BOOLs."""
+
+    return value.to_bytes(4, "little"), 0, 4
+
+
+def _answers(
+    overrides: dict[int, tuple[bytes, int, int] | None] | None = None,
+) -> dict[int, tuple[bytes, int, int] | None]:
+    """Every class a healthy token answers, so a test overrides only the read it is about.
+
+    A value of ``None`` means "this class refuses" — the reader built below turns it into the same
+    ``(None, 0, 0, status)`` the real helper returns on failure.
+    """
+
+    base: dict[int, tuple[bytes, int, int] | None] = {
+        identity.TOKEN_USER: _record(USER_SID),
+        identity.TOKEN_INTEGRITY_LEVEL: _record(MEDIUM_INTEGRITY_SID),
+        identity.TOKEN_ELEVATION: _dword(0),
+        identity.TOKEN_ELEVATION_TYPE: _dword(3),
+        identity.TOKEN_SESSION_ID: _dword(7),
+        identity.TOKEN_IS_APP_CONTAINER: _dword(0),
+    }
+    base.update(overrides or {})
+    return base
+
+
+def _reader(
+    answers: dict[int, tuple[bytes, int, int] | None],
+    asked: list[int],
+    status: int = identity.ERROR_ACCESS_DENIED,
+):
+    """A `_get_token_information` that answers per class, and records what it was asked for."""
+
+    def read(
+        _advapi32: object, _handle: object, info_class: int
+    ) -> tuple[bytes | None, int, int, int]:
+        asked.append(info_class)
+        answer = answers.get(info_class)
+        if answer is None:
+            return None, 0, 0, status
+        raw, base, size = answer
+        return raw, base, size, 0
+
+    return read
+
+
+def _inject_target(
+    monkeypatch: pytest.MonkeyPatch,
+    answers: dict[int, tuple[bytes, int, int] | None],
+    *,
+    api_session: tuple[int | None, int] = (7, 0),
+    creation: tuple[int | None, int] = (1234567890, 0),
+    asked: list[int] | None = None,
+) -> list[int]:
+    """Point `probe_process` at a fake target while leaving the real libraries in place.
+
+    The handles are made-up integers and the pid names no process, so nothing here touches the host;
+    the libraries are still the real `advapi32`/`kernel32`, which keeps the conversions and the
+    `ctypes` struct layouts under test. Closing a handle the OS never issued fails harmlessly.
+
+    Every seam the probe has is replaced: the process, the token, the per-class read, the kernel's
+    session id and the creation time. A test overrides exactly the read it is about and the rest of
+    the observation stays successful, which is what makes "one failed read leaves the others alone"
+    an assertion rather than a hope.
+    """
+
+    if asked is None:
+        asked = []
+    monkeypatch.setattr(identity, "_open_process", lambda _kernel32, _pid: (0x4A4A, 0))
+    monkeypatch.setattr(identity, "_open_token", lambda _advapi32, _handle: (0x5B5B, 0))
+    monkeypatch.setattr(identity, "_get_token_information", _reader(answers, asked))
+    monkeypatch.setattr(identity, "_process_session_id", lambda _kernel32, _pid: api_session)
+    monkeypatch.setattr(identity, "_process_creation_time", lambda _kernel32, _handle: creation)
+    return asked
+
+
+def _api_session_id(pid: int) -> int | None:
+    """`ProcessIdToSessionId` called directly in the test, so the probe meets an outside answer.
+
+    Calling the module's own wrapper would compare one implementation with itself.
+    """
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.ProcessIdToSessionId.argtypes = [ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.ProcessIdToSessionId.restype = ctypes.c_int
+    session = ctypes.c_ulong()
+    if not kernel32.ProcessIdToSessionId(pid, ctypes.byref(session)):
+        return None
+    return session.value
+
+
+def test_the_new_fields_are_defaulted_after_the_evidence_field() -> None:
+    """The four original positional fields still construct, and the new facts are all unknown."""
+
+    observed = identity.ProcessIdentity(4242, SYNTHETIC_SID, "medium", False)
+
+    assert (
+        observed.elevation_type,
+        observed.session_id,
+        observed.is_app_container,
+        observed.app_container_sid,
+        observed.creation_time,
+    ) == (None, None, None, None, None)
+    assert observed.is_complete() is True
+
+
+def test_process_is_complete_is_still_only_the_three_shared_facts() -> None:
+    """§114 widened the observation, not the meaning of completeness.
+
+    A rich identity that is missing one of the three shared facts is still incomplete, and a complete
+    one whose new fields are all unknown is still complete — so a caller that learned to ask
+    `is_complete()` does not silently start getting a different answer (brief item 8).
+    """
+
+    assert identity.ProcessIdentity(
+        pid=1,
+        sid=None,
+        integrity="medium",
+        elevated=False,
+        elevation_type="full",
+        session_id=1,
+        is_app_container=True,
+        app_container_sid="S-1-15-2",
+        creation_time=1,
+    ).is_complete() is False
+    assert identity.ProcessIdentity(
+        pid=1, sid=SYNTHETIC_SID, integrity="medium", elevated=False
+    ).is_complete() is True
+
+
+def test_this_process_as_a_target_answers_the_extra_facts() -> None:
+    """Every new field, on the one target whose answer can be known in advance."""
+
+    observed = identity.probe_process(os.getpid())
+
+    assert observed.is_complete(), f"this process must be readable: {observed.evidence}"
+    assert observed.session_id is not None, f"the session was not read: {observed.evidence}"
+    assert observed.session_id == _api_session_id(os.getpid()), (
+        "the token's session has to be the session the kernel reports for this pid, or the "
+        "cross-check accepted a disagreement"
+    )
+    assert observed.creation_time is not None, f"the creation time was not read: {observed.evidence}"
+    assert observed.creation_time > 0
+    assert observed.is_app_container is not None, (
+        f"a boolean flag has to be readable for a process this one opened: {observed.evidence}"
+    )
+    if observed.is_app_container:
+        assert observed.app_container_sid is not None
+    else:
+        assert observed.app_container_sid is None
+        assert NOT_AN_APP_CONTAINER in observed.evidence
+
+
+def test_the_real_elevation_type_is_readable_and_consistent_with_the_flag() -> None:
+    """The weaker, true implication — on the host that falsified the stronger one.
+
+    "`elevated` is true exactly when the type is `full`" is **false**: `TokenElevationTypeDefault`
+    means "not a split token", which is a standard user *or* an administrator with UAC disabled. This
+    machine is the second case (`default` with `elevated=True` and `high` integrity), so a rule that
+    treated `default` as a contradiction would withdraw a legitimate type here. This test is what
+    catches that, by requiring the type to be *readable* — a bare "unknown is allowed" assertion would
+    have accepted the wrong rule.
+    """
+
+    observed = identity.probe_process(os.getpid())
+    if observed.elevated is None:
+        pytest.skip("the token's elevation could not be read on this machine")
+
+    if observed.elevation_type is None:
+        refused = [
+            line
+            for line in observed.evidence
+            if line.startswith("GetTokenInformation(TokenElevationType) failed")
+        ]
+        assert refused, (
+            "the elevation type may only be unknown when the class itself was refused: `default` "
+            "pairs legitimately with either elevation flag, so withdrawing it would be applying a "
+            f"rule Windows does not have: {observed.evidence}"
+        )
+        pytest.skip(f"the elevation type class was refused on this machine: {refused[0]}")
+
+    assert observed.elevation_type in {"default", "full", "limited"}
+    if observed.elevation_type == "full":
+        assert observed.elevated is True, "a `full` token is an elevated one"
+    elif observed.elevation_type == "limited":
+        assert observed.elevated is False, "a `limited` token is a filtered one"
+    else:
+        assert not any("contradicts" in line for line in observed.evidence), (
+            "`default` constrains `TokenElevation` in neither direction, so it can never be a "
+            f"contradiction: {observed.evidence}"
+        )
+
+
+def test_a_real_child_is_observed_with_the_extra_facts_too() -> None:
+    """The broker's real case is another process; the new fields have to survive that trip."""
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        observed = identity.probe_process(child.pid)
+        own = identity.probe_identity()
+
+        assert observed.is_complete(), f"the child's token was not readable: {observed.evidence}"
+        assert observed.sid == own.sid, "a spawned child runs as the same user"
+        assert observed.integrity == own.integrity
+        assert observed.elevated == own.elevated
+        assert observed.session_id is not None
+        assert observed.session_id == _api_session_id(child.pid)
+        assert observed.creation_time is not None and observed.creation_time > 0
+        assert observed.is_app_container is not None
+    finally:
+        child.terminate()
+        try:
+            child.wait(timeout=15)
+        except subprocess.TimeoutExpired:  # pragma: no cover - the child only sleeps
+            child.kill()
+            child.wait(timeout=15)
+
+
+@pytest.mark.parametrize(
+    "value,word,elevated", [(1, "default", 0), (1, "default", 1), (2, "full", 1), (3, "limited", 0)]
+)
+def test_every_elevation_type_word_is_reachable_and_matches_the_flag(
+    monkeypatch: pytest.MonkeyPatch, value: int, word: str, elevated: int
+) -> None:
+    """Every compatible pair: all three words, and `default` with *both* elevation flags.
+
+    "Unknown for everything" would pass the unrecognised-value test below, so the mapped direction is
+    asserted here — each word in the ABI table has to be reachable through a real read. The two
+    `default` rows are the ones the wrong cross-check would have failed: `default` is "not a split
+    token", which a standard user and a UAC-disabled administrator both have.
+    """
+
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_ELEVATION_TYPE: _dword(value),
+                identity.TOKEN_ELEVATION: _dword(elevated),
+            }
+        ),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.elevation_type == word
+    assert observed.elevated is bool(elevated)
+    assert f"TokenElevationType -> {word}" in observed.evidence
+    assert not any("contradicts TokenElevation" in line for line in observed.evidence), (
+        f"this pair is legitimate, not a contradiction: {observed.evidence}"
+    )
+
+
+def test_a_uac_disabled_administrator_pair_is_not_a_contradiction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`default` + ``elevated=True``, stated on its own because it is the pair that broke a rule.
+
+    The rule "`TokenElevation` is true exactly when the type is `full`" declares this pair a
+    contradiction and withdraws the type — and this machine *is* this pair. It is a legitimate token:
+    UAC disabled means the administrator's token is not split, so it is `default` and elevated at
+    once. Kept as its own test so a future rewrite of the cross-check meets it by name.
+    """
+
+    _inject_target(
+        monkeypatch,
+        _answers({identity.TOKEN_ELEVATION_TYPE: _dword(1), identity.TOKEN_ELEVATION: _dword(1)}),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.elevation_type == "default", (
+        "a UAC-disabled administrator's token is `default`, and that is readable — not a "
+        f"contradiction to withdraw: {observed.evidence}"
+    )
+    assert observed.elevated is True
+    assert not any("contradicts" in line for line in observed.evidence)
+
+
+def test_a_default_type_with_an_unelevated_flag_is_accepted_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other legitimate `default`: a standard user. `default` constrains neither direction."""
+
+    _inject_target(
+        monkeypatch,
+        _answers({identity.TOKEN_ELEVATION_TYPE: _dword(1), identity.TOKEN_ELEVATION: _dword(0)}),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.elevation_type == "default"
+    assert observed.elevated is False
+    assert not any("contradicts" in line for line in observed.evidence)
+
+
+def test_an_elevation_type_with_no_word_is_unknown_rather_than_rounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A type outside the three `winnt.h` names is not rounded to its nearest neighbour.
+
+    The tempting answer (`default` is 1, and 9 is "near" nothing in particular) would be a word this
+    module has no basis for: the token answered a question whose vocabulary does not contain the
+    answer. The read that *did* answer — `TokenElevation` — must not be discarded with it.
+    """
+
+    _inject_target(
+        monkeypatch,
+        _answers({identity.TOKEN_ELEVATION_TYPE: _dword(9), identity.TOKEN_ELEVATION: _dword(1)}),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.elevation_type is None
+    assert any("TokenElevationType returned 9" in line for line in observed.evidence), (
+        f"the unrecognised value itself has to survive into the evidence: {observed.evidence}"
+    )
+    assert observed.elevated is True
+
+
+@pytest.mark.parametrize("type_value,word,elevated", [(2, "full", 0), (3, "limited", 1)])
+def test_a_split_type_that_contradicts_the_flag_is_withdrawn(
+    monkeypatch: pytest.MonkeyPatch, type_value: int, word: str, elevated: int
+) -> None:
+    """The two real contradictions: `full` is elevated, `limited` is filtered, and nothing else is.
+
+    A `full` token reading ``elevated=False``, or a `limited` one reading ``True``, means the *word* is
+    unusable, so it is withdrawn (`None`) while the flag the token actually answered is kept — and the
+    evidence names both readings so a reader can see which two facts collided. Only these two shapes:
+    see `_ELEVATION_REQUIRES` for why `default` must not be added to them.
+    """
+
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_ELEVATION_TYPE: _dword(type_value),
+                identity.TOKEN_ELEVATION: _dword(elevated),
+            }
+        ),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.elevation_type is None
+    assert observed.elevated is bool(elevated), "the flag is kept exactly as the token answered"
+    line = next((line for line in observed.evidence if "contradicts TokenElevation" in line), None)
+    assert line is not None, f"the disagreement has to be reported: {observed.evidence}"
+    assert word in line
+    assert f"TokenElevation -> {bool(elevated)}" in line
+
+
+def test_a_session_the_two_reads_agree_on_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inject_target(monkeypatch, _answers({identity.TOKEN_SESSION_ID: _dword(4)}), api_session=(4, 0))
+
+    observed = identity.probe_process(4242)
+
+    assert observed.session_id == 4
+    assert any("the two independent reads agree" in line for line in observed.evidence)
+    assert not any("disagree" in line for line in observed.evidence)
+
+
+def test_a_session_disagreement_is_unknown_and_names_both_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two independent reads answering differently means *nobody* knows the session.
+
+    Either number alone would be a coin flip presented as a fact, so both are named and the fact is
+    withdrawn. The rest of the observation is untouched, which is asserted too: one disagreement is
+    one unknown, not a failed probe.
+    """
+
+    _inject_target(
+        monkeypatch, _answers({identity.TOKEN_SESSION_ID: _dword(3)}), api_session=(9, 0)
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.session_id is None
+    line = next((line for line in observed.evidence if "disagree" in line), None)
+    assert line is not None, f"the disagreement has to be reported: {observed.evidence}"
+    assert "3" in line and "9" in line, "both numbers have to be in the line, or nobody can check it"
+    assert observed.is_complete() is True
+
+
+def test_a_missing_process_id_to_session_id_keeps_the_tokens_answer_and_names_the_missing_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inject_target(
+        monkeypatch,
+        _answers({identity.TOKEN_SESSION_ID: _dword(5)}),
+        api_session=(None, identity.ERROR_ACCESS_DENIED),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.session_id == 5
+    assert any(
+        line.startswith("ProcessIdToSessionId(pid=4242) failed: err=5")
+        for line in observed.evidence
+    ), f"the call and its status have to be named: {observed.evidence}"
+    assert any("ProcessIdToSessionId was unavailable" in line for line in observed.evidence)
+
+
+def test_a_missing_token_session_keeps_the_kernels_answer_and_names_the_missing_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other direction: the same rule, so neither source is privileged over the other."""
+
+    _inject_target(monkeypatch, _answers({identity.TOKEN_SESSION_ID: None}), api_session=(6, 0))
+
+    observed = identity.probe_process(4242)
+
+    assert observed.session_id == 6
+    assert any(
+        line.startswith("GetTokenInformation(TokenSessionId) failed: err=5")
+        for line in observed.evidence
+    )
+    assert any("TokenSessionId was unavailable" in line for line in observed.evidence)
+
+
+def test_a_session_no_source_can_answer_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inject_target(
+        monkeypatch,
+        _answers({identity.TOKEN_SESSION_ID: None}),
+        api_session=(None, identity.ERROR_ACCESS_DENIED),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.session_id is None
+    assert any("could not be read from either source" in line for line in observed.evidence)
+
+
+def test_the_non_app_container_answer_is_recorded_and_the_sid_class_is_never_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A boolean `False` is an answer, and the evidence has to say so in words.
+
+    It must also not turn into a failed read: an ordinary token has no application identity, so
+    asking for `TokenAppContainerSid` would report a refusal for a fact that was never there. The
+    reader records every class it was asked for, which is what makes that an assertion.
+    """
+
+    asked = _inject_target(monkeypatch, _answers())
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is False
+    assert observed.app_container_sid is None
+    assert NOT_AN_APP_CONTAINER in observed.evidence, (
+        "`None` here is an answer, not a failure to look, and the reader has to be able to tell: "
+        f"{observed.evidence}"
+    )
+    assert identity.TOKEN_APP_CONTAINER_SID not in asked, (
+        "an ordinary token has no application identity to read"
+    )
+
+
+def test_an_ordinary_process_reports_no_application_identity_as_an_answer() -> None:
+    """The same claim against a real token, since the injected one is the module's own story."""
+
+    observed = identity.probe_process(os.getpid())
+    if observed.is_app_container is None:
+        pytest.skip(f"the AppContainer flag was not readable: {observed.evidence}")
+    if observed.is_app_container:
+        assert observed.app_container_sid is not None, (
+            "a token that says it is an AppContainer carries an application identity, so a missing "
+            "SID would be a failed read of a token that has one"
+        )
+        return
+
+    assert observed.app_container_sid is None
+    assert NOT_AN_APP_CONTAINER in observed.evidence
+
+
+def test_an_app_container_token_yields_its_application_sid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other side of the `False`: `True` means the identity is there and must be produced."""
+
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_IS_APP_CONTAINER: _dword(1),
+                identity.TOKEN_APP_CONTAINER_SID: _record(CONTAINER_SID_BYTES),
+            }
+        ),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is True
+    assert observed.app_container_sid == CONTAINER_SID
+    assert (
+        f"TokenIsAppContainer -> True; TokenAppContainerSid -> {CONTAINER_SID}"
+        in observed.evidence
+    )
+
+
+def test_an_app_container_whose_sid_will_not_convert_is_unknown_not_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`True` with no SID is a *failed* read, and must not read as "no application identity"."""
+
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_IS_APP_CONTAINER: _dword(1),
+                identity.TOKEN_APP_CONTAINER_SID: _record(CONTAINER_SID_BYTES),
+            }
+        ),
+    )
+    monkeypatch.setattr(identity, "_sid_to_string", lambda *_args: None)
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is True
+    assert observed.app_container_sid is None
+    assert any(
+        "AppContainer SID could not be converted to S-1-... form" in line
+        for line in observed.evidence
+    )
+    assert NOT_AN_APP_CONTAINER not in observed.evidence
+
+
+def test_an_app_container_whose_sid_class_refuses_names_that_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_IS_APP_CONTAINER: _dword(1),
+                identity.TOKEN_APP_CONTAINER_SID: None,
+            }
+        ),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is True
+    assert observed.app_container_sid is None
+    assert any(
+        line.startswith("GetTokenInformation(TokenAppContainerSid) failed: err=5")
+        for line in observed.evidence
+    )
+
+
+def test_an_app_container_sid_the_buffer_cannot_place_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record whose pointer cannot be placed inside the buffer is not read out of bounds."""
+
+    _inject_target(
+        monkeypatch,
+        _answers(
+            {
+                identity.TOKEN_IS_APP_CONTAINER: _dword(1),
+                identity.TOKEN_APP_CONTAINER_SID: (bytes(44), 0, 44),
+            }
+        ),
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is True
+    assert observed.app_container_sid is None
+    assert any(
+        "AppContainer SID could not be extracted from the buffer" in line
+        for line in observed.evidence
+    )
+
+
+def test_an_app_container_flag_that_is_neither_zero_nor_one_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A BOOL is 1 or 0; anything else leaves the question unanswerable rather than `False`."""
+
+    _inject_target(monkeypatch, _answers({identity.TOKEN_IS_APP_CONTAINER: _dword(2)}))
+
+    observed = identity.probe_process(4242)
+
+    assert observed.is_app_container is None
+    assert observed.is_app_container is not False
+    assert observed.app_container_sid is None
+    assert any(
+        "TokenIsAppContainer returned 2" in line and "neither" in line
+        for line in observed.evidence
+    ), f"the value has to be named, with both legal ones: {observed.evidence}"
+
+
+def test_a_creation_time_that_cannot_be_read_is_unknown_with_the_call_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inject_target(monkeypatch, _answers(), creation=(None, identity.ERROR_ACCESS_DENIED))
+
+    observed = identity.probe_process(4242)
+
+    assert observed.creation_time is None
+    assert any(
+        line.startswith("GetProcessTimes(pid=4242) failed: err=5") for line in observed.evidence
+    ), f"the call and its status have to be named: {observed.evidence}"
+    assert observed.is_complete() is True, (
+        "the process-times read is independent of the token reads: one failure must not erase the "
+        "other observation"
+    )
+
+
+def test_the_creation_time_is_the_raw_64_bit_filetime_with_the_high_half_kept() -> None:
+    """It is compared, never printed, so it stays the integer the API produced.
+
+    The high half is asserted explicitly: a conversion to a datetime — or a 32-bit truncation — would
+    pass a `> 0` check on the injected value above while losing the very bits that make two FILETIMEs
+    distinguishable.
+    """
+
+    from types import SimpleNamespace
+
+    creation = 0x01D0000000000001
+
+    def fills(
+        _handle: object, creation_out: object, _exit: object, _kernel: object, _user: object
+    ) -> int:
+        # The FILETIME out-parameter is two adjacent DWORDs, low half first.
+        first = ctypes.cast(creation_out, ctypes.POINTER(ctypes.c_uint32))
+        first[0] = creation & 0xFFFFFFFF
+        first[1] = creation >> 32
+        return 1
+
+    value, status = identity._process_creation_time(SimpleNamespace(GetProcessTimes=fills), 0x4A4A)
+    assert (value, status) == (creation, 0)
+    assert value is not None and value > 0xFFFFFFFF, "the high half cannot be dropped"
+
+    def refuses(*_args: object) -> int:
+        return 0
+
+    missing, _status = identity._process_creation_time(SimpleNamespace(GetProcessTimes=refuses), 1)
+    assert missing is None
+
+
+def test_a_target_whose_token_refuses_still_yields_a_creation_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The creation-time read comes off the *process* handle, so a token refusal cannot erase it.
+
+    That matters most in exactly the case where it is needed: a protected target whose token will not
+    open still has a creation time, and that is what keeps a reused pid from being mistaken for the
+    process that was observed.
+    """
+
+    monkeypatch.setattr(identity, "_open_process", lambda _kernel32, _pid: (0x4A4A, 0))
+    monkeypatch.setattr(
+        identity, "_open_token", lambda _advapi32, _handle: (None, identity.ERROR_ACCESS_DENIED)
+    )
+    monkeypatch.setattr(
+        identity, "_process_creation_time", lambda *_args: (0x01D0000000000001, 0)
+    )
+
+    observed = identity.probe_process(4242)
+
+    assert observed.creation_time == 0x01D0000000000001
+    assert observed.elevated is None
+    assert any(
+        line.startswith("OpenProcessToken(pid=4242, TOKEN_QUERY) failed: err=5")
+        for line in observed.evidence
+    )
+
+
+def test_a_peer_read_that_raises_becomes_evidence_rather_than_an_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The widened probe keeps the module's oldest promise: it never raises.
+
+    The new reads are more code on the same promise, so one of them is made to explode and the probe
+    still has to come back with an object and a line saying so.
+    """
+
+    def explodes(*_args: object) -> list[str]:
+        raise RuntimeError("injected peer-read failure")
+
+    monkeypatch.setattr(identity, "_open_process", lambda _kernel32, _pid: (0x4A4A, 0))
+    monkeypatch.setattr(identity, "_open_token", lambda _advapi32, _handle: (0x5B5B, 0))
+    monkeypatch.setattr(identity, "_process_creation_time", lambda *_args: (1, 0))
+    monkeypatch.setattr(identity, "_read_peer_facts", explodes)
+
+    observed = identity.probe_process(4242)
+
+    assert isinstance(observed, identity.ProcessIdentity)
+    assert observed.elevation_type is None
+    assert observed.session_id is None
+    assert observed.is_app_container is None
+    assert observed.app_container_sid is None
+    assert any(
+        "process identity probe failed: RuntimeError" in line for line in observed.evidence
+    ), f"an exception has to become data: {observed.evidence}"
+
+
+def test_a_client_block_that_would_carry_a_null_is_one_the_published_schema_rejects() -> None:
+    """Why `to_document` refuses, measured rather than recalled.
+
+    `broker-request` requires and types all four `client` fields, so `{"sid": None, ...}` fails it —
+    and it fails it from behind `broker/protocol.py`'s caller-facing validation, which reports
+    *caller* input as `INVALID_INPUT`. The caller supplied nothing wrong: the probe could not read
+    the fact.
+    """
+
+    broken = {"sid": None, "pid": 4242, "integrity": "medium", "application_id": APPLICATION_ID}
+    request = {
+        "protocol_version": 1,
+        "request_id": "req-identity-probe",
+        "operation": "probe_root",
+        "client": broken,
+    }
+    assert schema_io.errors_for("broker-request", request) != []
+
+
+@pytest.mark.parametrize(
+    "field,observed,application_id",
+    [
+        (
+            "sid",
+            identity.ClientIdentity(
+                sid=None,
+                integrity="medium",
+                elevated=False,
+                pid=1,
+                evidence=("GetTokenInformation(TokenUser) failed: err=5",),
+            ),
+            APPLICATION_ID,
+        ),
+        (
+            "integrity",
+            identity.ClientIdentity(
+                sid=SYNTHETIC_SID,
+                integrity=None,
+                elevated=False,
+                pid=1,
+                evidence=("GetTokenInformation(TokenIntegrityLevel) failed: err=5",),
+            ),
+            APPLICATION_ID,
+        ),
+        (
+            "application_id",
+            identity.ClientIdentity(sid=SYNTHETIC_SID, integrity="medium", elevated=False, pid=1),
+            None,
+        ),
+    ],
+)
+def test_to_document_refuses_a_null_instead_of_returning_a_document_the_schema_rejects(
+    field: str, observed: identity.ClientIdentity, application_id: str | None
+) -> None:
+    """Each required fact, unreadable: the refusal names the schema field and does not return.
+
+    `pytest.raises` is the "and NOT returning a document" half: a function that raised *and* returned
+    is not a thing, while a function that returned the broken document is exactly the defect.
+    """
+
+    with pytest.raises(AirootError) as raised:
+        observed.to_document(application_id)  # type: ignore[arg-type]
+
+    error = raised.value
+    assert error.reason_code == "SELF_VALIDATION_FAILED"
+    assert error.exit_code == 8, "this is the implementation's own defect, not the caller's input"
+    assert f"client.{field}" in error.message, "the refusal has to name the exact schema field"
+    assert any(f"client.{field} would be null" in line for line in error.evidence)
+    if observed.evidence:
+        assert observed.evidence[0] in error.evidence, (
+            "the probe's own reason for not knowing has to travel with the refusal"
+        )
+
+
+def test_a_complete_identity_still_builds_its_client_block() -> None:
+    """The refusal must not swallow the case it exists for."""
+
+    document = complete().to_document(APPLICATION_ID)
+
+    assert document == {
+        "sid": SYNTHETIC_SID,
+        "pid": 4242,
+        "integrity": "medium",
+        "application_id": APPLICATION_ID,
+    }
+    assert schema_io.errors_for(
+        "broker-request",
+        {
+            "protocol_version": 1,
+            "request_id": "req-identity-probe",
+            "operation": "probe_root",
+            "client": document,
+        },
+    ) == []

@@ -83,8 +83,12 @@
 
 ## 5 — 需要权限
 
-`PRIVILEGE_REQUIRED`（如 `env persist --scope machine`）、`ACL_MISMATCH`。
-P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用户手工改 HKLM 绕过。
+`PRIVILEGE_REQUIRED`（如 `env persist --scope machine`）、`ACL_MISMATCH`、
+`CALLER_NOT_AUTHORIZED`（受保护 broker 拒绝一个它不肯服务的调用方：SID 不在允许集合里、调用方是
+AppContainer 之类的受限进程、完整性级别低于要求、或者调用方自己报的身份与 broker 观测到的 token 对不上）。
+**这一条与 `PRIVILEGE_REQUIRED` 只是同一层，不是同一件事**：提权**不会**把 `S-1-5-21-…` 换成另一个 SID，
+所以"提权再试"不是这个码的下一步——照实说"这个调用方没被授权"，不要建议用户去提权。
+P1 没有 broker，所以 machine 级写入一定报 `PRIVILEGE_REQUIRED`；**不要**建议用户手工改 HKLM 绕过。
 
 ## 6 — 需要恢复
 
@@ -152,7 +156,7 @@ P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用
 
 | code | 退出码 | 为什么这一版没有写者 |
 |---|---|---|
-| `ACL_MISMATCH` | 5 | ACL 的**写**一侧是 P2（现在只有只读观测 `DATA_ROOT_ACL_DRIFT` 诊断） |
+| `ACL_MISMATCH` | 5 | ACL 的**写**一侧已经作为**库**落地（§113 / ADR-0040：baseline/apply/verify/restore），但它**不接任何动词、不接任何 schema**——没有 broker 就接上去等于给同用户进程一条改 DACL 的路，所以这个码仍然没有写者 |
 | `DRIFT_DETECTED` | 2 | 泛化的漂移码；这一版用的是更具体的 `REFERENCE_DRIFTED` / `DATA_ROOT_ACL_DRIFT` 等 |
 | `EXTENSION_TIMEOUT` | 2 | 扩展的**进程**运行时还没落地：这一版 `ext/` 只有 manifest、envelope 与假扩展；超时的是搜索自己（`SEARCH_TIMEOUT`），不是扩展 |
 | `EXTENSION_CANCELLED` | 2 | 同上：没有可取消的扩展进程 |
@@ -164,4 +168,11 @@ P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用
 | `EXTERNAL_REFERENCE_DRIFTED` | 3 | 更具体的 `REFERENCE_DRIFTED`（退出码 2）取代了它：观测漂移不是"损坏" |
 | `SEARCH_JOURNAL_GAP` | 2 | USN journal 断档是 **P2 的 native 索引**才会有的状态（现在没有 journal 消费者） |
 | `SEARCH_PERMISSION_FILTERED` | 2 | 这一版的 crawl 读不动的目录报在 `warnings` 与人可读的证据里，不减少结果集 |
+
+**还有一类，不在这张表里，但你在真机上也遇不到**：**有写者、没有任何动词能走到**。判据是"这个字符串在
+`cli/app/airoot` 里有没有写者"，而"有没有路"是另一个问题。目前唯一的成员是
+`CALLER_NOT_AUTHORIZED`（5）：`broker/policy.py` 的 `admit_caller` 是这个 build 里唯一写出它的地方，而它
+**只被测试调用**——没有 broker、没有 named pipe、没有任何动词问它（§114）。所以它既不该进上表（它有写者），
+也不该被写进你的分支逻辑（你收不到它）。**两张表加起来才是"这一版能看到的码"**；`ACL_MISMATCH` 的处置
+（写一侧已落地但不接动词）是同一种情况的另一半。
 

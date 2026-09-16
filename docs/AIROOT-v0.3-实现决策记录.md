@@ -2034,3 +2034,81 @@ Authenticated Users 的 allow 足够；只给 SYSTEM 的 allow、或一条 deny 
 写后可以读回、`restore_acl` 尽力还原并要求调用者自己核对；**一个本模块无法写的 ACE 类型（对象/回调 ACE，
 真实数据根里会有）会让 apply 与 restore 都抛 `ValueError`**，也就是说这类目录的 ACL 本模块还原不了——已写在
 docstring 里，没有在真机上测过。
+
+## ADR-0041：边界要问的第一个问题是「谁在问」，而请求里的 `client` 块答不了它
+
+**背景**：§113 打好了三块地基（Ed25519 校验、读**别人**的 token、ACL 写一侧），接着要建的是
+`docs/broker` §3 要求的那件事：broker 校验客户端进程的 token、用户 SID、完整性级别与 application identity。
+named pipe 与提权服务本身没法在它自己不存在时验证，但**那条校验的判定**可以——于是 §114 先把它写成库，顺手
+量了一件必须记下来的事，并据此作了五条决策。
+
+**量到的不对称（这条 ADR 的由来）**：`broker-request` 的 `client` 块有**四个**字段（`sid`、`pid`、
+`integrity`、`application_id`）且 `additionalProperties: false`；而服务端对同一个调用方能读到的**事实**有
+**九个**（`pid`、`sid`、`integrity`、`elevated`、`elevation_type`、`session_id`、`is_app_container`、
+`app_container_sid`、`creation_time`）。两个结论：(1) 前三个字段是**冗余**的——服务端自己就能读，而且只能
+信自己读的那一份；(2) `application_id` 在普通 Win32 进程的 token 里**没有对应物**——没有任何一个
+`TOKEN_INFORMATION_CLASS` 回答"这是哪个程序"，只有 AppContainer 进程带得动一个 application identity
+（`TokenAppContainerSid`）。所以 `docs/broker` §3 写的"校验 application identity"，对普通调用方**无从校验**：
+真话是"这个事实在 token 里不存在"，不是"它和声明一致"。**一个必填字段，要么冗余、要么是自述，而文档没有
+说它是哪一种**——这就是本条要裁决的事。
+
+**决策一：判定只吃观测，`client` 块结构上进不来。** `broker/policy.py` 的 `admit_caller(identity,
+expectation)` 的第一个参数是 `caps/identity.py` 的 `ProcessIdentity`——那个类型**没有** `application_id`
+字段，函数签名里也没有任何"声明 / claim / request"参数。于是"读请求里的自述来决定"不是一条被禁止的写法，
+而是一件**写不出来**的事（与 ADR-0030 / §104 同一个做法：完整性用形状证明，不靠散文禁令）。`client` 块因此
+降级为**诊断信息**：它解释调用方以为自己是谁，不参与任何判定。测试钉住三件事：`ProcessIdentity` 的字段名里
+没有 `application`；`admit_caller` 恰好两个参数且都不是 `client`/`claim`/`request`；一个**谎报**
+`application_id`、并把 SID 说成允许集合里那一个的请求，在观测到的是别人时**照样被拒**。
+
+**决策二：不知道就是不允许。** 判定要读的每个事实（`sid`、`integrity`、`elevated`、`elevation_type`、
+`is_app_container`、`session_id`，以及给了预期创建时间时的 `creation_time`）只要有一个是 `None` 就拒绝，
+并在证据里逐条点名缺了哪个。这不是新规则——"不编造确定性"与"失败即数据"在本仓库是既有的（`probe_process`
+里 `elevated=False` 与 `elevated=None` 是两件事，正是为了这里）。它的直接后果：**这个 build 里一个事实也读
+不到的调用方会被拒**，而这是对的——读不到 token 的进程可能是受保护的、可能已经退出、可能根本不存在，三种
+情况都不该被读成"它没问题"。
+
+**决策三：观测到是 AppContainer 的调用方一律拒绝。** 依据是 `docs/broker` §2 的表：能力扩展与 Install
+Backend 是"用户或**受限**进程"，明确不能写 R、不能写 `store/tools/env/exposure/state`；而 AppContainer 正是
+Windows 自己给"受限调用方"的名字。这是一条**不随参数变化的固定规则**，它的理由与被拒时的证据都写在模块的
+`REFUSAL_REASONS` 表里，规则 id 与理由一一对应，由测试双向钉死（与 `protocol.py` 的
+`ADDITIONAL_REQUIREMENT_REASONS` 同一个做法：**理由是可复核的数据，不是只靠"删掉它会红"来自卫的规则**）。
+
+**决策四：新增 reason code `CALLER_NOT_AUTHORIZED`（退出码 5）。** 量过：冻结的码表里**没有一条**说的是
+"谁在问"——`ACL_MISMATCH` 讲目录的描述符，`OWNERSHIP_REQUIRED` 讲 AIROOT 不拥有的 payload，
+`PRIVILEGE_REQUIRED` 讲"这个操作要一个你没有的权限"，三条都不是对**调用方**的判断。落 **5** 是因为 0–9 里
+"操作需要调用方不具备的权限/授权"就是这一层，**而不是**因为它与 `PRIVILEGE_REQUIRED` 同义：提权不会把
+`S-1-5-21-…` 换成另一个 SID，所以"提权再试"**不是**它的下一步——这句话必须出现在证据里，也必须出现在
+`references/reason-codes.md` 的退出码 5 一节里（ADR-0027 的同一条教训：一个码不得承诺提权能办到它办不到的
+事）。五条规则共用一个码，用 `details.rule` 区分是哪一条，理由同 §101 的 `deferred_category`：调用方的下一步
+对五条是同一个（"这个调用方没被授权"），而**是哪一条**是给复核的人看的。
+
+**决策五（没有变，所以更要说）：这仍然不是那条边界。** 没有 named pipe、没有提权进程、**没有任何动词走到
+`admit_caller`**；它今天只被测试调用。它在 `references/reason-codes.md` 里因此属于**《有写者，但没有任何
+动词能走到》**那一类，**不**进《这一版发不出来的码》——判据是"有没有写者"，不是"有没有路"，而这是第一次
+这两件事分了家（§114.4 量到并写清了）。
+
+**本条 ADR 没有决定的事**（留给下一阶段，但形状已被这里定死）：`allowed_sids` 与 `minimum_integrity`
+**从哪里来**——本模块只接受它们作为**显式入参**，不读任何策略文件、不带默认阈值、更不从根目录的 owner 推
+（Protected machine mode 下 root 目录的 owner 很可能是 Administrators，拿它当"谁可以问"会把合法用户拒掉，
+§114 量过）；named pipe 的 DACL；"调用者写完还活着"的判据（§113.6-4 留给 broker 的那条）；私钥的受保护存放。
+
+## ADR-0042：自指的守卫在照镜子——按被守卫的那个集合取用例的性质测试，删掉一个成员也删掉它自己的用例
+
+**背景**：§114 的判定模块有一条"必读事实"集合（`REQUIRED_FACTS`），以及一条按字段参数化的性质测试：
+"把这个字段置 `None`，调用必须被拒"。红验证里有一格是**从集合里去掉一个事实**，预期它红——它跑出
+**0 红**（54 绿）。原因不是那条规则没被检查，而是**检查在照镜子**：参数化的用例**来自那个集合本身**，
+于是删掉成员与删掉用例同时发生，测试文件仍然是全绿。`elevated` 与 `session_id` 有同一个洞。
+
+**决策：被守卫的集合必须由字面量钉住，性质测试的用例取字面量，不取被测对象。**
+具体做法：`REQUIRED_FACTS_EXPECTED` 写成字面量（六项），一条测试**双向**比较它与 `REQUIRED_FACTS`；那条性质
+测试与"这些字段真的是 `ProcessIdentity` 的字段"那条都指向字面量。修完，那个变异红 **3** 条。
+
+**为什么这条值得单独立一条 ADR**：一个从被测对象取用例的守卫，检查的是"被测对象与它自己一致"——它**永远
+为真**，而且它比"没有守卫"更危险，因为它会让读者以为那里有守卫。这与 ADR-0033 是同一族（豁免的理由要由
+**构建**度量，不能由被豁免者自己声明），但方向相反：那一条防的是"谁说了算"，这一条防的是"用例从哪来"。
+
+**适用范围与不适用**：适用于任何"遍历 X 的成员生成用例"的测试，以及任何"从被测数据里读出预期值"的断言
+（§75 的"哪些码发不出来"就是**故意**用构建度量而不是字面量的那一半，它的权威是一次对全树的扫描）。
+**不**适用于"被测对象就是权威、测试要证明它没变"的场合——但那种时候**必须有一处是字面量**，否则没有任何
+东西可以红。判据是一句话：**把被测对象改坏，测试必须红；如果改坏它的方式同时改坏了用例，那这个测试守不住
+任何东西。**

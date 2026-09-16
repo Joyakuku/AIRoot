@@ -128,6 +128,14 @@ REASON_EXIT: dict[str, int] = {
     # 5 - privilege
     "PRIVILEGE_REQUIRED": EXIT_PRIVILEGE,
     "ACL_MISMATCH": EXIT_PRIVILEGE,
+    # The protected broker's first decision, refusing a caller it will not serve (draft §114). Exit 5
+    # is the *tier* — the caller lacks an authority the operation needs — but the resemblance to
+    # `PRIVILEGE_REQUIRED` stops there, and the evidence has to say so: `S-1-5-21-...` is not changed
+    # by running elevated, so "elevate and retry" is not the caller's next move. The code exists
+    # because the frozen table had no word for it at all (`ACL_MISMATCH` is about a directory's
+    # descriptor, `OWNERSHIP_REQUIRED` about a payload AIROOT does not own, and neither is a
+    # statement about *who is asking*) — measured in draft §114, decided in ADR-0041.
+    "CALLER_NOT_AUTHORIZED": EXIT_PRIVILEGE,
     # 6 - recovery
     "RECOVERY_REQUIRED": EXIT_RECOVERY,
     "PENDING_TRANSACTION": EXIT_RECOVERY,

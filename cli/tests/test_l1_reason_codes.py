@@ -1,10 +1,11 @@
 """L1 guard: registered reason codes vs the codes this build can actually produce (draft §75).
 
-`exits.py` maps 95 codes to exit codes. A registered code is a *promise about meaning*, not a
-promise that the code happens. Forty of them are produced through variables and constants, so the
-distinction cannot be read off a call site; what can be read off the tree is this: does the string
-appear anywhere **other than the mapping table**? A code that does not is one an agent should not
-write a branch for, and `references/reason-codes.md` has to say so.
+`exits.py` maps every code it registers to an exit code, and a registered code is a *promise about
+meaning*, not a promise that the code happens. Which codes this build can actually produce cannot be
+read off a call site — many arrive through variables and constants, and one arrives from a library no
+verb reaches (§114's `CALLER_NOT_AUTHORIZED`) — so the tree is asked a narrower question: does the
+literal string appear anywhere **other than the mapping table**? A code that does not is one an agent
+should not write a branch for, and `references/reason-codes.md` has to say so.
 """
 
 from __future__ import annotations

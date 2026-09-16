@@ -47,6 +47,16 @@ higher integrity level. Each of those becomes ``None`` plus an evidence line, ne
 managed to ask. A broker that blurred those two would refuse a legitimate client — or, worse, read
 "could not look" as "looked, and it was fine".
 
+**What the server needs that the caller must not self-report (draft §114).** docs/broker §3:52 requires
+the broker to check a client's token, user SID, integrity level *and* application identity, and the
+`client` block cannot grow to carry the last of those (its four fields are frozen). So the peer
+observation reads four more facts off the *target's* token and record: the elevation **type** (which
+says what `elevated` alone cannot — a filtered administrator and a standard user both read
+``False``), the session id, whether the token is an AppContainer and, only if it is, that container's
+application SID. Each is cross-checked or qualified rather than passed through, and each still fails as
+data: :func:`_read_peer_facts` is where those rules live, in one place, so the broker's eventual policy
+layer reads one implementation of "what is this caller" rather than several.
+
 **Observation is not authorisation.** For either function: the fact that a caller is elevated, or
 shares the user, or carries any particular SID says nothing about whether it is *entitled* to the
 operation it asks for. Entitlement is policy — which caller may ask for which operation, under which
@@ -62,6 +72,8 @@ import os
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..exits import AirootError
 
 __all__ = ["ClientIdentity", "ProcessIdentity", "probe_identity", "probe_process"]
 
@@ -79,6 +91,34 @@ PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 TOKEN_USER = 1
 TOKEN_ELEVATION = 20
 TOKEN_INTEGRITY_LEVEL = 25
+#: Added with the *peer* observation (draft §114). Each is a fact the server can read about a caller
+#: and the caller cannot put into its own request: `broker-request`'s `client` block has four fields
+#: and `additionalProperties: false`, so widening the observation is the only side of this pair that
+#: can grow. `TokenElevationType` exists because `TokenElevation` alone cannot tell an administrator
+#: with UAC off (`default`) from a filtered administrator (`limited`) — both read `elevated=False`,
+#: which is the truth about the *token* and an incomplete truth about the caller.
+TOKEN_SESSION_ID = 12
+TOKEN_ELEVATION_TYPE = 18
+TOKEN_IS_APP_CONTAINER = 29
+TOKEN_APP_CONTAINER_SID = 31
+
+#: `TOKEN_ELEVATION_TYPE` values, as `winnt.h` names them.
+_ELEVATION_TYPES: dict[int, str] = {1: "default", 2: "full", 3: "limited"}
+
+#: What each elevation type says about `TokenElevation`. **The weaker, true implication**, and the one
+#: the cross-check in :func:`_read_peer_facts` is held to.
+#:
+#: The tempting one-liner — "`elevated` is true exactly when the type is `full`" — is **false**, and
+#: this machine falsifies it: `TokenElevationTypeDefault` means "not an elevated-or-limited (split)
+#: token", which covers a standard user (``TokenElevation`` FALSE) *and* an administrator with UAC
+#: disabled (``TokenElevation`` TRUE, `high` integrity). So `default` constrains nothing; only the two
+#: split types do — `full` is an elevated token, `limited` is a filtered one — and a reading that
+#: contradicts either is unusable.
+_ELEVATION_REQUIRES: dict[str, bool] = {"full": True, "limited": False}
+
+#: `TokenIsAppContainer` is a BOOL; these are the two values it is allowed to take.
+_APP_CONTAINER_TRUE = 1
+_APP_CONTAINER_FALSE = 0
 
 #: `ERROR_INSUFFICIENT_BUFFER` — the documented "ask again with more room" answer.
 ERROR_INSUFFICIENT_BUFFER = 122
@@ -217,6 +257,16 @@ def _declare_signatures(advapi32: Any, kernel32: Any) -> None:
     kernel32.GetCurrentProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.ProcessIdToSessionId.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.ProcessIdToSessionId.restype = wintypes.BOOL
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
     kernel32.LocalFree.argtypes = [wintypes.HANDLE]
     kernel32.LocalFree.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
@@ -402,6 +452,233 @@ def _read_token_facts(
     return sid, integrity, elevated, evidence
 
 
+def _process_session_id(kernel32: Any, pid: int) -> tuple[int | None, int]:
+    """`ProcessIdToSessionId` — the kernel's own answer to "which session does this pid run in".
+
+    A seam in the same sense :func:`_open_process` is one: on a healthy machine the call succeeds, so
+    the branch that reports "this source did not answer" could not be reached in a test otherwise. It
+    is deliberately *independent* of the token: this is the second opinion `TokenSessionId` is
+    cross-checked against, and an opinion derived from the first one would prove nothing.
+    """
+
+    session = wintypes.DWORD()
+    if not kernel32.ProcessIdToSessionId(pid, ctypes.byref(session)):
+        return None, ctypes.get_last_error() or 0
+    return int(session.value), 0
+
+
+def _process_creation_time(kernel32: Any, process_handle: Any) -> tuple[int | None, int]:
+    """The target's creation time as the raw 64-bit `FILETIME` integer from `GetProcessTimes`.
+
+    Raw on purpose. The only thing this number is for is comparison — "is this still the process that
+    was observed, or a later one that reused the pid" — and a `FILETIME` compares as an integer
+    without any calendar in between. It is never rendered into a committed document, so turning it
+    into a datetime here would add an epoch-and-timezone decision to a fact that needs none.
+
+    The four out-parameters are all required by the API; only the creation time is kept.
+    """
+
+    creation = wintypes.FILETIME()
+    exit_time = wintypes.FILETIME()
+    kernel_time = wintypes.FILETIME()
+    user_time = wintypes.FILETIME()
+    ok = kernel32.GetProcessTimes(
+        process_handle,
+        ctypes.byref(creation),
+        ctypes.byref(exit_time),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    )
+    if not ok:
+        return None, ctypes.get_last_error() or 0
+    return (creation.dwHighDateTime << 32) | creation.dwLowDateTime, 0
+
+
+def _read_elevation_type(advapi32: Any, handle: Any) -> tuple[str | None, list[str]]:
+    """`TokenElevationType` as one of ``default``/``full``/``limited``, or ``None`` plus why.
+
+    Unrecognised is **not** rounded to the nearest word. `winnt.h` names exactly three values, so a
+    fourth would mean the token answered a question this module does not have the words for —
+    reporting the closest one would invent a fact about a token that declined to give one.
+    """
+
+    evidence: list[str] = []
+    raw, _base, _size, status = _get_token_information(advapi32, handle, TOKEN_ELEVATION_TYPE)
+    if raw is None:
+        evidence.append(f"GetTokenInformation(TokenElevationType) failed: {_status_message(status)}")
+        return None, evidence
+    value = int.from_bytes(raw[:4], "little")
+    word = _ELEVATION_TYPES.get(value)
+    if word is None:
+        known = ", ".join(f"{number} ({name})" for number, name in sorted(_ELEVATION_TYPES.items()))
+        evidence.append(
+            f"TokenElevationType returned {value}, which is none of {known}: an elevation type this "
+            "module has no word for"
+        )
+        return None, evidence
+    evidence.append(f"TokenElevationType -> {word}")
+    return word, evidence
+
+
+def _read_session_id(
+    advapi32: Any, kernel32: Any, handle: Any, pid: int
+) -> tuple[int | None, list[str]]:
+    """The target's session id, read twice and believed only where the two answers agree.
+
+    `TokenSessionId` and `ProcessIdToSessionId` answer the same question from two places that do not
+    derive from each other — the token the process runs under, and the kernel's record for the pid —
+    which is what makes agreement mean something. A stale pid, or a token that outlived the session
+    it was created in, shows up as the two disagreeing; and a disagreement is reported as *unknown*
+    rather than as either number, because this module has no basis to prefer one and would be
+    choosing a fact to print.
+    """
+
+    evidence: list[str] = []
+    token_session: int | None = None
+    raw, _base, _size, status = _get_token_information(advapi32, handle, TOKEN_SESSION_ID)
+    if raw is None:
+        evidence.append(f"GetTokenInformation(TokenSessionId) failed: {_status_message(status)}")
+    else:
+        token_session = int.from_bytes(raw[:4], "little")
+
+    api_session, api_status = _process_session_id(kernel32, pid)
+    if api_session is None:
+        evidence.append(f"ProcessIdToSessionId(pid={pid}) failed: {_status_message(api_status)}")
+
+    if token_session is not None and api_session is not None:
+        if token_session != api_session:
+            evidence.append(
+                f"TokenSessionId -> {token_session} but ProcessIdToSessionId -> {api_session}: the "
+                "two independent reads disagree, so the session is unknown"
+            )
+            return None, evidence
+        evidence.append(
+            f"TokenSessionId -> {token_session} and ProcessIdToSessionId -> {api_session}: the two "
+            "independent reads agree"
+        )
+        return token_session, evidence
+    if token_session is not None:
+        evidence.append(
+            f"TokenSessionId -> {token_session}: used, because ProcessIdToSessionId was unavailable"
+        )
+        return token_session, evidence
+    if api_session is not None:
+        evidence.append(
+            f"ProcessIdToSessionId -> {api_session}: used, because the token's TokenSessionId was "
+            "unavailable"
+        )
+        return api_session, evidence
+    evidence.append("the target's session id could not be read from either source")
+    return None, evidence
+
+
+def _read_app_container(
+    advapi32: Any, kernel32: Any, handle: Any
+) -> tuple[bool | None, str | None, list[str]]:
+    """`TokenIsAppContainer`, and the application identity only an AppContainer token carries.
+
+    The three answers are the point of the function, and the evidence says which one happened in
+    words, so nobody has to infer it from a bare ``None``:
+
+    * ``True`` — the token carries an application identity, so `TokenAppContainerSid` is read and
+      reported;
+    * ``False`` — an ordinary Win32 token with **no** application identity: that is the *answer* to
+      the question, not a failure to look, and the evidence says so explicitly;
+    * ``None`` — the question could not be put to the token, or it answered with a value that is
+      neither 0 nor 1.
+    """
+
+    evidence: list[str] = []
+    raw, _base, _size, status = _get_token_information(advapi32, handle, TOKEN_IS_APP_CONTAINER)
+    if raw is None:
+        evidence.append(
+            f"GetTokenInformation(TokenIsAppContainer) failed: {_status_message(status)}"
+        )
+        return None, None, evidence
+
+    value = int.from_bytes(raw[:4], "little")
+    if value == _APP_CONTAINER_FALSE:
+        evidence.append(
+            "TokenIsAppContainer -> False; not in an AppContainer: there is no application "
+            "identity in the token to read"
+        )
+        return False, None, evidence
+    if value != _APP_CONTAINER_TRUE:
+        evidence.append(
+            f"TokenIsAppContainer returned {value}, which is neither {_APP_CONTAINER_TRUE} (true) "
+            f"nor {_APP_CONTAINER_FALSE} (false)"
+        )
+        return None, None, evidence
+
+    raw, base, size, status = _get_token_information(advapi32, handle, TOKEN_APP_CONTAINER_SID)
+    if raw is None:
+        evidence.append(
+            f"GetTokenInformation(TokenAppContainerSid) failed: {_status_message(status)}"
+        )
+        return True, None, evidence
+    sid_bytes = _extract_sid(raw, base, size)
+    if sid_bytes is None:
+        evidence.append("the token's AppContainer SID could not be extracted from the buffer")
+        return True, None, evidence
+    container_sid = _sid_to_string(advapi32, kernel32, sid_bytes)
+    if container_sid is None:
+        evidence.append("the token's AppContainer SID could not be converted to S-1-... form")
+        return True, None, evidence
+    evidence.append(f"TokenIsAppContainer -> True; TokenAppContainerSid -> {container_sid}")
+    return True, container_sid, evidence
+
+
+def _read_peer_facts(
+    advapi32: Any, kernel32: Any, handle: Any, pid: int, elevated: bool | None
+) -> tuple[str | None, int | None, bool | None, str | None, list[str]]:
+    """The facts only the *server* can read about a caller (draft §114).
+
+    ``elevated`` is passed in rather than re-read here: the cross-check below is about the two
+    readings, not about which function took them, and :func:`_read_token_facts` already owns
+    `TokenElevation`.
+
+    **The elevation cross-check.** Windows states the implication in one direction only: `full` is an
+    elevated token and `limited` is a filtered one, so a `full` token reading ``elevated=False`` — or a
+    `limited` one reading ``True`` — is a contradiction, and the *word* is unusable: it is withdrawn
+    (``None`` plus evidence naming both readings). `elevated` is kept exactly as read; it is what the
+    token said about itself, and this function has no standing to overrule a value whose twin is the
+    thing that failed to agree with it.
+
+    ``default`` carries **no** constraint, and asserting one is the defect this table exists to
+    prevent: `TokenElevationTypeDefault` means "not a split token" — a standard user (``False``) *or*
+    an administrator with UAC off (``True``, `high` integrity). Requiring ``default`` to pair with
+    ``False`` would declare every UAC-disabled machine's elevation type unreadable, which is a
+    legitimate caller being refused on a fact that was never in doubt.
+
+    Everything else is independent, so one failed read does not remove the others.
+    """
+
+    evidence: list[str] = []
+
+    elevation_type, notes = _read_elevation_type(advapi32, handle)
+    evidence.extend(notes)
+
+    required_elevated = None if elevation_type is None else _ELEVATION_REQUIRES.get(elevation_type)
+    if (
+        required_elevated is not None
+        and elevated is not None
+        and required_elevated != elevated
+    ):
+        evidence.append(
+            f"TokenElevationType -> {elevation_type} contradicts TokenElevation -> {elevated}: a "
+            f"'{elevation_type}' token is one whose TokenElevation is {required_elevated}, so the "
+            "type is unknown (TokenElevation stands)"
+        )
+        elevation_type = None
+
+    session_id, notes = _read_session_id(advapi32, kernel32, handle, pid)
+    evidence.extend(notes)
+    is_app_container, app_container_sid, notes = _read_app_container(advapi32, kernel32, handle)
+    evidence.extend(notes)
+
+    return elevation_type, session_id, is_app_container, app_container_sid, evidence
+
+
 @dataclass(frozen=True)
 class ClientIdentity:
     """What this process can prove about itself. Every field is None when it could not be established."""
@@ -429,10 +706,40 @@ class ClientIdentity:
         """The `client` block of a broker request: exactly {sid, pid, integrity, application_id}.
 
         The shape is the schema's (`additionalProperties: false`), and inventing a placeholder for a
-        field that could not be read is not this function's job: a caller with
-        ``is_complete() == False`` has to decide what to do instead, because a ``None`` passed through
-        here would produce a document the published schema rejects.
+        field that could not be read is not this function's job.
+
+        **It refuses rather than emitting a null.** The schema requires all four fields and types
+        each of them, so a ``None`` passed through here produces a document that fails its own
+        validation — and that failure surfaces from `broker/protocol.py`'s `validate_document`, which
+        reports *caller* input as `INVALID_INPUT`. The caller did nothing wrong: the *probe* could not
+        read the fact. So the refusal happens here, as `SELF_VALIDATION_FAILED` (exit 8 — this build's
+        word for "the core was about to emit an invalid document", AGENTS.md §7), naming the exact
+        schema field that would have been null.
+
+        :meth:`is_complete` is the cheap question to ask first; this is the one that cannot be
+        skipped by forgetting to ask it.
         """
+
+        missing = [
+            field_name
+            for field_name, value in (
+                ("sid", self.sid),
+                ("integrity", self.integrity),
+                ("application_id", application_id),
+            )
+            if value is None
+        ]
+        if missing:
+            names = ", ".join(f"client.{field_name}" for field_name in missing)
+            raise AirootError(
+                "SELF_VALIDATION_FAILED",
+                f"the client block cannot be built: {names} would be null, and broker-request "
+                "requires client.sid, client.pid, client.integrity and client.application_id",
+                evidence=[
+                    f"client.{field_name} would be null" for field_name in missing
+                ]
+                + list(self.evidence),
+            )
 
         return {
             "sid": self.sid,
@@ -461,6 +768,20 @@ class ProcessIdentity:
     integrity: str | None
     elevated: bool | None
     evidence: tuple[str, ...] = field(default_factory=tuple)
+    #: `TokenElevationType` as one of ``default``/``full``/``limited`` (draft §114).
+    elevation_type: str | None = None
+    #: `TokenSessionId`, cross-checked against `ProcessIdToSessionId` before it is believed.
+    session_id: int | None = None
+    #: `TokenIsAppContainer`. The observable stand-in for the claim `client.application_id`: an
+    #: AppContainer process really does carry an application identity, an ordinary Win32 process
+    #: carries none at all (``False``), and "no identity" is not the same fact as "no answer".
+    is_app_container: bool | None = None
+    #: `TokenAppContainerSid` when `is_app_container` is ``True``. ``None`` for an ordinary process,
+    #: which is the *answer* here rather than a failure to look.
+    app_container_sid: str | None = None
+    #: The target's creation time as a raw `FILETIME` integer, so a pid can be shown to still name the
+    #: process that was observed rather than a later process that reused the number.
+    creation_time: int | None = None
 
     def is_complete(self) -> bool:
         """True when the three observable facts are all present.
@@ -523,11 +844,21 @@ def probe_process(pid: int) -> ProcessIdentity:
     of the classes — each becomes ``None`` plus an ``evidence`` line naming the call and the Windows
     status. ``elevated=False`` means the token was read and answered no; ``elevated=None`` means nobody
     managed to ask, and a caller that conflates the two decides wrongly in one direction or the other.
+
+    Beyond the three shared facts it reads the four a broker needs and a caller cannot supply about
+    itself (draft §114 — see :func:`_read_peer_facts` for the elevation cross-check, the session
+    cross-check, the AppContainer distinction and the refusal to round an unknown elevation type).
+    Every one of them is still "failure is data": the widened observation adds fields, not exceptions.
     """
 
     sid: str | None = None
     integrity: str | None = None
     elevated: bool | None = None
+    elevation_type: str | None = None
+    session_id: int | None = None
+    is_app_container: bool | None = None
+    app_container_sid: str | None = None
+    creation_time: int | None = None
     evidence: list[str] = []
     try:
         advapi32, kernel32 = _load_libraries()
@@ -549,16 +880,38 @@ def probe_process(pid: int) -> ProcessIdentity:
                 pid=pid, sid=None, integrity=None, elevated=None, evidence=tuple(evidence)
             )
         try:
+            # Read off the *process* handle and before the token, because it is independent of the
+            # token and answers a question that matters most exactly when the token does not open:
+            # "is this still the process that was observed, or a later one reusing the pid".
+            creation_time, creation_status = _process_creation_time(kernel32, process_handle)
+            if creation_time is None:
+                evidence.append(
+                    f"GetProcessTimes(pid={pid}) failed: {_status_message(creation_status)}"
+                )
+
             token_handle, status = _open_token(advapi32, process_handle)
             if token_handle is None:
                 evidence.append(
                     f"OpenProcessToken(pid={pid}, TOKEN_QUERY) failed: {_status_message(status)}"
                 )
                 return ProcessIdentity(
-                    pid=pid, sid=None, integrity=None, elevated=None, evidence=tuple(evidence)
+                    pid=pid,
+                    sid=None,
+                    integrity=None,
+                    elevated=None,
+                    creation_time=creation_time,
+                    evidence=tuple(evidence),
                 )
             try:
                 sid, integrity, elevated, notes = _read_token_facts(advapi32, kernel32, token_handle)
+                evidence.extend(notes)
+                (
+                    elevation_type,
+                    session_id,
+                    is_app_container,
+                    app_container_sid,
+                    notes,
+                ) = _read_peer_facts(advapi32, kernel32, token_handle, pid, elevated)
                 evidence.extend(notes)
             finally:
                 # Closed as soon as the reads are done, not at the end: the token handle is needed for
@@ -571,5 +924,14 @@ def probe_process(pid: int) -> ProcessIdentity:
     except Exception as error:  # never raise: a probe that dies teaches the caller nothing
         evidence.append(f"process identity probe failed: {error.__class__.__name__}: {error}")
     return ProcessIdentity(
-        pid=pid, sid=sid, integrity=integrity, elevated=elevated, evidence=tuple(evidence)
+        pid=pid,
+        sid=sid,
+        integrity=integrity,
+        elevated=elevated,
+        elevation_type=elevation_type,
+        session_id=session_id,
+        is_app_container=is_app_container,
+        app_container_sid=app_container_sid,
+        creation_time=creation_time,
+        evidence=tuple(evidence),
     )

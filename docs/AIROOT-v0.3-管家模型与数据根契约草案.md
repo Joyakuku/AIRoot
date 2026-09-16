@@ -9670,3 +9670,162 @@ keyring 或公钥挪进 token / 调用方参数的唯一理由。
 6. **Ed25519 不是常数时间的**，`sign` 用私钥时有数据相关的加法链，因此**不得**用它保管长期签发密钥
    （P2/Rust 才拥有那把密钥）；`verify` 只处理公开数据。
 7. **本阶段没有动 schema、退出码与 golden 语料**：改的是 keyring 的**格式**、一处拒绝消息、以及三块新地基。
+
+## 114. 受保护边界要问的第一个问题：谁在问（ADR-0041）
+
+§113 打好了三块地基。§114 接着做 `docs/broker` §3 要求的第一件事——**校验客户端进程的 token**——但**只做
+那条判定**：named pipe 与提权服务没法在它自己不存在的时候被验证，而"谁在问、能不能问"可以。形状沿用 §113：
+**建成库、不接动词、把量到的东西写下来**。
+
+### 114.0 这一阶段交付了什么
+
+| 项 | 内容 |
+|---|---|
+| 观测补齐（`caps/identity.py`） | `probe_process` 从三件事扩到**九件**：`sid`/`integrity`/`elevated` + `elevation_type`/`session_id`/`is_app_container`/`app_container_sid`/`creation_time`（外加 `pid`）。前三件仍走 `_read_token_facts`（与读**本进程**共享同一个实现），新增的五件走新的 `_read_peer_facts`，**只**被 `probe_process` 调用——`client` 块的形状由已发布 schema 钉死，不跟着长 |
+| 两道交叉核对（同上） | `elevated` ⟷ `elevation_type`、`TokenSessionId` ⟷ `ProcessIdToSessionId`：两个**独立读法**不一致时报"**这个事实读不出来**"（该字段置 `None` + 写明两个读数），而不是取其中一边；能读到的那个仍按原样报 |
+| 判定（`broker/policy.py`，新） | `admit_caller(identity, expectation)`：`observation_incomplete` / `app_container_caller` / `sid_not_allowed` / `integrity_below_minimum` / `pid_reused` 五条规则，共用一个新码 `CALLER_NOT_AUTHORIZED`(5)，`details.rule` 指认是哪一条；规则 id 与理由在 `REFUSAL_REASONS` 里一一对应（与 `protocol.py` 的 `ADDITIONAL_REQUIREMENT_REASONS` 同一个做法） |
+| 契约 | 新增 reason code `CALLER_NOT_AUTHORIZED`(5)（ADR-0041）：`exits.py`、权威表、`references/reason-codes.md`、golden 的 `reason_code_table.json`（96 → 97 个码） |
+
+### 114.1 量到的不对称：请求里那个**必填**的 `client` 块，答不了"谁在问"
+
+`broker-request.schema.json` 的 `client` 块有**四个**字段且 `additionalProperties: false`；而服务端对同一个
+调用方能读到的**事实**有**九个**。两个结论：
+
+1. `sid`/`pid`/`integrity` 是**冗余**的——服务端自己就能读，而且**只能信自己读的那一份**；
+2. `application_id` 在普通 Win32 进程的 token 里**没有对应物**：没有任何一个 `TOKEN_INFORMATION_CLASS`
+   回答"这是哪个程序"，只有 AppContainer 进程带得动一个 application identity（`TokenAppContainerSid`；
+   本机实测 `is_app_container=False`，所以对普通调用方这个字段**永远只是自述**）。也就是说
+   `docs/broker` §3 写的"校验 application identity"，对普通调用方**无从校验**——真话是"这个事实在 token
+   里不存在"，不是"它和声明一致"。**一个必填字段，要么冗余、要么是自述，而文档没有说它是哪一种。**
+
+于是本阶段把"自述不参与判定"从散文变成**形状**（ADR-0030 的同一做法）：判定第一个参数是
+`ProcessIdentity`——它**没有** `application_id` 字段；`admit_caller` 恰好两个参数，没有
+`client`/`claim`/`request`。三件事各由一条测试钉住，其中一条是**谎报**：请求把 SID 说成允许集合里那一个、
+并附上一个 `application_id`，而观测到的是别人 ⇒ **照样拒**。
+
+### 114.2 量到一条**写错的不变量**——本阶段最值得记的一条
+
+两道交叉核对里的第一条，原始写法是：**"`TokenElevation` 为真，当且仅当 `TokenElevationType` 是 `full`"**。
+本机当场把它证伪：
+
+```text
+probe_process(os.getpid()) -> elevated=True, elevation_type="default", integrity=high
+```
+
+`TokenElevationTypeDefault` 的**定义**就是"这不是一个 elevated 或 limited 的 token"：它既覆盖标准用户
+（`TokenElevation` 假），也覆盖**关掉 UAC 的管理员**（`TokenElevation` 真、完整性 `high`），本机是后者。
+所以真话是一条**更弱**的蕴含：**`full ⇒ elevated` 真、`limited ⇒ elevated` 假，而 `default` 对两者都不作
+约束**。按原来的写法，`elevation_type` 会在每一台关掉 UAC 的机器上被判成"读不出来"；而它又是判定**要求**的
+事实之一，于是判定会把一个**完全合法的调用方**报成 `observation_incomplete`——**一个写错的交叉核对不是装饰，
+它会把门焊死**。这正是"检查必须能验红、而且红的理由必须是对的"的反面：这一条**红得毫无道理**。
+
+修法与验红：蕴含收窄到上面那两条；`default` 的两种搭配都**必须被接受**（四种组合各有测试），真矛盾仍然把
+类型置 `None`、保留 `elevated`、两个读数都进证据。修完本机实测 `elevated=True, elevation_type="default"`、
+**没有**矛盾证据行，且 `admit_caller` 对同一个调用方返回"准入"。**顺带记下这条教训的形式**：这条不变量是
+**brief 里写下的**，施工方照着实现——它错在源头，而"实现与 brief 一致"的测试永远不会发现它；发现它的是
+**一次手跑的真机探针**。
+
+### 114.3 顺带量到的一处计数缺陷：那份"常驻检查"数一直被少数四个
+
+`test_the_corpus_counts_are_the_same_everywhere` 用**源码推导**（正则匹配
+`@pytest.mark.parametrize(...[...])`）算这个模块"收集了多少项"，而模块里最大的那个参数化取的是
+`sorted(_search_response_enums())`——**一个在 import 时求值的调用**。于是推导器只数到一个装饰器、漏掉另一个，
+报 **102**；pytest 实际收集 **106**。文档里的"102 项常驻跨工件一致性检查"因此连着几个阶段是错的，而**没有
+任何东西比较这两个数**（唯一的消费者是文档）。修法是把权威换成**收集本身**：`_audit_check_count(request)`
+读 `request.session.items`，并把它从 `test_the_corpus_counts_are_the_same_everywhere` 里拆成一条自己的检查
+——因为 `-k`/`-m` 会收窄收集，混在一起会让过滤器把另外两个计数也一起弄成噪音（拆分后那条在被过滤时
+**skip 并说明原因**，全量运行时才比较）。另加一条 `test_the_audit_count_cannot_be_read_off_the_source`：
+只要那个参数化还是"算出来的"，源码就**不可能**知道这个数——它一旦变成字面量，这条就红，提醒重新裁决，
+而不是让两个数并存。修完：**102 → 108**（本阶段自己又加了 2 条检查）。
+
+### 114.4 新增一个码，以及第一次分清的"有写者"与"有路"
+
+量过：冻结的码表里**没有一条**说的是"谁在问"——`ACL_MISMATCH` 讲目录的描述符、`OWNERSHIP_REQUIRED` 讲
+AIROOT 不拥有的 payload、`PRIVILEGE_REQUIRED` 讲"这个操作要一个你没有的权限"，三条都不是对**调用方**的判断。
+于是新增 `CALLER_NOT_AUTHORIZED`(5)：落 5 是因为 0–9 里"操作需要调用方不具备的权限/授权"就是这一层，**而不是**
+因为它与 `PRIVILEGE_REQUIRED` 同义——提权不会把 `S-1-5-21-…` 换成另一个 SID，"提权再试"不是它的下一步，
+这句话写进了证据，也写进了 `references/reason-codes.md` 的退出码 5 一节（ADR-0027 的同一条教训）。
+
+它同时暴露了那本速查的一个**信息缺口**：《这一版发不出来的码》的判据（`test_l1_reason_codes.py`）是"**除
+`exits.py` 外，这个字符串在 `cli/app/airoot` 里还出不出现**"——也就是**有没有写者**；而 `admit_caller` 有写者、
+**却没有任何动词能走到它**。这个码因此既不该进那张表（它有写者），也不该被写进 agent 的分支逻辑（它收不到）。
+本阶段在 `references/reason-codes.md` 文末补了《有写者，但没有任何动词能走到》这一小段，并把 `ACL_MISMATCH`
+的处置说明改准（§113 之后它不再是"写一侧还没做"，而是"写一侧是库、没有调用者"）。**这是"有写者"与"有路"
+第一次分了家**——判据本身没有错，错的是读者会把它读成"能遇到"。
+
+### 114.5 守卫与验红
+
+每一格是**一次**实现改动，跑完恢复并重跑确认绿。观测那一组跑的是 `pytest cli/tests/test_l1_identity.py -q`。
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 观测：删掉 `elevated` ⟷ `elevation_type` 交叉核对 | 红 | ✅ 2 条 |
+| 观测：**把那条写错的不变量放回去**（"elevated 当且仅当 type 是 `full`"） | 红 | ✅ 3 条（含真机那条与 `default`+`True` 的用例）——**这一格就是 114.2 的证据**：错的规则也能被"测出来"，区别是它红得没有道理 |
+| 观测：取 token 的 `TokenSessionId` 而不过 `ProcessIdToSessionId` | 红 | ✅ 1 条 |
+| 观测：AppContainer 的 `app_container_sid` 悄悄返回 `None` | 红 | ✅ 4 条 |
+| 观测：跳过 `GetProcessTimes` | 红 | ✅ 4 条 |
+| 观测：让 `to_document` 重新吐出 `null` | 红 | ✅ 3 条（其中一条证明那份文档**真的**会被 `broker-request` 拒，而拒绝消息会指向调用方——这正是要修的那个错方向） |
+| 观测：把读不出来的 `TokenElevationType` 圆成 `default` | 红 | ✅ 1 条 |
+| 观测：把非 0/1 的 `TokenIsAppContainer` 读成 `False` | 红 | ✅ 1 条 |
+| 观测：进程**不在** AppContainer 里仍然去要 `TokenAppContainerSid` | 红 | ✅ 1 条 |
+| 判定：删掉 `observation_incomplete` 规则 | 红 | ✅ 9 条 |
+| 判定：删掉 `app_container_caller` 规则 | 红 | ✅ 3 条 |
+| 判定：删掉 `sid_not_allowed` 规则 | 红 | ✅ 5 条 |
+| 判定：删掉"低于下限"的比较 | 红 | ✅ 9 条 |
+| 判定：删掉"认不出的完整性词"守卫 | 红 | ✅ 6 条 |
+| 判定：删掉 `pid_reused` 规则 | 红 | ✅ 4 条 |
+| 判定：**从必读集合里去掉一个事实**（`elevation_type`） | 红 | ❌ **0 条** → 修完后 3 条（见下） |
+| 判定：阶梯比较反向（`<` 改 `>`） | 红 | ✅ 16 条 |
+| 判定：把认不出的词当成 `low` 排序 | 红 | ✅ 6 条 |
+| 判定：让 `creation_time` 无条件必读 | 红 | ✅ 3 条 |
+| 判定：拒绝时不带 `details["rule"]` | 红 | ✅ 32 条 |
+| 判定：SID 证据不再点名观测到的那个 SID | 红 | ✅ 1 条 |
+| 判定：删掉一条 `REFUSAL_REASONS` | 红 | ✅ 1 条 |
+| 判定：规则 id 打错一个字母 | 红 | ✅ 3 条 |
+| 判定：多出第二个 `CALLER_NOT_AUTHORIZED` 抛出点 | 红 | ✅ 18 条 |
+| 判定：给签名加一个"声明形状"的参数 | 红 | ✅ 1 条 |
+| 判定：模块里出现 application id | 红 | ✅ 18 条 |
+| 计数守卫：把 `AGENTS.md` 的 108 写成 107 | 红 | ✅ `AGENTS.md states [107, 108] audit checks; this module collected 108` |
+| 计数守卫：把那个"算出来的"参数化改成字面量 | 红 | ✅ `test_the_audit_count_cannot_be_read_off_the_source` |
+| 真实状态 | 绿 | ✅ 见 114.6 |
+
+**有一格"改了却不红"，它是本阶段的第二个真发现**：判定那一组里"从必读集合里去掉一个事实"第一次跑出 **0 红**
+（54 绿）。原因不是那条规则没被检查，而是**检查在照镜子**：那条按字段参数化的性质测试**从 `REQUIRED_FACTS`
+自己取用例**，于是删掉一个事实的同时也删掉了它自己的用例，而没有任何别的东西钉住这个集合——`elevated` 与
+`session_id` 有同一个洞。修法是把集合用**字面量**钉住（`REQUIRED_FACTS_EXPECTED` + 双向相等，连"`creation_time`
+只在给了预期值时才必读"一起），再把性质测试与"这些字段真的存在"那条指向字面量；修完这一格红 **3** 条。
+这一条与 ADR-0033 是同一族：**一个自我指涉的守卫看起来在检查，实际上只是在确认自己刚才写了什么**——它比
+"没有守卫"更危险，因为它会让人以为那里有守卫。（这条教训单独立为 ADR-0042。）
+
+观测那一组里另有两格值得单独看：把错的不变量放回去（红 3 条）与把读不出来的类型圆成 `default`（红 1 条）
+——它们说明"**能验红**"与"**红得对**"是两件事：前者红得热闹，而它红的原因是**规则错了**。
+
+### 114.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1104 → 1198**（本阶段新增：身份观测的九件事与两道交叉核对、判定的五条规则与结构证明、reason code 与计数守卫） |
+| 审计检查（`test_l0_consistency.py`） | **102 → 108**（**不是"加了 6 条"**：其中 4 条是那条推导器一直少数出来的） |
+| golden 语料 | **41 → 41**（逐字节再生无漂移；`reason_code_table.json` 内容 +1 行） |
+| reason code | **96 → 97** |
+| 新增模块 | `cli/app/airoot/broker/policy.py`；新增测试文件 `cli/tests/test_l1_broker_policy.py` |
+| 契约变更 | 新增 `CALLER_NOT_AUTHORIZED`(5)（ADR-0041）；`client` 块被明确为**诊断信息** |
+| 新增 ADR | **ADR-0041**（边界要问的第一个问题）、**ADR-0042**（自指的守卫在照镜子） |
+
+### 114.7 如实记录的边界
+
+1. **这不是那条边界。** 没有 named pipe、没有提权进程、**没有任何动词走到 `admit_caller`**——它今天只被测试
+   调用。读别人 token 的能力（§113）与"谁可以问"的判定都有了，缺的是**把它们接起来的那条线**。
+2. **`allowed_sids` 与 `minimum_integrity` 从哪里来，本阶段刻意没有决定。** 它们只是显式入参：没有策略文件、
+   没有默认阈值。**特别地，没有拿"根目录的 owner"当答案**——Protected machine mode 下 root 的 owner 很可能是
+   Administrators，用它当"谁可以问"会把合法用户拒掉；这个来源要等 root 的声明与 pipe 的 DACL。
+3. **判定的第一条规则是"不知道就是不允许"**，所以一个 token 读不出来的调用方会被拒。这是有意的（既有规则
+   "不编造确定性"），但它的代价要写下来：**探针读不到的原因有五种**（pid 不存在、进程已退出、受保护进程、
+   另一个用户、某个 token class 拒绝），判定把它们**一律**报成"不能决定"，而不是去猜哪一种。
+4. **`pid_reused` 只在调用方给出了预期创建时间时才生效**：`creation_time` 是 `ProcessIdentity(t0)` 的一部分，
+   而**谁在 t0 读的、到 t1 还能不能对应上**，本模块只做比较，不做重读——重读属于 pipe 那一侧。
+5. **`fake_broker.py` 的 `REJECTION_CODES` 没有加这个码**，这是有意的：§110 把 `INSTANCE_CONFLICT` 从那张
+   表里删掉的理由是"这个 harness 不会那么回答"，同一个理由在这里成立——harness 不调用 `admit_caller`，
+   所以它答不出这个码。等它接上判定时再加，而不是先把码放进表里装作能答。
+6. **本阶段没有给任何 schema、任何 CLI 动词、任何 golden 语料加东西**（除了那张 reason code 表的一行）：
+   `client` 块的形状是已发布契约，**不因为服务端观测变宽而变宽**——这正是 114.1 那条不对称的处置。
