@@ -362,11 +362,11 @@
   },
   "uncovered_verbs": {
     "approve": {
-      "why_no_lane": "A lane is a question an agent can act on. ADR-0025 decided to keep it that way (option A: no production issuer until the P2 broker), so every lane ending at `approve` would point at a step nobody can take; the honesty block already says so in prose.",
+      "why_no_lane": "A lane is a question an agent can act on. ADR-0025's D1 left the protected broker to P2, and since ADR-0046 this machine *can* sign a token -- but only as an explicit local step (`airoot.tx.issuer` provisions the key, then issues), because no CLI verb mints one. A lane ending at `approve` would still point at a step the CLI cannot take for the agent, so the honesty block says this in prose instead.",
       "unblocked_by": "p2-protected-state"
     },
     "install": {
-      "why_no_lane": "Same reason as `approve`: it needs a token only the test issuer can mint, and ADR-0025 decided to wait for the P2 broker rather than ship a weaker channel. The plan-shaped part of the question does have lanes (`plan`, `scope decide`), which is what an agent can actually complete today.",
+      "why_no_lane": "Same reason as `approve`: it needs a token, and no CLI verb mints one -- signing is a deliberate local step (ADR-0046), while ADR-0025's D1 is what keeps the broker half waiting for P2. The plan-shaped part of the question does have lanes (`plan`, `scope decide`), which is what an agent can actually complete today.",
       "unblocked_by": "p2-protected-state"
     },
     "extension": {
@@ -384,7 +384,7 @@
       "unblocked_by": null
     },
     "uninstall": {
-      "why_not_mapped": "It is `tool retire` + `tool gc` in one verb (`retire then collect an owned payload, needs approval`). The map teaches those two graded steps on purpose: retiring clears the binding, collecting is what deletes, and the gate sits at `tool gc --apply` -- one verb would hide the grading. The composed path also needs a token this build cannot mint (ADR-0025 decided to keep it that way: no production issuer until the P2 broker).",
+      "why_not_mapped": "It is `tool retire` + `tool gc` in one verb (`retire then collect an owned payload, needs approval`). The map teaches those two graded steps on purpose: retiring clears the binding, collecting is what deletes, and the gate sits at `tool gc --apply` -- one verb would hide the grading. The composed path also needs a token that no CLI verb mints (ADR-0046: signing is an explicit local step).",
       "unblocked_by": null
     }
   },

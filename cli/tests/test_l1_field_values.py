@@ -58,6 +58,12 @@ WRITE_PATTERN = {
         r"|[\"']kind[\"']\s*:\s*[\"']([a-z_]+)[\"']",
     "registry-projection::external_references[].source_kind":
         r"[\"']kind[\"']\s*:\s*[\"']([a-z_]+)[\"']|source_kind\s*=\s*[\"']([a-z_]+)[\"']",
+    # §119: the algorithm this build writes is a **constant reference** in `tx/issuer.py` and a literal
+    # definition in `tx/approval.py`, so literal presence cannot decide this row's daggers: the literal
+    # `"ed25519"` sits next to the verifier's other constant (`TEST_ALGORITHM = "test_hmac_sha256"`),
+    # and a scan that counted both would have to dagger a value the build really does emit. The pattern
+    # reads the definition of the constant the writer names — a fact in the file, not a declaration here.
+    "approval-token::signature.algorithm": r"PRODUCTION_ALGORITHM\s*=\s*[\"']([a-z0-9_]+)[\"']",
 }
 
 #: Daggers whose token is distinctive enough that "nowhere in the app" is a meaningful claim: it
@@ -422,12 +428,20 @@ def test_every_documented_field_resolves_to_exactly_the_documented_values() -> N
     assert not problems, "documented values and schema values disagree:\n" + "\n".join(problems)
 
 
-#: The two kinds of "a published schema with no row of its own". Which one a schema is in is
+#: The kinds of "a published schema with no row of its own". Which one a schema is in is
 #: **declared by the table** and **measured here** (draft §107): the reasons used to be prose only, and
 #: one was false — `root-marker` said "同上", i.e. the same as the two `broker-*` rows ("P2 has not
 #: built it"), while this build *does* write root markers (`_produced_schemas` finds it). What it
 #: actually has is no vocabulary of its own: `schema_version`/`protocol_version` are version pins.
-EXEMPT_CLASSES = ("unbuilt", "no-own-vocabulary")
+#:
+#: **`unbuilt` was the other kind and it is gone (§119).** It said "no function in the core constructs
+#: this document", and it lost its last member when `broker-response` left the table: `broker/pipe.py`'s
+#: `_answer` constructs and self-validates one, and the walk could not see it because two of the
+#: document's required keys arrive through `document.update(posture())`. The measurement was widened to
+#: follow that shape, and widening it turned a class with no members into a word a reader would meet and
+#: could not use. **"Does anything write this document" did not lose its guard** — the catalog's own
+#: unwritten-schema list answers it from the validation call sites (guard group 34, `test_l0_consistency`).
+EXEMPT_CLASSES = ("no-own-vocabulary",)
 
 
 def _measured_exempt_class(name: str) -> str | None:
@@ -435,8 +449,6 @@ def _measured_exempt_class(name: str) -> str | None:
 
     documented = {frozenset(row.values) for row in ROWS}
     fits: list[str] = []
-    if name not in set(_produced_schemas()):
-        fits.append("unbuilt")
     unaccounted = [
         path
         for path, values in vocabulary_with_paths(name).items()
@@ -526,14 +538,22 @@ def test_each_daggered_value_has_no_writer_in_its_own_field() -> None:
 # §92 found the first casualty of the file-scoped check: `gc-plan` credited to three modules that write
 # a **plan**, because `plan.target.kind` reuses the same two words. §93 asked the same question one level
 # up: which published schemas does this build *build* at all? The answer is syntax, not text -- a
-# document is produced when one function's own keys (dict literals plus subscript assignments) cover
-# every property the schema requires. That is what building one looks like, and it is how the twelve
-# produced schemas are produced.
+# document is produced when one function's own keys (dict literals, subscript assignments, and §119's
+# merge shapes) cover every property the schema requires. That is what building one looks like, and the
+# walk below, not a number written here, is what says which schemas qualify.
 #
-# `approval-token` is not among them: nothing in the app builds a token (ADR-0025's D1 leaves the
-# production issuer to P2). Its row nevertheless named `tx/approval.py` as the writer of two fields,
-# while the cell next to it said "这一版没有生产签发方" -- the two occurrences are the constants a
-# **verifier accepts**, `PRODUCTION_ALGORITHM = "ed25519"` and `TEST_ALGORITHM = "test_hmac_sha256"`.
+# `approval-token` was **not** among them when this was written: nothing in the app built a token (the
+# production issuer was ADR-0025's D1 pending item). Its row nevertheless named `tx/approval.py` as the
+# writer of two fields, while the cell next to it said "这一版没有生产签发方" -- the two occurrences are
+# the constants a **verifier accepts**, `PRODUCTION_ALGORITHM = "ed25519"` and
+# `TEST_ALGORITHM = "test_hmac_sha256"`.
+#
+# **§119 moved that schema to the other side of this rule.** ADR-0046 put a writer in the app
+# (`tx/issuer.py`'s `issue` constructs and self-validates an `approval-token`), so the row now names it
+# and carries the daggers only where they are still true — and what said so is the walk, not a reader's
+# memory of what the build could do. The same stage found the second half of this claim missing: nothing
+# checked the *other* direction, so a schema the table called writerless while a writer existed stayed
+# green. That check now lives in `test_l0_consistency.py`, next to §92's.
 #
 # Two derived exemptions, neither a hand list:
 #   * a schema with no `required` properties is a fragment (`common`), not a document;
@@ -541,6 +561,60 @@ def test_each_daggered_value_has_no_writer_in_its_own_field() -> None:
 #     manifests under `cli/extensions/`), not built by code.
 
 REQUIRED_KEYS = "required"
+
+
+@functools.lru_cache(maxsize=1)
+def _returned_key_sets() -> dict[str, set[str]]:
+    """Keys each app function returns as a dict literal, by function **name**.
+
+    Exists for one shape: a builder that merges a mark into its own document with
+    ``document.update(f())`` — today exactly one site, ``broker/pipe.py``'s ``_answer`` merging
+    ``posture()``. §119 measured that the older rule ("a function's own keys are its dict literals and
+    subscript assignments") reported the one document built that way as **unbuilt**, and `unbuilt` is
+    the class the exempt table is least allowed to be wrong about — `broker-response` had a core
+    constructor in §115 and the table still said the core had none.
+
+    Two soundness rules, both so this cannot over-credit: only functions whose returns are **all** dict
+    literals are counted (a function that can also return something else says nothing), and a name that
+    resolves to two different app functions is left out rather than guessed — merging the wrong
+    function's keys would invent a writer, which is the error this whole file is about.
+    """
+
+    found: dict[str, set[str]] = {}
+    ambiguous: set[str] = set()
+    for module in sorted(APP.rglob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            returns = [child for child in ast.walk(node) if isinstance(child, ast.Return)]
+            if not returns or not all(isinstance(item.value, ast.Dict) for item in returns):
+                continue
+            keys: set[str] = set()
+            for item in returns:
+                keys |= {
+                    key.value
+                    for key in item.value.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+            if node.name in found and found[node.name] != keys:
+                ambiguous.add(node.name)
+            found.setdefault(node.name, set()).update(keys)
+    for name in ambiguous:
+        found.pop(name, None)
+    return found
+
+
+def _merged_keys(node: ast.Call) -> set[str]:
+    """Keys an ``X.update(f())`` call merges into a document, when ``f`` is unambiguous."""
+
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != "update" or len(node.args) != 1:
+        return set()
+    argument = node.args[0]
+    if not isinstance(argument, ast.Call) or not isinstance(argument.func, ast.Name):
+        return set()
+    return set(_returned_key_sets().get(argument.func.id, set()))
 
 
 @functools.lru_cache(maxsize=1)
@@ -576,6 +650,8 @@ def _produced_schemas() -> dict[str, list[str]]:
                                 slice_ = target.slice
                                 if isinstance(slice_, ast.Constant) and isinstance(slice_.value, str):
                                     keys.add(slice_.value)
+                    if isinstance(child, ast.Call):
+                        keys |= _merged_keys(child)
                 if required <= keys:
                     produced.setdefault(path.name[: -len(".schema.json")], []).append(
                         "%s:%d:%s" % (module.name, node.lineno, node.name)
@@ -654,19 +730,17 @@ def test_every_daggered_value_is_named_in_the_daggers_note() -> None:
 
 
 #: Vocabularies a published schema **can carry** that this table deliberately does not document, as
-#: `(schema, path)` pairs. One entry left, and it is a *reader's* vocabulary: §108 gave
-#: `broker-response` a reader (`broker/protocol.py` `parse_response`), and §110 added a producer that
-#: lives in the **test path** (`cli/tests/fake_broker.py`) — which is exactly why this set still names
-#: it: the measure is `_produced_schemas`, a walk over `cli/app/`, so a test double that builds a
-#: response does not make the *core* a writer of it. The other three left the set in the same stage, each for a measured reason:
-#: `broker-response.enforcement` became a `$ref` to the shared definition (the `common` row documents
-#: it), and `broker-request`'s `operation` and `client.integrity` got real rows because the client
-#: codec and the identity probe now write them. Measured, not assumed (§105): the reachable walk
-#: finds exactly this one, and the guard holds the set **both ways**, so a second cannot appear
-#: silently and a stale entry cannot linger.
-UNDOCUMENTED_BY_DESIGN = {
-    ("broker-response", "status"),
-}
+#: `(schema, path)` pairs. **Empty since §119**, and it is the second time the set has emptied a member
+#: rather than the first time it has been a formality: §108 gave `broker-request` a writer, §110 added a
+#: producer that lives in the **test path** (`cli/tests/fake_broker.py`) — which is exactly why this set
+#: used to name `broker-response.status`: the measure is `_produced_schemas`, a walk over `cli/app/`, so
+#: a test double that builds a response does not make the *core* a writer of it. §115 then made the core
+#: a writer (`broker/pipe.py`'s `_answer`), and §119 gave that document the section it was owed, which
+#: documents `status` and retires the last entry. Every entry that left this set left because a writer
+#: appeared and the vocabulary got a row — measured, not assumed (§105): the reachable walk finds the
+#: undocumented set, and the guard holds the two **both ways**, so a second cannot appear silently and a
+#: stale entry cannot linger.
+UNDOCUMENTED_BY_DESIGN: set[tuple[str, str]] = set()
 
 
 #: Field names whose only value is the envelope version pin: `{"const": 1}` on all twenty schemas,
@@ -778,12 +852,19 @@ def test_the_in_scope_schemas_are_the_ones_an_agent_reads() -> None:
         # this table that is **sent rather than printed** — so "who writes it" is "who can put a
         # value in it", and that is `broker/protocol.py` plus `caps/identity.py`.
         "broker-request",
+        # §119: `broker-response` joined the same way `broker-request` did in §108 — a core constructor
+        # appeared (`broker/pipe.py`'s `_answer`, §115) and a document with a writer gets its vocabulary
+        # documented instead of exempted. Adding it here is the deliberate half of that move: the exempt
+        # table lost its last member in the same edit, and the two sets may not overlap.
+        "broker-response",
     }
     # `managed-tool-instance` and `error-response` left this list in §106 (they have const rows now),
-    # and `broker-request` left it in §108 (it has a constructor now); what is left is the document
-    # this build only ever **reads** and the marker file, whose vocabularies are either named in
-    # `UNDOCUMENTED_BY_DESIGN` or are version pins.
-    assert set(EXEMPT) == {"broker-response", "root-marker"}
+    # `broker-request` in §108 and `broker-response` in §119 (both have a constructor now); what is left
+    # is the marker file alone, whose vocabulary is either version pins or named in
+    # `UNDOCUMENTED_BY_DESIGN` — a set §119 left **empty** for the same reason the exempt table lost its
+    # second class. A reader of this assertion should not read "one exempt schema" as "the mechanism
+    # shrank": the mechanism is what forced both moves.
+    assert set(EXEMPT) == {"root-marker"}
     assert len(ROWS) >= 50, "the table lost rows: %d" % len(ROWS)
 
 

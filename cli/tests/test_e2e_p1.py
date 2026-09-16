@@ -47,8 +47,8 @@ def test_p1_exit_condition_one_state_and_protocol_without_real_software(capsys, 
     plan_file = Path(plan_document["plan_file"])
     assert plan_file.is_file()
 
-    # The plan is only executable with a token; the CLI cannot mint one, and a plan
-    # document is not an approval token.
+    # The plan is only executable with a token; no CLI verb mints one (signing is an explicit local
+    # step since ADR-0046), and a plan document is not an approval token.
     code, error = call(capsys, "--json", "--root", root_path, "install", str(plan_file), "--token-file", str(plan_file))
     assert code == 4, error
     assert error["reason_code"] == "INVALID_APPROVAL"

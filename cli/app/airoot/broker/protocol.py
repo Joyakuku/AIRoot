@@ -6,8 +6,9 @@ conforming request, and it reads a response into the repo's one error type. Thre
 deliberately *not*, because each is the nearest misreading:
 
 * **not the broker.** Nothing here elevates, opens a handle, writes a plan or touches a registry.
-  There is no broker in this build at all — ADR-0025's D1 leaves the production approval issuer and
-  the elevated service to P2 — which is why the only way this module can answer "ask the broker" is
+  There is no broker in this build at all — ADR-0025's D1 leaves the elevated service to P2 (the
+  approval signer is a separate matter: ADR-0046 made it a local, explicit step) — which is why the
+  only way this module can answer "ask the broker" is
   :func:`broker_unavailable`.
 * **not the transport.** A request is a document, not a frame. The authenticated named pipe, the
   `client` block's authenticity (the broker re-reads the peer's token itself; a caller-supplied SID
@@ -230,11 +231,13 @@ def broker_unavailable(operation: str) -> AirootError:
     return AirootError(
         "NOT_IMPLEMENTED",
         f"no protected broker exists in this build, so {operation} cannot be asked "
-        "(decided: ADR-0025 leaves the protected broker and its approval issuer to P2)",
+        "(decided: ADR-0025 leaves the protected broker to P2)",
         evidence=[
             f"operation: {operation}",
-            "ADR-0025 (D1) keeps the production issuer and the elevated broker waiting for P2, "
-            "so no request can be delivered",
+            "ADR-0025 (D1) keeps the elevated broker out of this build, so no request can be delivered",
+            "the approval signer is not what is missing here: since ADR-0046 a token comes from a "
+            "local, explicit step (`airoot.tx.issuer`), and a same-user process holding one still "
+            "may not act as the broker",
         ],
         details={"operation": operation, "adr": "ADR-0025"},
     )

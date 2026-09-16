@@ -165,4 +165,12 @@ def test_a_missing_keyring_is_still_the_one_refusal_that_names_the_decision(root
         load_keyring(root.path)
     assert err.value.reason_code == "PROVENANCE_FAILED"
     assert ISSUER_PENDING in err.value.message
-    assert "never mints" in " ".join(err.value.evidence)
+    # The evidence has to tell the same story as the sentence (draft §119): this refusal used to name
+    # the decision in its message and then, two lines down, claim the *build* had no issuer at all.
+    evidence = " ".join(err.value.evidence)
+    assert "never mints" in evidence, "the evidence has to keep the half that is still true"
+    assert "ADR-0046" in evidence, "and it has to point at the decision the message points at"
+    assert "only issuer is the test one" not in evidence, (
+        "the build has had a local signer since ADR-0046; a refusal that still says otherwise sends "
+        "its reader to wait for a stage that no longer unblocks anything"
+    )

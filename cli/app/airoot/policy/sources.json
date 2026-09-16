@@ -41,7 +41,7 @@
       },
       "filename": "rustup-init.exe",
       "publisher": "The Rust Project",
-      "notes": "ADR-0001: acquired through AIROOT's own plan/approval/fetch/verify/digest path, no admin, --no-modify-path. Verified online in draft §59: resolution, a 12721664-byte download through https_artifact, and a SHA256 match against this entry's published checksum file. stage/commit were NOT exercised: P1 has no production approval issuer."
+      "notes": "ADR-0001: acquired through AIROOT's own plan/approval/fetch/verify/digest path, no admin, --no-modify-path. Verified online in draft §59: resolution, a 12721664-byte download through https_artifact, and a SHA256 match against this entry's published checksum file. stage/commit were NOT exercised there; they were exercised for real in draft §117 (plan -> explicit local issuance (ADR-0046) -> install FINALIZED, the same 12721664 bytes, digest identical to this entry's checksum file), and the payload was then run in §118."
     },
     {
       "capability_id": "build",

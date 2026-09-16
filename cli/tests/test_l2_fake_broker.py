@@ -115,8 +115,9 @@ def write_token(root, token: dict, name: str = "approval-0001.json") -> str:
 def fresh_plan_and_token(registry: Registry, root, clock, *, version: str = "1.0.0"):
     """A committable plan and its approval, built the way the transaction tests build them.
 
-    `cli/tests/fake_issuer.py` is the **only** approval issuer in this build (ADR-0025's D1), so the
-    token comes from there and nowhere else.
+    `cli/tests/fake_issuer.py` is the issuer the **test path** uses (a token can also come from the
+    core's explicit local step, `airoot.tx.issuer`, since ADR-0046 — but a test that needs one should
+    not depend on a key being provisioned in the operator's root), so the token comes from here.
     """
 
     fake_issuer.install_keyring(root.path)

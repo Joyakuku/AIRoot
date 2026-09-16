@@ -41,18 +41,19 @@ cancel             取消
 - 需要确认时 `plan` **不写计划文件**——"还没决定"必须在文件系统上也可证明。
 - `airoot approve` 只消费批准。你不能把"我调用了 approve"解释成"用户批准了"。
 
-### 这个 build 里第 3、4 步**没有可用实现**
+### 第 3、4 步**自 ADR-0046 起可用**——但"签发"是一个显式步骤
 
 第 1、2 步（`plan --dry-run` / `plan`）今天就能跑，且需要确认时**不写任何文件**。
-但**没有任何东西能签发 approval token**：核心只做校验（§113 起两种算法都真的在验，`ed25519` 是
-RFC 8032），唯一实现过的签发方是测试用的
-`cli/tests/fake_issuer.py`，而 `state/test-keyring.json` 是**测试**密钥——它就写在 root 里，
-任何能写这个 root 的进程都能签，所以**不能**当生产签发方用。keyring 的每一条是**记录**
-（`algorithm` + 材料，§113 / ADR-0039），所以同一个文件将来可以只放生产的**公钥**而不因此变成秘密；
-test- 这个名字要等有生产写者时再改。
 
-结果：**自 ADR-0046 起这条路是通的**——先在本 root 里**签一次**（`tx/issuer.py` 的 `provision` 生成密钥对、
-`issue` 用 `ed25519` 签出一份 `approval-token`），再由 `install --token-file` 等命令消费。
+**ADR-0046 之前**，第 3、4 步没有可用实现：核心只做校验（§113 起两种算法都真的在验，`ed25519` 是
+RFC 8032），唯一实现过的签发方是测试用的 `cli/tests/fake_issuer.py`，而 `state/test-keyring.json`
+是**测试**密钥——它就写在 root 里，任何能写这个 root 的进程都能签，所以**不能**当生产签发方用。
+**这句话今天仍然是对那条路的正确评价，只是它不再是全部**：裁定见下。
+
+**自 ADR-0046 起这条路是通的**——先在本 root 里**签一次**（`tx/issuer.py` 的 `provision` 生成密钥对、
+`issue` 用 `ed25519` 签出一份 `approval-token`），再由 `install --token-file` 等命令消费。它是**显式
+的本地步骤**：没有 CLI 动词会替你签。keyring 的每一条是**记录**（`algorithm` + 材料，§113 /
+ADR-0039），所以同一个文件里放的是**公钥**，私钥留在 `state/issuer-key.json`。
 **没有 keyring 的 root 仍然会拒绝**，消息里带这一句：
 
 ```text
@@ -65,7 +66,8 @@ no approval keyring is installed in this root; provision a signing key first (de
   所以验签通过只说明"这份 plan 由这个 root 信任的钥匙签过、且此后没被改动或重放"——
   **一致性**，不是**权限**（ADR-0045/ADR-0046）。要挡同用户进程属于使用方（上游 harness）的职责；
 
-- **不要**试图自己造 token。伪造 token 正是消费侧要拒绝的东西，而测试 keyring 不属于生产路径；
+- **不要**试图绕开签发方自己拼一份 token。消费侧要拒绝的正是伪造的 token；要签就走 `tx/issuer.py`，
+  那条路是**显式**的（先 `provision`，再 `issue`），所以"我调用了什么"这件事在账上看得见；
 - 这条路的裁决写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0046**（状态：**已裁决：B——本机签发，
   批准 = 账本**），它推翻了草案 §113.6 第 6 条；被它取代的两条更早的裁决是 ADR-0025 的 D1 与 ADR-0044，
   两者仍然可读，且**实测读数全部仍然成立**（变的是"这算不算缺陷"）。

@@ -1333,6 +1333,50 @@ def test_a_schema_declared_unwritten_is_not_claimed_to_have_a_writer() -> None:
     )
 
 
+def _writerless_row_claim_problems(declared: dict[str, str]) -> list[str]:
+    """The other direction of §92: a schema the value table gives no writer must be declared unwritten.
+
+    Together with `_producer_claim_problems` this makes the two documents an **equality** over the
+    schemas that have rows: *declared unwritten* ⟺ *no row names a producer*.
+
+    Why the direction was missing and why it matters (draft §119): §92 built its guard on the defect it
+    had just found — a schema declared unwritten that the table nevertheless credited to writers — so
+    the check ran one way. The way it did not run is the one that rots when a writer **appears**, and
+    that is exactly what happened: ADR-0046 added `tx/issuer.py`, which constructs and self-validates an
+    `approval-token`, and the table's two rows went on saying （没有写者） while `docs/schema/README.md`
+    — whose list is derived from the validation call sites — had already stopped listing it. Two
+    documents, one subject, opposite claims, and nothing compared them.
+    """
+
+    from test_l1_field_values import BY_SCHEMA
+
+    return [
+        f"field-values.md gives {name} no writer, but the catalog does not declare it unwritten"
+        for name, rows in sorted(BY_SCHEMA.items())
+        if not any(row.producers for row in rows) and name not in declared
+    ]
+
+
+def test_a_schema_the_value_table_calls_writerless_is_declared_unwritten() -> None:
+    declared = _declared_unwritten_schemas()
+    problems = _writerless_row_claim_problems(declared)
+    assert problems == [], "; ".join(problems)
+
+    # Non-vacuity, both directions of the comparison: dropping a member of the declared list must be
+    # reported (the table still claims it has no writer), and a table that suddenly credits every
+    # schema with a writer must make the derivation stop agreeing with the catalog rather than pass.
+    from test_l1_field_values import BY_SCHEMA
+
+    for name in sorted(declared):
+        assert _writerless_row_claim_problems({k: v for k, v in declared.items() if k != name}) != [], (
+            "%s is declared unwritten but the value table's own rows do not agree; this check would "
+            "pass for the wrong reason" % name
+        )
+    assert any(not any(row.producers for row in rows) for rows in BY_SCHEMA.values()), (
+        "every documented schema now names a writer, so this comparison is about nothing"
+    )
+
+
 def _operation_label_rows() -> dict[str, str]:
     """The envelope `operation` table from `references/field-values.md`: label -> meaning cell."""
 

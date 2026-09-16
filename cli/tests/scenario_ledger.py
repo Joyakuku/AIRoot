@@ -297,8 +297,9 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
         "no_witness_reason": (
             "证人要断言一次**没有生产方**的动作。**§65 之后审计那一半已经有了**（`events.approval_mode`，"
             "迁移 v6；由 `test_l1_transaction.py#test_the_audit_record_of_an_approval_says_which_kind_it_was` "
-            "断言 policy/human/无批准三种取值），缺的只剩**谁来产生一个策略批准**：P1 禁止核心凭空铸造"
-            "批准（`AGENTS.md` §7），唯一的签发方是 `cli/tests/fake_issuer.py`。证人得断言'低风险动作被"
+            "断言 policy/human/无批准三种取值），缺的只剩**谁来产生一个策略批准**：核心不替任何动作"
+            "**自动**签发（`AGENTS.md` §7 的禁令仍然成立——ADR-0046 给的是一个**显式**的本地签发步骤"
+            "`tx/issuer.py`，它要有人在中间动手，不是自动批准）。证人得断言'低风险动作被"
             "自动批准了且审计里写着 policy'——而今天没有任何组件会自动批准任何东西，所以说不出这句话。"
         ),
         "note": (
@@ -326,8 +327,10 @@ DISPOSITIONS: dict[str, dict[str, Any]] = {
     "P-017": {
         "blocked_by": "undesigned",
         "no_witness_reason": (
-            "证人要断言一次**没有第二个操作数**的比较。'与 issuer 证据不匹配'需要签发方持有身份证据，"
-            "而 P1 没有生产签发方（只有 `cli/tests/fake_issuer.py`）。能测的是'缺 SID 就拒绝'，"
+            "证人要断言一次**没有第二个操作数**的比较。'与 issuer 证据不匹配'需要签发方**持有**身份证据，"
+            "而这一版的签发方——ADR-0046 之前是测试路径的 `fake_issuer`，之后是本机的 `tx/issuer.py`——"
+            "都只**记录别人给它的** `approved_by_sid`：`issue` 在 human 模式下缺 SID 就拒绝，而不是去核"
+            "一个 SID。能测的是'缺 SID 就拒绝'，"
             "那**不是**这个场景。"
         ),
         "note": (

@@ -169,7 +169,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 **本节随实现推进而更新：它描述的是当前状态，不是写入时的快照。** 前文（§「已生成的实现前基线」及以上）
 是审查当时的记录，其中的计数按当时为准。
 
-**当前规模**：`cli/schema/` **20** 个 JSON Schema；`pytest cli/tests` **1307 项**（含 **108** 项常驻跨工件
+**当前规模**：`cli/schema/` **20** 个 JSON Schema；`pytest cli/tests` **1308 项**（含 **109** 项常驻跨工件
 一致性审计 `cli/tests/test_l0_consistency.py`）；golden 语料 **43** 个 fixture
 （`cli/tests/fixtures/golden/`，Rust 版逐字节验收面）；两份契约文档合计定义 **108 个场景编号**，
 台账见 `cli/tests/fixtures/golden/scenario_ledger.json`；决定拒绝的每个数值（搜索上限三件套、
@@ -189,7 +189,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 | **管家域步骤 1–9、11–12**：数据根注册（可跨卷）、只读 PE 静态探测、能力白名单发现、`adopt --mode reference`、依赖分流与确认、会话级环境激活、**user 级环境变量持久化**（plan → approval → 写入 → 精确还原）、删除语义分级、能力边界、`rebuild`、来源清单、`desired` 层与 `tool pin`、只读观察面、session 快照栈 | `cli\app\airoot\caps\`、`policy\{discovery-whitelist,sources,selection-policy,capabilities}.json` |
 | **`search` 协议面与 crawl 建的持久索引**（**不是** USN 索引）：请求/实现上限/root 规则/cursor 绑定索引 generation、有界 crawl、`cache\search\index.db` 整文件原子替换、索引状态接进 D7、**只读** USN 能力探测 | `cli\app\airoot\caps\{search,searchindex,usn}.py`、`policy\search-policy.json` |
 | **Skill 适配层**：`SKILL.md` 是仓库根的唯一 Skill 入口，另有机器可读调用元数据与按需参考 | `SKILL.md`、`agents\airoot.json`、`references\` |
-| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**1307 项**）、`cli\tests\fixtures\golden\`（**43 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
+| L0/L1 测试与语言无关 golden 语料 | `cli\tests\`（**1308 项**）、`cli\tests\fixtures\golden\`（**43 个 fixture**）、`cli\tests\scenario_ledger.py`（**108 个场景编号**的解析器与处置表，含每条 `undesigned` 的证人）、`cli\tests\execution_bounds.py`（**决定拒绝的每个数值**的解析器与来源声明）、`references\confirmation.md`（三选一与"记忆只读"已绑到代码） |
 
 **P1 退出条件已验证**：
 
@@ -246,7 +246,12 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
 - **真实 artifact 的下载与验证**：**已对真实上游执行过一次**（§59，证据是 `real_machine_acceptance.py
   --online` 的输出：`static.rust-lang.org` 的 `rustup-init.exe` **12 721 664 字节**，SHA256 与上游发布的
   校验和一致）。这是**一次记录下来的实测**而不是常驻检查——网络不进 `pytest`（套件必须自足），
-  不传 `--online` 时脚本**自报 not run**。`stage`/`commit` **没跑过**，因为 P1 没有生产批准签发方；
+  不传 `--online` 时脚本**自报 not run**。`stage`/`commit` 在 §59 **没跑**（当时的理由是"P1 没有生产批准
+  签发方"），**§117 把它们在真机上跑完了**：冻结 `rust-toolchain`（`cap-3`）→ `plan` → **显式本机签发**
+  （ADR-0046）→ `install` 报 `FINALIZED`，落进 store 的就是那 **12 721 664 字节**、digest 与上游逐字节
+  相同；**§118 又执行了它**（`rustup-init.exe -y --no-modify-path --profile minimal`，19.1 秒，
+  rustc/cargo 1.98.1 真编译过）。所以这一条今天要分成两半读：**下载与验证**是随时可复现的实测，
+  **stage/commit** 是"做过、但每次都需要一次显式的本地签发"——没有 CLI 动词会替你签；
 - `file_search` 的 **USN 常驻索引器**：属 P2（初始全量枚举需要 broker）；协议面与受控 crawl 已可用；
 - `reconcile`、`path backup|restore`、`root adopt|relocate`：已按命令路径登记为未实现，并且
   **每条都写明了"为什么"与"什么才能解锁它"**——`agents\airoot.json` 的 `deferred` 分三类
@@ -276,7 +281,8 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
   **§65 又把上面那句话里的一个分句修掉了**：`events` 表现在**有** `approval_mode` 列（迁移 v6），
   批准事件与事务的 `PROPOSED` 事件都记录它——三大核心契约 决策3 要求的"必须记录
   `approval_mode=policy`"因此从一句话变成可查的事实。P-012 仍记 `undesigned`，但缺的只剩**产生**
-  策略批准的那一方（没有生产签发方）。
+  策略批准的那一方——**ADR-0046 之后这半句要改写**：本机可以签出 `approval_mode=policy` 的 token（显式
+  的本地步骤 `tx/issuer.py`），缺的是**自动**批准这个动作本身，没有任何组件会替一个动作决定"这属于低风险"。
   **§63 把 C-028 从"缺一个命令形式"变成已交付**：`env forget --all` 现在存在（§13.4 一直要求它、
   `environment_persist` 的建表注释也一直写着它），`--all` 与"给一个 id"不能混用，全部还原只碰
   AIROOT 写过的变量。

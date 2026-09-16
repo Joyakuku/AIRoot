@@ -32,8 +32,10 @@ Five negatives, because each is the nearest misreading of what this is:
 
 **What can be honoured, and what cannot.** `probe_root` is the only operation this build answers.
 `commit_plan`, `recover_transaction` and `gc_apply` are refused with `NOT_IMPLEMENTED` (exit 1) and
-ADR-0025's pointer, because they need the production approval issuer and the elevated broker that
-ADR-0025's D1 leaves to P2. The routing is :data:`ROUTING`, with one line of *why* per refused
+ADR-0025's pointer, because they need the elevated broker that ADR-0025's D1 leaves to P2. **The
+approval signer is not what they wait for** — since ADR-0046 a token comes from a local, explicit step
+(`tx/issuer.py`) — and holding one would still not be the authority this pipe lacks. The routing is
+:data:`ROUTING`, with one line of *why* per refused
 operation in :data:`REFUSAL_REASONS` — the pattern `protocol.ADDITIONAL_REQUIREMENT_REASONS` uses — so
 the refusal is a decision a reader can re-examine rather than a rule whose only defence is that
 deleting it turns a test red.
@@ -542,10 +544,9 @@ def _convert_sddl(advapi32: Any, sddl: str) -> _SecurityDescriptor:
 #: its absence is the statement that this build answers it.
 REFUSAL_REASONS: dict[str, str] = {
     "commit_plan": (
-        "a commit writes Zone R and moves the active binding at ACTIVE_BOUND, which needs both the "
-        "elevated broker and the approval issuer ADR-0025's D1 leaves to P2 — the pipe is real but "
-        "the process behind it is not, and a same-user server that changed a binding would be "
-        "claiming an authority its own DACL does not give it"
+        "a commit writes Zone R and moves the active binding at ACTIVE_BOUND — the pipe is real but "
+        "the process behind it is not a protected one, and a same-user server that changed a binding "
+        "would be claiming an authority its own DACL does not give it"
     ),
     "recover_transaction": (
         "a recovery reconciles a journal by acting on it (docs/broker §8), so it writes the same "
@@ -554,8 +555,9 @@ REFUSAL_REASONS: dict[str, str] = {
     ),
     "gc_apply": (
         "a gc apply deletes a payload after consuming an approval token; the deletion grading is "
-        "implemented (caps/lifecycle.py) but the approval issuer that could authorise it is not "
-        "(ADR-0025's D1), and a deletion cannot be taken back by a later stage"
+        "implemented (caps/lifecycle.py) and the token is obtainable on this machine (ADR-0046 made "
+        "signing a local, explicit step), but the process that would consume it here is a same-user "
+        "pipe server, and a deletion cannot be taken back by a later stage"
     ),
 }
 
@@ -753,14 +755,15 @@ def _operation_refusal(operation: str) -> AirootError:
         base.reason_code,
         f"{operation} is refused by the user compatibility mode's server: "
         f"{REFUSAL_REASONS[operation]} "
-        "(decided: ADR-0025 leaves the production approval issuer and the elevated broker to P2)",
+        "(decided: ADR-0025 leaves the elevated broker to P2)",
         evidence=[
             f"operation: {operation}",
             f"security_mode: {SECURITY_MODE}, enforcement: {enforcement_for(SECURITY_MODE)} — this "
             "pipe is served by a same-user process, so nothing here could enforce what the operation "
             "needs",
             f"why this operation is not honoured: {REFUSAL_REASONS[operation]}",
-            "ADR-0025 (D1) keeps the production issuer and the elevated broker waiting for P2",
+            "ADR-0025 (D1) keeps the elevated broker out of this build; the approval signer is not "
+            "what this waits for (ADR-0046 made it a local, explicit step)",
         ],
         details={"operation": operation, "adr": "ADR-0025"},
     )

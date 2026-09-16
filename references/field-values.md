@@ -29,7 +29,7 @@
 |---|---|---|---|
 | `status` | `healthy` / `degraded` / `broken` / `recovery_required` | 一次 `doctor` 的总结论，由诊断的 `severity` 集合推出：有 `error`/`critical` → `broken`，只有 `warning` → `degraded`；根标记/卷身份/日志损坏这类先于一切的问题 → `recovery_required`。退出码分别 0 / 2 / 3 / 4 | `caps/doctor.py` |
 | `diagnostics[].severity` | `info` / `warning` / `error` / `critical` | 单条诊断的严重度。`critical` 是"AIROOT 连自己在哪台机器上都不确定"这一档（根标记/卷身份/registry 元数据读不出来）——它和 `error` 一样把 `status` 推成 `broken`，但**repair 不再是它建议的动作** | `caps/doctor.py` |
-| `diagnostics[].remediation` | `none` / `inspect` / `repair` / `rebuild` / `reapprove`† / `recover` | 建议你下一步做什么：`none` 不用管；`inspect` 人看一眼（AIROOT 没有对应命令）；`repair` → `airoot repair`；`rebuild` → `airoot rebuild`（**只重建派生投影，数据库永不重建**）；`recover` → 按 journal 做恢复。`reapprove` 表示"需要重新拿一次批准"，但**这一版没有生产批准签发方**——所以谁也产生不出它，遇到它请当作版本不一致 | `caps/doctor.py` |
+| `diagnostics[].remediation` | `none` / `inspect` / `repair` / `rebuild` / `reapprove`† / `recover` | 建议你下一步做什么：`none` 不用管；`inspect` 人看一眼（AIROOT 没有对应命令）；`repair` → `airoot repair`；`rebuild` → `airoot rebuild`（**只重建派生投影，数据库永不重建**）；`recover` → 按 journal 做恢复。`reapprove` 表示"需要重新拿一次批准"，但**这个 build 里没有任何 doctor 检查会产生它**（所以它带 †）：批准本身现在签得出来（ADR-0046 的本机签发），缺的是**判定"这一条得重新批"的那条检查**——遇到它请当作版本不一致 | `caps/doctor.py` |
 
 ## `error-response.schema.json`
 
@@ -133,8 +133,8 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `approval_mode` | `human`† / `policy`† | 这次批准是人给的还是策略自动给的。**这一版没有生产签发方**（ADR-0024 已由 ADR-0025 的 D1 裁决为"维持现状，等 P2 的受保护 broker"），所以 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 在真机上走到 `--token-file` 都会 `PROVENANCE_FAILED`(7)；唯一能签出 token 的是 `cli/tests/fake_issuer.py`，它签的是 `human`。**两个值都打 †，因为这一版没有任何代码构造出一份 token**（§93：`tx/approval.py` 只**接受与校验**它——原先这一栏把它记成写者，与同一行左边那句"没有生产签发方"自相矛盾） | （没有写者） |
-| `signature.algorithm` | `ed25519`† / `test_hmac_sha256`† | 签名算法。`test_hmac_sha256` **只允许出现在测试与模拟路径**；核心只做校验，`airoot approve` 永不凭空造批准。**两个值都打 †**：`tx/approval.py` 里的那两次出现是校验器**接受**的两个常量（`PRODUCTION_ALGORITHM` / `TEST_ALGORITHM`），不是往 token 里写的值——一份 token 里的算法长得像 `"algorithm": "..."`，而这个 build 里没有那样一处（§93） | （没有写者） |
+| `approval_mode` | `human` / `policy` | 这次批准是人给的还是策略自动给的。**自 ADR-0046 起本机可以签**：`tx/issuer.py` 的 `issue` 把这个字段写成它收到的 `mode`，默认 `policy`；`human` 要求显式给 `approved_by_sid`，签发方拒绝替人编一个 SID（"an agent request is never a human approval"）。**两个值都不再打 †**——这一版真的会写出它们。**批准是账本，不是授权证明**：私钥就在 root 里，同用户进程读得到也签得出，验签只证明一致性（ADR-0046） | `tx/issuer.py` |
+| `signature.algorithm` | `ed25519` / `test_hmac_sha256`† | 签名算法。`ed25519` 这一版真的会写出：`tx/issuer.py` 把 `algorithm` 写成 `PRODUCTION_ALGORITHM`，而那个常量定义在 `tx/approval.py`（`PRODUCTION_ALGORITHM = "ed25519"`）。`test_hmac_sha256` **仍然打 †**：核心只把它当校验器**接受**的一个常量，没有任何核心代码把它写进一份文档——写它的是测试路径的 `cli/tests/fake_issuer.py`。§119 复核了 §93 的结论：当时"这一版没有任何代码构造出一份 token"是对的，ADR-0046 造出 `tx/issuer.py` 之后它不再对 | `tx/issuer.py`, `tx/approval.py` |
 
 ## `broker-request.schema.json`
 
@@ -158,6 +158,17 @@
   **是 schema 合法的**；本层仍然拒绝它（`INVALID_INPUT`(8)），因为进程内同名动作
   `caps/lifecycle.py` 的 `apply_gc_plan` 要 plan hash 与 approval token。这条不对称记在
   `docs/schema/README.md` 的已知缺口里（§108）。
+
+## `broker-response.schema.json`
+
+**核心也有了写者**（§115）：`broker/pipe.py` 的 `_answer` 造这份文档，返回前过 `validate_self`——
+它的第一份 golden 语料就是那次拒绝本身（`broker_response_pipe_refusal.json`）。§108 起它还有读者
+（`broker/protocol.py` 的 `parse_response` 会校验它、按 `status` 决定是否抛错），§110 起测试替身
+（`cli/tests/fake_broker.py`）也在造它——但**那些都不是这一节的写者**：这一节问的是核心。
+
+| 字段 | 取值 | 含义 | 本版谁写出 |
+|---|---|---|---|
+| `status` | `ok` / `rejected` / `failed`† / `recovery_required`† | 这次请求的裁决。**这个服务器只会写前两个**：`_status_for` 只按"退出码是不是成功"分流，成功是 `ok`、其余一律 `rejected`。`failed`（执行中失败）与 `recovery_required`（事务停在中间）需要这个服务器**没有的东西**——它最多跑一个只读操作，没有中途状态，所以那两个值是测试替身 `cli/tests/fake_broker.py` 才会写的；† 的含义与别处一致：**核心没有任何代码写出它们** | `broker/pipe.py` |
 
 ## `desired-manifest.schema.json`
 
@@ -332,29 +343,40 @@
 
 | schema | 类别 | 为什么不列 |
 |---|---|---|
-| `broker-response.schema.json` | `unbuilt` | **核心**没有构造者——但 §108 起它**有读者**（`broker/protocol.py` 的 `parse_response` 会校验它、按 `status` 决定是否抛错），§110 起它还有一个**测试路径的**生产者（`cli/tests/fake_broker.py`，进程内 loopback harness）。所以这一行的意思精确到："**核心**里没有人把这份文档造出来"；读者与测试替身都不是写者。它的 `status` 是这张表唯一还点名豁免的词汇（`enforcement` / `security_mode` 已改为引用 `common` 的定义，那一节有行） |
-| `root-marker.schema.json` | `no-own-vocabulary` | **这一版会写出它**——根标记文件是十三个被构造的 schema 之一（`state/root.json`）。它被列在这里是因为**它自己没有词汇**：`schema_version` 与 `protocol_version` 两个字段都是**版本钉**（见本节末尾）。**原先这里写的是"同上"**（即按两个 `broker-*` 那样归到"P2 未实现"），那句话是**错的**，§107 量出来后改的 |
+| `root-marker.schema.json` | `no-own-vocabulary` | **这一版会写出它**——根标记文件是被构造的 schema 之一（`state/root.json`）。它被列在这里是因为**它自己没有词汇**：`schema_version` 与 `protocol_version` 两个字段都是**版本钉**（见本节末尾）。**原先这里写的是"同上"**（即按两个 `broker-*` 那样归到"P2 未实现"），那句话是**错的**，§107 量出来后改的 |
+
+**这张表现在只剩一类，因为另一类**（`unbuilt`，"核心没有构造者"）**在 §119 失去了最后一个成员**。
+它的两个成员是 §108/§110 时代的 `broker-request` 与 `broker-response`：前者在 §108 离开（`protocol.py`
+的 `build_request` 成了写者），后者一直留在这里，理由是"§110 的替身造它不算核心造它"——而 **§115 的
+`broker/pipe.py` 的 `_answer` 就是核心的构造者**，那句话从此不成立。**这个漏洞被守卫漏了一整轮**：
+`_produced_schemas` 当时看不见 `document.update(posture())` 合进来的两个键，所以它把这份文档报成
+"没人造"，与文档的说法一致地错着；§119 补上了这条合并形状之后，判据才第一次说出实话。**一个没有成员的
+类别就是一个读者会遇到却查不到用处的词**，所以 `unbuilt` 这个词整个删掉（与 §82 删掉 `needs-decision`
+同一个理由）。**"谁写出"这个问题没有失去覆盖**：它由 `docs/schema/README.md` 那份**没有写者的 schema
+清单**接着答，那一份由守卫第三十四组双向钉死（依据是校验调用点与 `$ref` 图，不是语法走法）。
 
 这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105/§106）：**任何一个已发布
 schema 能携带的词汇**（跟 `$ref`、含唯一取值的 `const`），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`
-（`test_l1_field_values.py`）里被**点名**。今天被点名的只剩一条：`broker-response.status`——
-**`broker-request` 在 §108 离开了这张表**（它有了写者 `broker/protocol.py`，两个词汇各得一行），
-`broker-response.enforcement` 也在同一节被 `$ref` 到共享定义而不需要单独豁免。少一条、多一条都会红。
+（`test_l1_field_values.py`）里被**点名**。**今天那个集合是空的**：最后一条 `broker-response.status`
+在 §119 跟着这份文档的 `broker-response` 一节一起走了——§108 的 `broker-request` 与 §119 的
+`broker-response` 都是"有了写者就给词汇一行"的同一个动作。空集合是**允许**的（守卫两个方向都断言：
+没被点名的未记录词汇必须为零，被点名的必须真的还没记录），但它不是"没有这条判据"。
 
 **一套词汇"不在表里"只有三种合法理由**，而且这三种各有判据：
 
 1. **它在别处有行**——共享词汇（`common` 的 `$defs`）写在"定义处"那一节，别的文件不重复；
-2. **它被点名豁免**——`UNDOCUMENTED_BY_DESIGN` 里的四条（两个 `broker-*`），双向断言；
+2. **它被点名豁免**——`UNDOCUMENTED_BY_DESIGN`，双向断言（**今天一条都没有**）；
 3. **它是版本钉**——`VERSION_PIN_FIELDS` 里的字段名（`schema_version`/`protocol_version`/`schemaVersion`），
    值恒为 `1`，由 `docs/schema/README.md` 规则 1 与 `test_l1_schema_catalog` 守着，**不写表行**。
 
-类别那一列（`unbuilt` / `no-own-vocabulary`）不是给人看的标签：它是**判据读的那一格**。
+类别那一列（今天只剩 `no-own-vocabulary`）不是给人看的标签：它是**判据读的那一格**。
 "为什么不在表里"这件事的**声明**在文档里，**度量**在 `test_l1_field_values.py` 的
 `_measured_exempt_class` 里（"这一版有没有构造者" + "它自己有没有词汇"），两者必须一致——
 所以"给它编一个理由"这件事现在是做不到的。
 
 **"构造者"这个词是字面意思**（§108 量出来的一个后果）：这份表与它的守卫都只看 `cli/app/` 里的函数
-有没有把一份文档**造出来**。一个**读者**不算写者——所以 `broker-response` 有了 `parse_response` 之后
-仍然留在 `unbuilt` 那一类；**§110 把这条语义第一次实测了**：进程内 loopback harness 按设计就住在 `cli/tests/`（它不该住进那个
-用户可写、不被信任的包里），它**真的**开始构造 `broker-response` 之后，这一格**仍然是** `unbuilt`
-——测试替身不是产品文档的写者。这不是漏洞，是这条判据本来的意思（"谁写出"问的是核心）。
+有没有把一份文档**造出来**。一个**读者**不算写者，**测试替身也不算**——§110 把这条语义实测过一次：
+进程内 loopback harness 按设计就住在 `cli/tests/`（它不该住进那个用户可写、不被信任的包里），它开始
+构造 `broker-response` 之后，那一格**仍然是** `unbuilt`，因为测试替身不是产品文档的写者。**§119 把它翻
+过来纠正了一次，方向正好相反**：读法与替身都没让 `broker-response` 有写者，而 §115 的 `pipe.py`
+（**核心**里那个真的 `_answer`）有——所以那一格该走。同一个词的两个方向都量过，才是它现在的意思。

@@ -411,11 +411,14 @@ def main_run() -> int:
     # When it is not requested it says so rather than passing quietly, because "not checked" and
     # "checked and fine" must not look alike (draft §50's lesson, applied to a real machine).
     #
-    # It stops **before** stage/commit on purpose. Those live behind the transaction's approval
-    # token, and P1 has no production issuer — the only issuer is `cli/tests/fake_issuer.py`. So a
-    # real install cannot be *approved* on this machine, and inventing a token here to make the run
-    # look complete would be exactly the fake this project refuses. Download and verification are
-    # separate units that need no approval, and those are what this step proves.
+    # It stops **before** stage/commit on purpose. Those live behind the transaction's approval token,
+    # and since ADR-0046 that token comes from an **explicit local signing step** (`airoot.tx.issuer`:
+    # provision this root's key, then issue) rather than from anything this script may do on the
+    # operator's behalf. An acceptance run that provisioned a key and signed for you would erase exactly
+    # the record an approval exists to be, so the boundary is reported rather than faked. (Draft §117 did
+    # run the whole path on this machine once, deliberately: plan -> explicit issuance -> install
+    # FINALIZED, 12 721 664 bytes, digest identical to the published checksum.) Download and verification
+    # are separate units that need no approval, and those are what this step proves.
     if not ONLINE:
         print(f"{'online acquisition (draft 59)':<46} not run (pass --online)")
     else:
@@ -458,9 +461,8 @@ def main_run() -> int:
                 result.digest == artifact.digest,
             )
             print(
-                "    boundary: stage/commit need an approval token, and P1 has no production "
-                "issuer (only cli/tests/fake_issuer.py) - reported, not faked "
-                "(ADR-0025 keeps it waiting for the P2 broker)"
+                "    boundary: stage/commit need an approval token, and signing one is an explicit "
+                "local step (airoot.tx.issuer, ADR-0046) - not taken here, reported not faked"
             )
         except Exception as exc:  # noqa: BLE001 - an acceptance run reports, it does not explode
             check(f"online acquisition failed: {type(exc).__name__}: {exc}", False)

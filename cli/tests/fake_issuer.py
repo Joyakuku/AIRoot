@@ -1,10 +1,11 @@
 """Test-only approval issuer.
 
-The core deliberately cannot mint approvals (``airoot approve`` only consumes one),
-so the P1 simulation obtains its token from here. Mirrors the fake vertical slice:
-``test_hmac_sha256`` and a well-known test secret, neither of which is a production
-mechanism — ``docs/schema/README.md` permits this algorithm only inside the fake
-slice, and P1's simulation is the same protocol-level layer.
+The core never mints an approval as a side effect of anything (``airoot approve`` only consumes one),
+and since ADR-0046 it *can* mint one as an explicit local step (``airoot.tx.issuer``). This module
+stays the test path's issuer for a different reason: a test that needs a token must not depend on a
+key being provisioned in the operator's root, and ``test_hmac_sha256`` plus a well-known secret keeps
+the fixture cheap. Neither is a production mechanism — ``docs/schema/README.md`` permits this
+algorithm only inside the fake slice, and P1's simulation is the same protocol-level layer.
 """
 
 from __future__ import annotations

@@ -161,11 +161,14 @@ def load_keyring(root: Path) -> dict[str, ApprovalKey]:
     if not path.is_file():
         raise AirootError(
             "PROVENANCE_FAILED",
-            f"no approval keyring is installed; {ISSUER_PENDING}",
+            ISSUER_PENDING,
             evidence=[
                 str(path),
-                "the only issuer is the test one (cli/tests/fake_issuer.py); the core verifies but never mints",
-                "approve/install/env persist/tool gc --apply/uninstall cannot complete on a real machine until a protected issuer exists",
+                "the core never mints a token on its own: `airoot approve` only consumes one, so the "
+                "signer is a separate, explicit local step (`airoot.tx.issuer`)",
+                "provision this root's key, then hand the token to approve/install/env persist/"
+                "tool gc --apply/uninstall — the missing thing is this root's key, not the build's issuer",
+                "an approval is an audit record, not a proof of permission (decided: ADR-0046)",
             ],
         )
     try:

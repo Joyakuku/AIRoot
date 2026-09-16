@@ -2247,7 +2247,10 @@ Extension 的实现可以改变，但：
 2. Everything 只作为性能基准，还是提供显式 adapter；（**D7**：只做基准，**不写 adapter**）
 3. registry SQLite schema、migration 文件和 event 保留期限；（**D8-3**：不自动迁移、不自动裁剪审计事件；
    导出只读。schema 本身在第 1 层（已发布的 migration）里）
-4. human approval 的具体 UI/IPC 通道；（**D1**：维持现状，等 P2 的受保护 broker；今天没有任何生产签发方）
+4. human approval 的具体 UI/IPC 通道；（**D1**：维持现状，等 P2 的受保护 broker。**"今天没有任何生产签发方"
+   这句话自 ADR-0046 起不再成立**——本机可以签，走 `airoot.tx.issuer` 的显式本地步骤，批准是账本而不是
+   授权证明；仍然缺的是那条**人类通道**（谁按下确认、SID 从哪来），那才是这条待决项真正在等的东西。ADR-0046
+   取代了 ADR-0044 的"没有密钥"结论，并推翻草案 §113.6 第 6 条）
 5. 第一个 portable artifact、Windows runner 和故障注入夹具；（**D8-4**：`build` 是第一个真实 artifact，
    因为它是冻结清单里唯一有已注册可信来源的能力；runner 仍是 `cli/bin/airoot.cmd`；故障注入只用本地 fixture）
 6. Native Search 的用户级 indexer、broker 辅助模式以及不支持 NTFS 卷的 crawl 策略。（**D6**：形状已定——

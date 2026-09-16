@@ -10286,3 +10286,109 @@ cargo new + cargo build →  Hello, world!     （cargo build: OK）
    **AIROOT 今天没有"运行一个受管 payload"的动词**，而那正是 P5 Runtime 的题；记在这里，
    免得读者以为 `install` 会执行它装的东西（它不会，而且不该）。
 
+## 119. 写者出现了，说"没有人写它"的那几格没动
+
+### 119.1 起因：同一个拒绝语自己讲两个故事
+
+§117 与 §118 让"真机签发 → 真机安装 → 真机执行"这条路第一次走完，于是在 §118 收尾时回头读
+`tx/approval.py` 的拒绝语，看到的是一段**自相矛盾**的文字：
+
+```text
+no approval keyring is installed in this root; provision a signing key first
+  (decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)
+evidence:
+  the only issuer is the test one (cli/tests/fake_issuer.py); the core verifies but never mints
+  approve/install/env persist/tool gc --apply/uninstall cannot complete on a real machine until
+    a protected issuer exists
+```
+
+**摘要那句话是 ADR-0046 改过的，它下面两行 `evidence` 是改之前的样子**：同一个拒绝既说"本机可以签，
+先 provision"，又说"核心永远不会签发、真机上走不完"。读者只会看到后者，因为证据看起来更具体。
+
+### 119.2 顺着这一处扫出来的**三个同类**，以及为什么守卫没红
+
+**同类 1：`references/field-values.md` 的 `approval-token` 两行仍写"（没有写者）"**，正文还写着
+"这一版没有生产签发方""这一版没有任何代码构造出一份 token"。而 ADR-0046 的 `tx/issuer.py` 的 `issue`
+**就是**核心里的写者（返回前过 `validate_self`，§116 的 golden fixture 就是它造的）。
+
+**同类 2：`broker-response` 的豁免类别仍是 `unbuilt`**，理由那一格写着"**核心**没有构造者"。§115 的
+`broker/pipe.py` 的 `_answer` 就是核心构造者（造完过 `validate_self`，`broker_response_pipe_refusal.json`
+就是它写出来的），所以这句话从 §115 起就是假的。
+
+**同类 3：五个面还在说"这一版没有生产签发方"**——`agents/airoot.json` 的 `approve`/`install` lane 理由、
+`docs/AIROOT-总体方案规划-v0.3.md` §23 第 4 项、`references/confirmation.md` 的小节标题（标题说"没有可用
+实现"，正文下一段说"自 ADR-0046 起这条路是通的"）、`cli/app/airoot/policy/sources.json` 的 note
+（"stage/commit were NOT exercised"）、`cli/tests/real_machine_acceptance.py` 的边界行、`scenario_ledger.py`
+的 P-012/P-017、`docs/AIROOT-v0.3-规范审查报告.md` 的**当前状态节**（它自称描述当前状态，所以它不能说
+"stage/commit 没跑过"）。
+
+**为什么守卫一直绿，是这一节最该记的事**：
+`test_l1_field_values.py` 的写入者检查（§92/§93）**只跑一个方向**——"点了写者、却没有构造函数"报错。
+ADR-0046 是**造出**写者的那一次，缺陷落在另一半："表格说没有写者、而写者存在"。**一个单向检查在它检查的
+那个方向上永远正确，而它不检查的方向没有任何人看**。同类 2 还多一层：就算方向补齐了，**度量本身看不见
+它**——`_produced_schemas` 的语法走法只数函数自己的字典字面量与下标赋值，而 `broker-response` 有两个
+必填键是 `document.update(posture())` 合进来的，所以走法把这份文档报成"没人造"，**与文档一致地错着**。
+
+### 119.3 加了哪两条守卫，以及怎么验红
+
+**守卫一（同类 1，新）**：`test_l0_consistency.py` 的
+`test_a_schema_the_value_table_calls_writerless_is_declared_unwritten`。它把**两张表的声明**对起来：
+"`field-values.md` 里没有任何一行点写者的 schema"必须**恰好等于** "`docs/schema/README.md` 里那份由
+**校验调用点 + `$ref` 图**推导出来的没有写者的清单"。§92 的既有守卫是同一对表的另一个方向（"声明没有写者
+的，表格不得点写者"），两条合起来才是一个**等式**。
+
+**验红（实测，不是推演）**：把 `approval-token` 两行的写者列还原成"（没有写者）"，守卫报出
+`field-values.md gives approval-token no writer, but the catalog does not declare it unwritten`；
+改回正确值后无话可说。**两边的数都是推导的**，所以它不会因为谁改了措辞而失准。
+
+**守卫二（同类 2，改度量 + 已有的类别判据）**：`_produced_schemas` 补上一条合并形状
+（`document.update(f())`，且 `f` 必须是**唯一**的、返回值全是字典字面量的应用内函数），`unbuilt` 这个
+类别随之由已存在的 `test_each_exempt_schema_declares_the_reason_this_build_measures` 判死：
+`broker-response: the table says 'unbuilt', the build measures None`。补完之后实测**只有这一份文档
+位移**（15 → 16），没有第二处被"顺手"算进来。
+
+### 119.4 结果：`unbuilt` 这一类被删掉，而"谁写出"没有失去守卫
+
+`broker-response` 拿到它该有的那一节（`status` 一行，写者是 `broker/pipe.py`），于是豁免表只剩
+`root-marker`，`unbuilt` **失去了最后一个成员**。**没有成员的类别就是一个读者会遇到却查不到用处的词**，
+所以它整个删掉——与 §82 删 `needs-decision` 同一个理由。同时清空的还有
+`UNDOCUMENTED_BY_DESIGN`：最后一条 `broker-response.status` 跟着那一节一起被记录了。
+
+**这两处清空都不是"判据变松了"，而是它一直在说的那件事终于成立**：
+"这份文档有没有写者"由 `docs/schema/README.md` 的推导清单接着答（守卫第三十四组，依据是校验调用点与
+`$ref` 图），那份清单比豁免表更接近问题本身。
+
+### 119.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1307 → 1308**（+1：新增的双向守卫；`test_l2_approval_ed25519.py` 的那条断言改成三句，是同一个用例） |
+| 审计检查（`test_l0_consistency.py`） | **108 → 109** |
+| golden 语料 | 43 → 43（**数量不变，两份内容变了**：`broker_response_pipe_refusal.json` 的拒绝语证据、`scenario_ledger.json` 的 P-012/P-017 两段） |
+| 新增模块 | 无（改的是断言、措辞，与一处语法走法） |
+| 契约变更 | **无 schema 变更**；`EXEMPT_CLASSES` 少一个词、`UNDOCUMENTED_BY_DESIGN` 清空、`field-values.md` 的 `approval_token` 两行与 `broker-response` 一节是文档改动 |
+| 新增 ADR | **无**——这是 ADR-0046 的收尾，不是新裁决；裁决本身没有一处被改 |
+| 验红过的守卫 | 两条（上节各一处，都是"把缺陷放回去看它红不红"） |
+
+### 119.6 如实记录的边界
+
+1. **措辞扫不干净，而且这件事是可证的。** 能证明的只有**推导出来的那两处声明**（表格的写者列、
+   豁免表的类别）。**散文没有人守**：这一轮把所有找到的地方都改了——运行时拒绝语（`tx/approval.py` 的
+   `evidence`、`broker/protocol.py` 与 `broker/pipe.py` 的拒绝语与模块 docstring、`crypto/__init__.py`
+   的 docstring、`policy/sources.json` 的 note）、agent 面（`agents/airoot.json` 的三格、
+   `references/field-values.md`、`references/confirmation.md`）、层 3 文档（规划 §23 第 4 项）、审查
+   报告的当前状态节、验收脚本，以及四处测试注释与场景台账的 P-012/P-017；**但下一处同类仍会靠人查**。
+   所以这一节同时是一份清单——写清"哪几类声明有守卫、哪些只是这次读到了"。
+2. **走法仍然看不见 `{**f()}` 展开**。今天应用里唯一真正用到合并形状的地方就是 `update(posture())`
+   （实测：`grep` 全树只此一处），所以那条规则够用；但**下一个"把文档补齐一半再合并"的写法会让同一类
+   缺陷再藏一次**，位置就在 `_produced_schemas` 的走法里。
+3. **`human` 那一格的不再打 † 是实测过的**，不是从字面推的：`test_l2_issuer.py` 的
+   `test_human_mode_refuses_rather_than_inventing_a_sid` 既断言缺 SID 被拒，也断言给了
+   `approved_by_sid` 之后 `approval_mode == "human"`。† 的含义是"**没有任何代码会写出它**"，而这一格
+   现在有代码写出它——**缺的仍然是那条**人类**通道**（谁按下确认、SID 从哪来），那是 D1 的事，与
+   "字段写不写得出来"是两件事。
+4. **没有动那些属于历史的文字**：ADR 日志里 ADR-0024/0025/0046 的记录、本草案 §59/§65/§67/§93/§116
+   各节、以及审查报告**前文**的快照（它写着"审查时的数字"）——ADR-0028 的规则是计数守卫不得要求重写
+   历史，同一理由适用于这些句子：它们记录当时为真的事实，改了就成了伪造。
+
+
