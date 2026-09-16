@@ -1,0 +1,63 @@
+{
+  "data": {
+    "fallback": {
+      "kind": "crawl",
+      "reason": "no resident index covers this request; results come from a bounded crawl"
+    },
+    "freshness": {
+      "coverage": "none",
+      "lag_ms": null,
+      "last_indexed_at": null,
+      "state": "unknown"
+    },
+    "implementation_id": "airoot-native-search-crawl",
+    "next_cursor": null,
+    "query": "nested",
+    "results": [
+      {
+        "accessible": true,
+        "attributes": [
+          "directory"
+        ],
+        "capability_id": null,
+        "kind": "directory",
+        "management": "unmanaged",
+        "modified_at": "<MODIFIED_AT>",
+        "name": "nested",
+        "path": "<BASE>\\search\\with-directories\\nested",
+        "size": null,
+        "verification": "unverified"
+      }
+    ],
+    "stats": {
+      "index_records_examined": 2,
+      "matched": 1,
+      "returned": 1
+    }
+  },
+  "elapsed_ms": 1000,
+  "evidence": [
+    {
+      "detail": "<BASE>\\search\\with-directories",
+      "kind": "search_roots"
+    },
+    {
+      "detail": "srch-4 (source=file); consistency=bounded_staleness",
+      "kind": "search_policy"
+    },
+    {
+      "detail": "crawl (generation=no-index)",
+      "kind": "search_source"
+    }
+  ],
+  "extension_id": "airoot-native-search-extension",
+  "finished_at": "2024-01-01T00:05:17Z",
+  "operation": "search",
+  "reason_code": "SEARCH_FALLBACK_USED",
+  "schema_version": 1,
+  "started_at": "2024-01-01T00:05:16Z",
+  "status": "degraded",
+  "warnings": [
+    "no index answered this request; the result came from a live crawl, so max_staleness_ms was not applied"
+  ]
+}

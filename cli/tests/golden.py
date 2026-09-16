@@ -564,6 +564,68 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "exit_code": partial_code,
     }
 
+    # ---- search: the two result values `kind` and `verification` were missing (draft §96) --- #
+    # Walking **every** enum `search-response` declares (rather than the two §89/§95 had noticed) shows
+    # three result values with neither a fixture nor a dagger: `results[].kind = directory` and
+    # `results[].verification = verified` / `changed`. Each is producible, and each is produced by a
+    # *different* request field, which is why neither showed up by accident:
+    #
+    #   * a directory is a result only when the caller asks (`include_directories`); the policy default
+    #     is false, so every other fixture has no directory in it;
+    #   * `verified`/`changed` are the `physical_verify` verdicts — `verify_records` re-stats each hit
+    #     and marks `changed` when it moved, shrank or vanished between the crawl and the check. The
+    #     protocol forbids dressing that up as current fact (§6.3), so it is worth a fixture of its own.
+    directories_root = base / "search" / "with-directories"
+    (directories_root / "nested").mkdir(parents=True, exist_ok=True)
+    (directories_root / "python.exe").write_bytes(b"MZ-golden\n")
+    directory_request = build_search_request(
+        "nested", policy=policy, roots=[str(directories_root)], include_directories=True, limit=5
+    )
+    directory_roots, _directory_origin = resolve_roots(directory_request["roots"], policy=policy)
+    directory_document, directory_code = execute_search(
+        directory_request,
+        directory_roots,
+        extension_id="airoot-native-search-extension",
+        implementation_id="airoot-native-search-crawl",
+        policy=policy,
+        clock=clock,
+        time_source=lambda: 0.0,
+    )
+    documents["search_directories_response"] = {
+        "document": _normalize_search(directory_document),
+        "exit_code": directory_code,
+    }
+
+    # One index, one file rewritten after it: the answer carries the stale hit as `changed` and the
+    # untouched one as `verified`, in a single document. Rewriting beats deleting here — a vanished
+    # file is dropped by the index query's own accessibility re-check before it can reach the verdict,
+    # while a size that no longer matches is exactly what `physical_verify` exists to report.
+    verify_root = base / "search" / "verify"
+    verify_root.mkdir(parents=True, exist_ok=True)
+    (verify_root / "probe-keep.txt").write_text("keep\n", encoding="utf-8")
+    rewritten = verify_root / "probe-rewritten.txt"
+    rewritten.write_text("small\n", encoding="utf-8")
+    verify_index = base / "search" / "verify-index"
+    searchindex.build_index(verify_index, roots=[str(verify_root)], policy=policy, clock=clock)
+    rewritten.write_text("a different length entirely\n", encoding="utf-8")
+    verify_request = build_search_request(
+        "probe", policy=policy, roots=[str(verify_root)], consistency="physical_verify", limit=5
+    )
+    verify_roots, _verify_origin = resolve_roots(verify_request["roots"], policy=policy)
+    verify_document, verify_code = execute_search(
+        verify_request,
+        verify_roots,
+        extension_id="airoot-native-search-extension",
+        implementation_id="airoot-native-search-crawl",
+        policy=policy,
+        index_root=verify_index,
+        clock=clock,
+    )
+    documents["search_physical_verify_response"] = {
+        "document": _normalize_search(verify_document),
+        "exit_code": verify_code,
+    }
+
     # ---- the reason-code table itself ------------------------------------- #
     documents["reason_code_table"] = {
         "document": {

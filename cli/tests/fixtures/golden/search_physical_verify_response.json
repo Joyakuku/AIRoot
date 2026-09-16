@@ -1,0 +1,76 @@
+{
+  "data": {
+    "fallback": null,
+    "freshness": {
+      "coverage": "complete_for_roots",
+      "lag_ms": 2000,
+      "last_indexed_at": "2024-01-01T00:05:18Z",
+      "state": "current"
+    },
+    "implementation_id": "airoot-native-search-crawl",
+    "next_cursor": null,
+    "query": "probe",
+    "results": [
+      {
+        "accessible": true,
+        "attributes": [
+          "archive"
+        ],
+        "capability_id": null,
+        "kind": "file",
+        "management": "unmanaged",
+        "modified_at": "<MODIFIED_AT>",
+        "name": "probe-keep.txt",
+        "path": "<BASE>\\search\\verify\\probe-keep.txt",
+        "size": 6,
+        "verification": "verified"
+      },
+      {
+        "accessible": true,
+        "attributes": [
+          "archive"
+        ],
+        "capability_id": null,
+        "kind": "file",
+        "management": "unmanaged",
+        "modified_at": "<MODIFIED_AT>",
+        "name": "probe-rewritten.txt",
+        "path": "<BASE>\\search\\verify\\probe-rewritten.txt",
+        "size": 7,
+        "verification": "changed"
+      }
+    ],
+    "stats": {
+      "index_records_examined": 2,
+      "matched": 2,
+      "returned": 2
+    }
+  },
+  "elapsed_ms": 2000,
+  "evidence": [
+    {
+      "detail": "<BASE>\\search\\verify",
+      "kind": "search_roots"
+    },
+    {
+      "detail": "srch-4 (source=file); consistency=physical_verify",
+      "kind": "search_policy"
+    },
+    {
+      "detail": "index (generation=crawl-index:2024-01-01T00:05:18Z:2)",
+      "kind": "search_source"
+    },
+    {
+      "detail": "built_at=2024-01-01T00:05:18Z records=2 coverage=complete_for_roots",
+      "kind": "search_index"
+    }
+  ],
+  "extension_id": "airoot-native-search-extension",
+  "finished_at": "2024-01-01T00:05:21Z",
+  "operation": "search",
+  "reason_code": null,
+  "schema_version": 1,
+  "started_at": "2024-01-01T00:05:19Z",
+  "status": "ok",
+  "warnings": []
+}

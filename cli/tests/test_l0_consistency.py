@@ -752,17 +752,47 @@ def test_every_machine_readable_outcome_has_a_fixture() -> None:
     assert _outcome_coverage_problems(documents, statuses, reason_codes | {"TELEPORT_FAILED"}) != []
 
 
-#: The two `search` result fields with an enum the corpus can cover. Both are **conclusions**, and
-#: both live in a fixture, so "does the corpus show this value" is a question the corpus can answer.
-#: `status` is the verdict; `data.freshness.coverage` says how much of the roots the answer rests on —
-#: a truncated index build is `partial` while the status stays `degraded`, which is why the two are
-#: checked separately (draft §95).
-SEARCH_RESULT_FIELDS: dict[str, Any] = {
-    "status": lambda document: document.get("status"),
-    "data.freshness.coverage": lambda document: (
-        (document.get("data") or {}).get("freshness") or {}
-    ).get("coverage"),
-}
+#: Every enum `search-response` declares, as `{documented path: values}` — **derived from the schema**,
+#: not listed here. §89 covered `status`, §95 covered `data.freshness.coverage`, and §95 recorded the
+#: weakness of that: a third such field would arrive with nothing to remind anyone. Walking the schema
+#: removes the hand list; §96 then found three values it had been hiding (`results[].kind = directory`,
+#: `results[].verification = verified` / `changed`), each produced by a different request field.
+def _search_response_enums() -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+
+    def walk(node: Any, prefix: str) -> None:
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get("enum"), list):
+            found[prefix] = [str(item) for item in node["enum"]]
+        for name, child in (node.get("properties") or {}).items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+        if "items" in node:
+            walk(node["items"], f"{prefix}[]")
+
+    walk(load_schema("search-response"), "")
+    return found
+
+
+def _values_at(document: dict[str, Any], path: str) -> set[str]:
+    """Every value `path` (`a.b[].c`) holds in one document, with the `[]` segment draining lists."""
+
+    nodes: list[Any] = [document]
+    for segment in path.split("."):
+        drained = segment.endswith("[]")
+        key = segment[:-2] if drained else segment
+        nxt: list[Any] = []
+        for node in nodes:
+            if not isinstance(node, dict) or key not in node:
+                continue
+            value = node[key]
+            if drained:
+                if isinstance(value, list):
+                    nxt.extend(value)
+            else:
+                nxt.append(value)
+        nodes = nxt
+    return {node for node in nodes if isinstance(node, str)}
 
 
 def _search_field_coverage_problems(
@@ -770,30 +800,33 @@ def _search_field_coverage_problems(
 ) -> list[str]:
     """Every value of `path` needs a fixture, unless the field table says nothing writes it."""
 
-    extract = SEARCH_RESULT_FIELDS[path]
-    seen = {extract(doc) for name, doc in documents.items() if name.startswith("search_")}
+    seen: set[str] = set()
+    for name, document in documents.items():
+        if name.startswith("search_"):
+            seen |= _values_at(document, path)
     return [f"no search fixture reports {path} = {value}" for value in sorted(values - seen - daggered)]
 
 
-@pytest.mark.parametrize("path", sorted(SEARCH_RESULT_FIELDS))
+@pytest.mark.parametrize("path", sorted(_search_response_enums()))
 def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: str) -> None:
-    """The §88/§89 rule, one level deeper: the verdict *and* how much of the roots it rests on.
+    """Every enum `search-response` declares, one case each, with the exceptions read from the doc.
 
-    §89 asked this of `search-response.status`; `data.freshness.coverage` states the same kind of
-    conclusion and had the same kind of gap — `partial` is producible (an index build that stopped at
-    its record bound) and had no fixture at all. The *values* and the exceptions both come from
-    `references/field-values.md`, whose own guard ties them to the schema, so a value that loses its
-    dagger has to gain a fixture and vice versa.
+    §89 asked this of `status` and §95 of `data.freshness.coverage`; both wrote their field list by
+    hand. This walks the schema instead, so a new enum — or a new value on an existing one — is covered
+    or red without anyone remembering to add a line. The values and the excuses still come from
+    `references/field-values.md`, whose own guard ties them to the same schema.
     """
 
     from test_l1_field_values import ROWS
 
+    declared = _search_response_enums()[path]
     row = next(
         (item for item in ROWS if item.schema == "search-response" and item.path == path), None
     )
     assert row is not None, f"field-values.md no longer documents {path}"
     values, daggered = set(row.values), set(row.daggers)
-    assert values, f"{path} has no documented values; this guard is about nothing"
+    # Not a restatement of the table: the two sources have to agree before either can be used.
+    assert values == set(declared), f"{path}: doc={sorted(values)} schema={sorted(declared)}"
 
     documents = _golden_documents()
     assert _search_field_coverage_problems(documents, path, values, daggered) == [], "; ".join(
@@ -815,6 +848,9 @@ def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: st
         assert _search_field_coverage_problems(documents, path, values, set()) == [], (
             f"{path} has no daggered value, so the corpus must already carry all of them"
         )
+    assert _values_at({"a": {"b": [{"c": "x"}]}}, "a.b[].c") == {"x"}, (
+        "the path walker has to reach a value through a list, or this guard checks nothing"
+    )
 
 
 # --- Guard group 32: printed documents and acceptance fixtures are the same set (draft §90) ------

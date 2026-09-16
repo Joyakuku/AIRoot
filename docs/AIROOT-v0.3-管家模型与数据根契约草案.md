@@ -8011,3 +8011,81 @@ if token["approval_mode"] == "human" and not token.get("approved_by_sid"):   # �
 5. 把守卫从"一个字段"推广成"一类字段"，取值与例外都从字段取值表读；
 6. 逐个验红，**发现"去掉 †"这条变异对没有 † 的字段是装饰**，按有没有 † 分成两种验法；
 7. 回写计数——并发现"审计检查数"是测试函数数（不是收集数），改回 95；跑全量 + 旧切片 + 真机验收；提交。
+## 96. 第 96 阶段：把"哪些字段要查覆盖率"这件事，从手抄变成走一遍 schema
+
+### 96.1 这一阶段要解决什么
+
+§95 把 `search-response` 的覆盖率检查从 `status` 扩到 `data.freshness.coverage`，并在自己的边界里留下一条自认的弱点：
+
+> **`SEARCH_RESULT_FIELDS` 是手写的字段表，不是推出来的。** 它只有两项……**第三个这样的字段出现时，没有任何东西会提醒你加进去**。
+
+这一轮先修那句弱点，再看修完之后它抓到什么。
+
+### 96.2 实测：走一遍 schema，五个枚举里三个取值既没有语料、也没有 †
+
+判据换成**走一遍 `search-response` 的 `$defs`/`properties`/`items`，收集每一个 `enum`**（路径按字段取值表的写法生成，如 `data.results[].kind`）。五个枚举，逐个对语料（把每条 `search_*` fixture 按该路径取出所有取值）与字段取值表的 †：
+
+| 枚举字段 | 语料里有 | 没有的 | 有 † 吗 |
+|---|---|---|---|
+| `status` | `ok` / `degraded` / `timed_out` | `error` / `cancelled` | ✅ 两个都 † |
+| `data.freshness.state` | `current` / `stale` / `unknown` | `degraded` / `rebuilding` | ✅ 两个都 † |
+| `data.freshness.coverage` | 三个全有（§95 补的） | —— | 没有 †（**全部有写者**） |
+| **`data.results[].kind`** | `file` | **`directory`** | ❌ **没有 †** |
+| **`data.results[].verification`** | `unverified` / `indexed` | **`verified` / `changed`** | ❌ **没有 †** |
+
+**八个"没有 fixture"的取值里，五个有 † 可查、三个没有**——那三个就是这一轮要补的。它们躲过 §89/§95 的原因很具体：**每个都由请求里的另一个字段决定**。
+
+- `results[].kind = directory`：目录**只有调用方要**才是结果（`include_directories`），而 policy 默认 `false`——所以其余每一份 fixture 里都没有目录；
+- `results[].verification = verified` / `changed`：这两个是 `physical_verify` 的裁决。`verify_records` 对每个命中重新 `stat`，**变了、没了、换了类型**就标 `changed`——协议明说**不许把它粉饰成当前事实**（§6.3），所以它值得有自己的一份语料。
+
+### 96.3 两条 fixture，覆盖那三个取值
+
+1. **`search_directories_response`**：一棵含子目录的树 + `include_directories=True` 的 crawl → `kind=directory`、`size=null`、`attributes=["directory"]`。
+2. **`search_physical_verify_response`**：建索引 → **改写其中一个文件** → 用 `consistency=physical_verify` 查一次 → 一份文档里同时给出 `changed`（尺寸与索引里记的不符）与 `verified`（另一个一动不动）。
+
+**第二条的构造过程里否掉了一个想当然的做法。** 第一版是"建完索引把文件**删掉**"，结果 `changed` 没出现：`query_index` 在把索引记录交给分页之前会**重新探一次可访问性**（`searchindex.py:355`），删掉的文件在 `accessible_only` 下当场被丢掉，根本走不到裁决那一步。**"改内容"能到、"删文件"到不了**——这条差别是量的结果，不是想出来的；它同时说明"索引里的记录在查询时已经被挡过一层"，值得写下来。
+
+### 96.4 做了什么
+
+1. **补两份 fixture**（语料 33 → 35），在 `SCHEMA_FOR_FIXTURE` 里注册为 `search-response`。
+2. **把 §95 手写的 `SEARCH_RESULT_FIELDS` 换成走 schema 推导**：`_search_response_enums()` 收集 schema 里**每一个** `enum`（`properties` 下钻、`items` 生成 `[]` 段），取值**从路径取出**（`_values_at` 按 `.` 与 `[]` 拆段），† 从 `references/field-values.md` 读。**加一个枚举、或给已有枚举加一个取值，都会自动多一个用例**——§95 记下的那句弱点就此关闭。
+3. 覆盖率守卫从 2 个用例变成 **5 个**（parametrize 在推导出来的路径上），并加了一句"路径走法本身要能穿过列表"的自检（空转防守）。
+
+### 96.5 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| **把两份新 fixture 都移走**（回到这一阶段发现的状态） | 红 | ✅ 红两条用例：`no search fixture reports data.results[].kind = directory` 与 `... verification = changed / verified` |
+| 空语料 | 红 | ✅ 红——每个取值都必须被报出来 |
+| 有 † 的字段去掉 † | 红 | ✅ 红（`status` 与 `freshness.state` 各一次） |
+| 给 schema 的某个枚举加一个取值 | 红 | ✅ 红（字段取值表那组守卫先红在 claim 1；这一组随后要求它有 fixture） |
+| 路径走法不穿列表 | 红 | ✅ 红（同一测试里的自检） |
+
+### 96.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **853 → 856**（覆盖率守卫由 2 个用例变成 5 个） |
+| 审计检查（`test_l0_consistency.py`） | **95 → 95**（不变，见 §95.7-1：这个数按**测试函数**数） |
+| golden fixture | **33 → 35**（`search_directories_response` / `search_physical_verify_response`） |
+| 语料重生 | 是；**既有 33 个 fixture 逐字节不变，只有 `index.json` 变** |
+| schema / 代码 / policy | **一个字节没动**（补的是语料与守卫，不是实现） |
+
+### 96.7 如实记录的边界
+
+1. **走 schema 只覆盖 `search-response`。** 其他有枚举的文档（`where-response`、`doctor-response`、`registry-projection`、`plan`……）**没有**做同样的覆盖率检查——§88/§89 只给 `where`/`doctor`/`search` 的**结论字段**立了规则。要不要把这条推广到每一份 schema 是**下一次判断**，而且代价明显更大（`plan`/`reference-plan` 的枚举取值里有很多是 P4/P5 才写的，会需要一大批 †）。
+2. **"有 fixture"是"取值在语料里出现过"，不是"这条分支被断言过"。** 一份 fixture 可以同时被两组守卫用（§87 的退出码、§88 的覆盖率），但**没有**任何东西保证举例的那个取值是被**独立**构造出来的——`search_physical_verify_response` 是个例外，它一次给两个取值，也正因为如此，**如果哪天 `verify_records` 只写其中一个，这条守卫不会察觉**。
+3. **`changed` 的 fixture 依赖"索引里的记录没有被查询时刷新尺寸"。** 这是实现事实（`query_index` 用索引里存的 `size` 过滤、`verify_records` 才去 `stat`）。哪天有人让查询顺手刷新尺寸，**`changed` 就会从这条路消失**——那时这条守卫会红，因为语料里那个取值会跟着消失。这是设计好的红，不是脆。
+4. **`freshness.state` 纳入检查后是绿的**（三个有写者的取值都有语料，两个没写者的有 †）。也就是说这一轮**没有**发现它有问题——**"查了但没事"和"没查"必须分得清**，所以它仍然算这一轮的产出：它从"没查"变成了"查过、当时是干净的"。
+5. **`_values_at` 的路径方言与字段取值表是同一套**（`a.b[].c`）。这意味着**字段取值表里写不出路径的字段，这个守卫也覆盖不到**——比如数组下标之外的结构（`$defs` 里的嵌套 `$defs`）。今天需要覆盖的五个都在这一套里。
+6. **两份新 fixture 都是合成的**，与其余 33 条一样：它们证"这两个取值能被产生、且形状是这样"，**不证**"真机上会以这种方式发生"。
+
+### 96.8 实施顺序
+
+1. 先读 §95 留下的那句弱点（"手写的字段表"），把它当成这一轮的第一件事；
+2. 写一个**走 schema 的枚举收集器**，先把五个枚举与语料、† 三张表并排摆出来；
+3. 发现三个"既没有 fixture 也没有 †"的取值，并逐个找出**它们各自被请求里的哪个字段决定**（这解释了它们为什么躲过了前两轮）；
+4. 构造前先试最直觉的做法（删文件）——**量出来它到不了裁决**（索引查询会重探可访问性），改成"改内容"；
+5. 两份 fixture 都放在搜索小节**末尾**（`execute_search` 读共享 `FakeClock`，§89 的教训），重生成后确认 diff 是外科式的；
+6. 把守卫的手写表换成推导，加"路径走法穿列表"的自检；
+7. 用**两份 fixture 都移走**验红（这是这一轮发现的真实状态），再补空语料与 † 两个方向；回写计数；跑全量 + 旧切片 + 真机验收；提交。

@@ -39,6 +39,8 @@ SCHEMA_FOR_FIXTURE = {
     "search_response": "search-response",
     "search_timeout_response": "search-response",
     "search_truncated_index_response": "search-response",
+    "search_directories_response": "search-response",
+    "search_physical_verify_response": "search-response",
     "search_index_response": "search-response",
     "search_stale_index_response": "search-response",
 }
