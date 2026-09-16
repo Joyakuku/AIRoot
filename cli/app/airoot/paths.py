@@ -100,12 +100,21 @@ def canonicalize(path: str | Path, *, root: Path | None = None, must_exist: bool
         resolved = candidate.resolve(strict=must_exist)
     except OSError as exc:
         raise AirootError("INVALID_INPUT", f"cannot resolve path: {path}", evidence=[str(exc)]) from exc
-    if root is not None and not is_within(resolved, Path(root)):
-        raise AirootError(
-            "PATH_ESCAPES_ROOT",
-            f"path escapes the AIROOT root: {resolved}",
-            evidence=[f"root={Path(root)}"],
-        )
+    if root is not None:
+        # **Both sides are resolved before they are compared.** The OS can spell one directory two
+        # ways -- an 8.3 component (`PROFIL~1`) versus its long name (`Administrator`) -- and
+        # `resolve()` expands the candidate while `Path(root)` stays as it was written. Comparing a
+        # resolved child with an unresolved root therefore reports a legal path as an escape; measured
+        # on a temp root whose `TEMP` is a short path, where `from_root_relative` refused a path that
+        # was plainly inside. `relative_to_root` below already resolved the root, so this also makes
+        # the two functions agree instead of disagreeing about what "inside" means.
+        resolved_root = Path(root).resolve()
+        if not is_within(resolved, resolved_root):
+            raise AirootError(
+                "PATH_ESCAPES_ROOT",
+                f"path escapes the AIROOT root: {path}",
+                evidence=[f"root={resolved_root}", f"resolved candidate={resolved}"],
+            )
     return resolved
 
 

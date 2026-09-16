@@ -10952,3 +10952,52 @@ pytest 里的 `test_a_new_version_rewrites_no_launcher_bytes` 用的是**模拟 
 **把配方写在这里，是为了让下一轮不必重新测量一遍同样的东西。**
 
 **#14 下一轮必须先从这一个矛盾量起。** 注入的接口是清楚的：`TransactionJournal` 吃一个带 `checkpoint(state)` 的对象（`conftest.FaultInjector` 就是它），`ArtifactRunner(registry, backend, injector=...)` 接受它，`_runner_for` 用 `resolve_backend(plan["metadata"]["backend_id"], root=...)` 选后端。但上一次按同样方式构造时，**在到达任何状态之前**就报了 `AirootError: path escapes the AIROOT root: <root>\store\archive\probe-tool\9.9.9\win-x64`；而按代码读，`ArtifactRunner` 的 `self.root = Path(registry.path).parent.parent`、`Registry.db_path = root/state/registry.db`，两者推出来**都应该是 root**——**读数与代码不一致，所以先解释这个矛盾，再写断言**。那一次后续 `repair` 报的是 `action=resume_or_expire`、`repaired[0].result.outcome=DIGEST_MISMATCH`（`where` → `NOT_FOUND`、`doctor` healthy），但那是被那个早期失败污染过的事务，**不能当作 #14 的期望形状**。
+## 126. 一次真机注入尝试挖出的路径缺陷：同一目录的两种拼写（W6 的 #14 副产品）
+
+**这一节是"跑一次"比"读代码"强的又一个例子。** §125 记下：为了给判据 #14 接故障注入，按同样方式构造
+`ArtifactRunner`，结果**在到达任何状态之前**就报 `path escapes the AIROOT root: <root>\store\...`，
+而按代码读两边推出来都应该是 root。这一节把那次的矛盾量清了。
+
+### 126.1 实测（一次就够）
+
+```text
+ROOT          = C:\Users\PROFIL~1\AppData\Local\Temp\airoot-round4-...\root     ← 8.3 短名
+registry.path = ...\root\state\registry.db
+runner.root   = ...\root                                        ← 与 ROOT 同拼写
+candidate     = ...\root\store\archive\probe-tool\9.9.9\win-x64   ← 同上
+异常里的路径   = C:\Users\ProfileName\AppData\Local\Temp\...\root\store\...  ← **长名**
+```
+
+`canonicalize`（`paths.py:91`）在 `paths.py:100` **解析候选**（`candidate.resolve()` 会把 `PROFIL~1`
+展开成长名），却在 `paths.py:103` 拿这个解析结果去和**没有解析的** `Path(root)` 比。于是同一个目录的两半
+拼写不同，一个**明明在 root 里**的路径被判成越界。**这不是测试环境的问题，是函数本身只解析了一边。**
+CLI 一路没踩到，是因为 `Context` 在入口把 root 规范化过一次；**把裸 root 交给库的调用方会踩到**。
+
+### 126.2 修法与守卫
+
+两边都解析之后再判包含关系（`resolved_root = Path(root).resolve()`），异常文本改报**调用方给的那个
+`path`**而不是解析后的候选（报候选会让"你给的路径"和"我看到的路径"混在一起，正是 §119 那一类）。
+
+守卫 `cli/tests/test_l1_paths.py`（新文件，2 条）：
+
+| 用例 | 断言 |
+|---|---|
+| 同一个 root 的**两种拼写** | `GetShortPathNameW` 拿到 8.3 拼写（拿不到就**跳过并说明**），两种拼写都必须接受同一个子目录，且返回同一个路径 |
+| 真的越界 | 仍然报 `PATH_ESCAPES_ROOT` —— **修法不能把检查关掉** |
+
+**验红**：把 `paths.py` 改回"只解析候选"，第一条立刻失败（这台机器的 `TEMP` 就是短名路径，所以这不是
+理论用例）；还原后逐字节相同。
+
+### 126.3 为什么它属于这一轮而不是"顺手"
+
+判据 #14 要求"中途崩溃能恢复或按规则回滚"在真机闭环上被验过，而**那一步的前提是能把事务停在某个状态**。
+停在半路需要直接调用库；而**直接调用库在这台机器上会先撞上这个缺陷**。所以"先修它"不是绕路，是 #14 的
+前置条件——**#14 本身仍然只做了一半**（注入器已接得上，断言尚未写），这一点在 §5 的判据表里没有变。
+
+### 126.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1357 → 1359**（+2：`cli/tests/test_l1_paths.py` 两条——两种拼写都要被接受、真的越界仍然拒绝。**跳过的那条也算一条测试**：它在没有 8.3 拼写的卷上 skip，但仍然被收集） |
+| 行为变化 | `canonicalize` 的**接受集变宽**（同一目录的另一种拼写不再被误判），**拒绝集不变**（真的越界仍然拒绝）——按 ADR-0021 属"放宽"，而它修的是一条被错误实现的规则，不是放松一条约束 |
+| golden 语料 / schema / ADR | 不变 |
