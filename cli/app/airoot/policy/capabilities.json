@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "cap-2",
+  "revision": "cap-3",
   "notes": [
     "The frozen capability list (draft §15.2 condition 1). A capability exists here only after it",
     "has been *frozen*: a name, the CLI entry it answers, the shape of its request/response, its",
@@ -16,7 +16,15 @@
     "cap-2 (draft §82, decision D9): `media_probe` was unfrozen. Freezing a name is what lets",
     "`discover`/`adopt`/`capability check` speak about it, and that name appeared in **no**",
     "agent-facing document and had no trusted source — an unexplained name is a name an account",
-    "cannot interpret. It can come back through the growth path above once something needs it."
+    "cannot interpret. It can come back through the growth path above once something needs it.",
+    "cap-3 (ADR-0047): `rust-toolchain` was frozen, which closes an accounting gap rather than",
+    "adding a new ambition. `policy/sources.json` had already declared a trusted source for it — with",
+    "a note recording that resolution and a 12721664-byte download had been verified against the real",
+    "upstream — while no frozen capability named it, so `plan rust-toolchain` refused with",
+    "CAPABILITY_NOT_DECLARED. The catalog and the capability list disagreed about what may exist.",
+    "`kind=tool`: the entry is a single self-contained installer, not an interpreter directory.",
+    "`side_effects` is not `[none]`: installing a rust-toolchain writes a payload into the store and",
+    "registers a managed instance, and the ceiling is the *worst* case rather than the polite one."
   ],
   "capabilities": [
     {
@@ -66,6 +74,14 @@
       "side_effects": ["none"],
       "scope": ["machine", "session", "project"],
       "notes": "a build tool is the classic machine-level generic CLI"
+    },
+    {
+      "capability_id": "rust-toolchain",
+      "kind": "tool",
+      "entry": "rustup-init.exe",
+      "side_effects": ["writes_store", "writes_registry"],
+      "scope": ["machine", "session"],
+      "notes": "rustup-init.exe (ADR-0001/ADR-0047); the entry is an installer, so the capability is a tool rather than a runtime directory. `side_effects` is the worst case: installing it writes a payload into the store and registers a managed instance. The catalog already declared its source before this name was frozen, which is the gap cap-3 closes"
     },
     {
       "capability_id": "fake-tool",

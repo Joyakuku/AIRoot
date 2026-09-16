@@ -10111,3 +10111,97 @@ ADR-0045 决定不做的。所以这条路不是"代价高"，是**它买不到�
    "把 `rustup-init.exe` 装进 store"是**下一次**的事——它要真机验收脚本改口径，而那是另一个决定。
 5. **`test_hmac_sha256` 仍然只许出现在测试路径**：本机签发用 `ed25519`，不是把测试算法搬进生产。
 
+## 117. 第一次真实安装：rustup-init.exe 进 store（ADR-0001 的入口打通）
+
+§116 让 `install` 的机制能跑完。本节是**真机上第一次真的装一个东西**——而且踩到两个只有真跑才会暴露的问题，
+两个都不是"操作失误"，是**账与账之间的不一致**。
+
+### 117.1 建的 root 与"装到哪里"
+
+| 项 | 值 |
+|---|---|
+| root | `D:\env\.airoot`（**新建**；建之前本机没有任何 root——`D:\airoot` 查过了，那是本仓库的另一份克隆） |
+| 卷序列 | `deadbeef`（与 `D:\env` 同一个卷，所以 store 与数据根同卷） |
+| `root_instance_id` | `root-home-d-env` |
+| `machine_id` | `machine-home-single-user`（**显式人命名的，不是硬件指纹**——P1 禁止从硬件推导） |
+| payload 落点 | `D:\env\.airoot\store\rust-toolchain\rustup-init\1.83.0\win-x64\rustup-init.exe` |
+
+**谁建的 root**：`init_root` 自己的文档写着 "test/bootstrap helper only"，而 `bootstrap` 动词仍是
+`needs-admin`（延后）。所以这个 root 是**一次性脚本**建的（`%TEMP%\airoot_bootstrap_root.py`），
+不是发明一个动词——**在真机上做的事，记在真机脚本里**。
+
+### 117.2 坑一：`machine_id` 不允许斜杠（**我自己造的**）
+
+第一次 bootstrap 写了 `machine/home-single-user`，`plan` 立刻拒绝：
+
+```text
+machine_id: 'machine/home-single-user' does not match '^[A-Za-z0-9._:-]{8,128}$'
+reason_code: SELF_VALIDATION_FAILED  →  "plan rejected a document produced by this build"
+```
+
+**自校验正确地抓住了它**，而且抓的是"这个 build 自己产出的文档不满足已发布契约"——正是它该管的事。
+`machine_id` 写在 registry 的 `meta` 表里，而 `meta` **按设计没有更新路径**（它是不变的）。当时那个 root
+里没有任何真实事务，所以处置是**重建那棵树**，而不是手工改权威：
+
+```text
+删除 D:\env\.airoot（只有 bootstrap 刚造的空壳）
+  → 用 machine-home-single-user 重建 root 与 registry
+  → 重新 provision 密钥（新 root 需要新的信任锚）
+```
+
+**为什么不直接 `UPDATE meta`**：那是绕过权威去做一件"删掉重来更便宜"的事。**删空壳比改权威便宜，而且不留歧义。**
+
+### 117.3 坑二：来源清单声明了一个**从未被冻结**的能力（**合同里的真缺口**）
+
+冻结清单 `cap-2` 有 7 项能力，**没有 `rust-toolchain`**；而可信来源清单 `src-1` **为它声明了来源**，
+备注里还记着 §59 对真实上游的验证。于是 `plan rust-toolchain` 报 `CAPABILITY_NOT_DECLARED`。
+
+**这是两份账在互相矛盾**：来源清单在为一个不存在的能力声明来源。契约 §15.4 的成长路径是
+"提议 → 冻结 → 白名单"，并明说**不得为了让某个对象能被管而临时放宽**。所以处置是**冻结它**：
+
+| | |
+|---|---|
+| revision | `cap-2` → **`cap-3`** |
+| 新条目 | `rust-toolchain` / `kind=tool` / `entry=rustup-init.exe` / `scope=[machine, session]` |
+| `side_effects` | `["writes_store", "writes_registry"]`——**不写 `[none]`**：安装会往 store 写 payload 并登记实例，而 ceiling 记的是**最坏情况**，不是客气的那一种 |
+| 为什么是 `tool` 而不是 `runtime` | 入口是一个自足的安装器，不是一个解释器目录 |
+
+代价照实说：这动了**冻结契约**，所以要重生 golden 语料（`frozen_capabilities.json`、`execution_bounds.json`）、
+改 `test_l1_boundary.py` 里钉住 revision 的那条字面量、并把新名字加到 `AGENTS.md` 的仓库地图。
+
+### 117.4 四步与它们的读数
+
+| 步 | 命令 | 结果 |
+|---|---|---|
+| 解析来源 | `resolve_source(capability_id="rust-toolchain", version="1.83.0")` | 摘要 `sha256:6f4bef6626…` **来自上游发布的 `.sha256` 文件**，不是自己算的；`offline=false` |
+| 计划 | `airoot --root D:\env\.airoot plan rust-toolchain --version 1.83.0 --source-json …` | `state\plans\plan_rust-toolchain_1.83.0_5e63c3f68c3a.json` |
+| 签发 | `issuer.issue`（独立工具，**不是 CLI 动词**） | `approval/rust-toolchain-1.83.0`，`ed25519`，`key_id=airoot-local-issuer-1` |
+| 安装 | `airoot --root D:\env\.airoot install <plan> --token-file <token>` | **`FINALIZED`**，`generation 0 → 1`，2.9 秒 |
+
+**独立核对（不看记录，自己算）**：
+
+```text
+store 文件的 SHA256   : 6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e
+上游发布的期望值      : 6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e  ← 逐字节相同
+文件头                : MZ（真 PE 可执行文件，不是错误页）
+字节数                : 12 721 664（与 §59 记的读取一致）
+`tool verify`         : verified=true, problems=[]
+registry              : capability=rust-toolchain, health=healthy, lifecycle_status=active,
+                        install_backend_id=https_artifact, source=The Rust Project
+```
+
+### 117.5 如实记录的边界
+
+1. **装的是 `rustup-init.exe` 本体，不是 Rust 工具链**。真正要让 Rust 可用，还要**显式运行它**
+   （`rustup-init.exe --no-modify-path`），而那一步**不在本阶段**：它执行一个 payload，属于 P5 Runtime。
+   所以现在说"本机有 Rust 了"是**假的**；准确说法是"rustup 安装器已由 AIROOT 受管、校验、登记、绑定"。
+2. **`tx\<id>\fetch\rustup-init.exe` 会**留下**另一份 12.7 MB**。这是**故意**的，不是泄漏：`drive()` 在
+   resume 时**复用**已下载的文件（崩溃后不重下），而 `stage` 是**复制**进 store 而不是移动。代价是每个
+   成功事务多留一份 artifact。**要不要在 FINALIZED 之后回收 fetch，是一个未裁决的问题**——它牵动
+   "从不删除"与"恢复优先"两条原则，不能在装完东西的顺手改掉。
+3. **`capability list` 现在是 8 项**，而 `rust-toolchain` 在**数据根里没有白名单谓词**——那是刻意的：
+   白名单管的是"在数据根里**认出**这种东西"，而 `rust-toolchain` 是**从可信来源装进来的**，不需要在
+   用户目录里被认出来。§15.4 的两半是"冻结"与"识别"，这里只需要前半。
+4. **这次安装没有动 PATH、没有执行 payload、没有提权**。`--no-modify-path` 是 ADR-0001 给 rustup 定的
+   规矩，而"给 PATH 加东西"属于 P9（`exposure\bin` launcher，见可选加固）。
+

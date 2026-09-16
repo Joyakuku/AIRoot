@@ -50,7 +50,7 @@
     "probe_pe_resource_section_bytes": 8388608
   },
   "policy_revisions": {
-    "capabilities": "cap-2",
+    "capabilities": "cap-3",
     "discovery_whitelist": "wl-4",
     "search": "srch-4",
     "selection": "sp-1",

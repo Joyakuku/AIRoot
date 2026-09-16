@@ -43,8 +43,14 @@ def run(capsys, *argv: str) -> tuple[int, dict]:
 def test_the_shipped_capability_list_is_valid_and_revisioned() -> None:
     frozen = load_capabilities()
 
-    assert frozen.revision == "cap-2"
+    assert frozen.revision == "cap-3"
     assert "python" in frozen.ids()
+    # cap-3 (ADR-0047): `rust-toolchain` was frozen to close a gap — `policy/sources.json` had already
+    # declared a trusted source for it (and §59 had verified resolution plus a real 12721664-byte
+    # download against upstream) while no frozen capability named it, so `plan rust-toolchain` refused
+    # with CAPABILITY_NOT_DECLARED. Pinned by name here so unfreezing it again is a red test rather
+    # than a quietly narrower list.
+    assert "rust-toolchain" in frozen.ids()
     assert all(item.kind in {"tool", "runtime"} for item in frozen.capabilities)
     assert all(item.entry for item in frozen.capabilities), "a capability without an entry is unusable"
 

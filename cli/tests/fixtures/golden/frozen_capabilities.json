@@ -77,6 +77,19 @@
       ]
     },
     {
+      "capability_id": "rust-toolchain",
+      "entry": "rustup-init.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "writes_store",
+        "writes_registry"
+      ]
+    },
+    {
       "capability_id": "fake-tool",
       "entry": "fake-tool.bin",
       "kind": "tool",
@@ -91,6 +104,6 @@
       ]
     }
   ],
-  "revision": "cap-2",
+  "revision": "cap-3",
   "schema_version": 1
 }
