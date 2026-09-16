@@ -42,6 +42,7 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件 |
 | "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
+| "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json` | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（退出码在 `exit_status`，`reason_code` 是 `SUCCESS`/`CHILD_PROCESS_FAILED`）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |

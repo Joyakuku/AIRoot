@@ -366,6 +366,39 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     run(capsys, *base, "env", "activate", "--session", SESSION, REFERENCE)
     record("env list", "env", "list")
     record("exec <external-id> -- <command>", "exec", REFERENCE, "--", str(PE), "-c", "print(1)")
+    # `run` executes a payload AIROOT **owns**, so the fake fixture (a data file that is never
+    # executed) cannot serve this lane: it must have a real, startable payload. A second instance is
+    # declared for exactly this, with a `.cmd` in its store directory — the same shape
+    # `test_l1_runtime.py` uses, and for the same reason: the verb's whole point is that it starts
+    # something, so a mocked child would only test the mock.
+    runnable_id = "probe-tool/probe/1.0.0/win-x64"
+    runnable_dir = Path(root.path) / "store" / runnable_id
+    runnable_dir.mkdir(parents=True, exist_ok=True)
+    (runnable_dir / "probe.cmd").write_text(
+        "@echo off\r\necho ran from the store\r\nexit /b 0\r\n", encoding="utf-8"
+    )
+    from airoot.registry.entities import Instance
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_instance(
+            connection,
+            Instance(
+                instance_id=runnable_id,
+                kind="managed_tool",
+                capability_id="probe-tool",
+                version="1.0.0",
+                platform="windows",
+                architecture="x64",
+                install_backend_id="https_artifact",
+                artifact_digest="sha256:" + "b" * 64,
+                store_path=f"store/{runnable_id}",
+                lifecycle_status="installed",
+                health="healthy",
+                entrypoints=("probe.cmd",),
+                created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+    record("run", "run", runnable_id, "--", "--version")
     # Without a token this stops at the approval boundary and hands the caller the plan to approve.
     record("env persist <external-id>", "env", "persist", REFERENCE)
     record("env forget <external-id>", "env", "forget", REFERENCE, "--dry-run")

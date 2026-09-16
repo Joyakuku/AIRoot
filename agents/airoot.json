@@ -136,6 +136,24 @@
       "document_schema": null
     },
     {
+      "question": "run a payload AIROOT installed, once",
+      "command": ["run"],
+      "read": [
+        "instance_id",
+        "entrypoint",
+        "command",
+        "exit_status",
+        "stdout",
+        "payload_digest",
+        "payload_digest_source",
+        "lifecycle_status",
+        "persisted",
+        "reason_code"
+      ],
+      "notes": "execution, not exposure: nothing persistent changes, so this lane needs no token of its own — approvals in this build come from the local signer (`provision`, then `issue`; ADR-0046). The child's status is reported in `exit_status`; AIROOT's own exit code is 0 or 2. `payload_digest` is the **registered** value (`payload_digest_source` says so) — `tool verify` is the verb that re-measures. `run` refuses only on facts (unknown, not owned, payload/entrypoint gone); `retired`/`broken` are reported, not refused",
+      "document_schema": null
+    },
+    {
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
@@ -392,7 +410,7 @@
     "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
     "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",
     "signature_note": "v1 verifies published digests only. A digest is not a signature; never imply the artifact was signed.",
-    "document_schema_note": "`document_schema` names the published schema that describes the document a lane's `read` paths live in, or null when no schema describes it. A null is **measured**, not assumed: the CLI is run, and every published document schema is tried against what it printed (cli/tests/test_l1_agent_read_fields.py). 5 of 34 lanes are pinned (doctor, where x2, inventory, search); the other 29 read a report whose shape only the field-existence check holds. Two of the 29 print a self-validated plan **plus** `plan_file` / `required_action` / `reason_code`, which are deliberately not part of the plan contract. **Why no report schema pins the rest** (measured, draft §100): the 29 reports have 29 distinct top-level shapes, so one schema either fails them all or would need `additionalProperties: true` — a published contract that accepts any extra key, which the doctrine refuses as a capability that only looks safe. What they do share is exactly `schema_version` and `reason_code`, and that much is guarded. Treat a null lane's fields as informational and never quote them as contract.",
+    "document_schema_note": "`document_schema` names the published schema that describes the document a lane's `read` paths live in, or null when no schema describes it. A null is **measured**, not assumed: the CLI is run, and every published document schema is tried against what it printed (cli/tests/test_l1_agent_read_fields.py). 5 of 35 lanes are pinned (doctor, where x2, inventory, search); the other 30 read a report whose shape only the field-existence check holds. Two of the 30 print a self-validated plan **plus** `plan_file` / `required_action` / `reason_code`, which are deliberately not part of the plan contract. **Why no report schema pins the rest** (measured, draft §100): the 30 reports have 30 distinct top-level shapes, so one schema either fails them all or would need `additionalProperties: true` — a published contract that accepts any extra key, which the doctrine refuses as a capability that only looks safe. What they do share is exactly `schema_version` and `reason_code`, and that much is guarded. Treat a null lane's fields as informational and never quote them as contract.",
     "allowed_claims": "See AGENTS.md §8. Never claim AIROOT is implemented, available, or Everything-class."
   }
 }

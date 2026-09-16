@@ -8,6 +8,7 @@ contract. P1 never writes machine PATH, ACL or anything outside the resolved roo
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
@@ -1359,6 +1360,44 @@ def cmd_exec(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
 
 
 CHILD_OUTPUT_LIMIT = 65536
+
+
+def cmd_run(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
+    """Execute a managed payload once and report its exit status and output (ADR-0047).
+
+    This is the verb the minimum version's definition asks for: the payload AIROOT installed is really
+    started, and what comes back is what the child did — never a guess. It is **not** exposure: no
+    environment variable is written, no PATH entry is added, no binding moves, and nothing needs an
+    approval, because nothing persistent changes. `persisted: false` is in the document so that fact
+    is machine-readable rather than a promise in prose.
+    """
+
+    from .caps.runtime import resolve_run_target, run_once
+
+    registry = context.registry()
+    try:
+        target = resolve_run_target(registry, context.path(), args.instance)
+    finally:
+        registry.close()
+
+    # `--json` is machine mode: the child's streams must not be interleaved with the document, or the
+    # caller cannot parse its own tool's reply. Without it the child inherits this process's streams,
+    # which is what an interactive caller wants. Same rule as `exec`, same reason.
+    capture = bool(args.json)
+    document = run_once(target, list(args.child_command), capture=capture)
+    _emit(
+        document,
+        as_json=args.json,
+        lines=[
+            f"{document['instance_id']}: exit_status={document['exit_status']} "
+            f"({document['reason_code']})",
+            f"  ran: {document['entrypoint']}",
+            f"  payload_digest={document['payload_digest']} (registered value, not re-measured)",
+        ],
+    )
+    # The frozen exit-code space is 0-9 (v0.3 §5.2): the child's status is reported in `exit_status`,
+    # never leaked into AIROOT's own exit code.
+    return document, EXIT_SUCCESS if document["exit_status"] == 0 else EXIT_DEGRADED
 
 
 def _bounded(text: str) -> str:
@@ -3083,6 +3122,20 @@ def build_parser() -> argparse.ArgumentParser:
     # top-level `command` attribute argparse uses to pick the handler.
     exec_parser.add_argument("child_command", nargs=argparse.REMAINDER)
 
+    run_parser = subparsers.add_parser(
+        "run",
+        help="execute an AIROOT-managed payload once",
+        description=(
+            "Start the payload AIROOT installed and report its exit status and output. "
+            "`run <instance-id> [-- args...]` runs the instance's **main entrypoint** with your "
+            "arguments; options must come before `--`. This is execution, not exposure: no "
+            "environment variable, PATH entry, binding or approval is involved (ADR-0047)."
+        ),
+        parents=[common],
+    )
+    run_parser.add_argument("instance", help="instance id (or capability id) of an owned payload")
+    run_parser.add_argument("child_command", nargs=argparse.REMAINDER)
+
     search_parser = subparsers.add_parser(
         "search",
         help="find files by name (bounded crawl; this build ships no index)",
@@ -3270,6 +3323,9 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Context], tuple[dict[str, Any]
     "env.persist": cmd_env_persist,
     "env.forget": cmd_env_forget,
     "exec": cmd_exec,
+    # Run a **managed** payload once (ADR-0047). `exec` serves references, `run` serves owned
+    # instances; neither is a path into the other's semantics.
+    "run": cmd_run,
     # Deletion semantics graded by ownership (draft §14).
     "tool.retire": cmd_tool_retire,
     "tool.list": cmd_tool_list,
@@ -3320,63 +3376,121 @@ def _command_token_index(arguments: list[str]) -> int | None:
 
 
 #: The one flag spelling the frozen planning table (§15.1, §16.4) uses for `exec`
-#: (`exec --env <id> -- <cmd>`), rewritten into the positional form by `_normalize_exec_argv`.
+#: (`exec --env <id> -- <cmd>`), rewritten into the positional form by `_normalize_child_argv`.
 #: Declared as a constant rather than spelled inline twice so the documented surface and the L0
 #: audit read the same source: a flag an agent may legitimately type must be discoverable from code.
 EXEC_ALIAS_FLAG = "--env"
 
+#: The verbs that hand their tail to a **child process**. They share one pre-parse rule ("options
+#: before `--` are AIROOT's, everything after it is the child's") because that rule is about the
+#: separator, not about which command is doing the dispatching — and a second copy of it is how the
+#: two would drift apart. `run` is the managed-payload side, `exec` the reference side (ADR-0047).
+CHILD_VERBS = ("exec", "run")
 
-def _normalize_exec_argv(arguments: list[str]) -> list[str]:
-    """Canonicalise `exec` before argparse sees it.
 
-    `exec` is the one command that dispatches a child process, and it is the one command whose
-    spelling the documents disagree about: the frozen planning table (§15.1, §16.4) writes
-    `exec --env <name> -- <command>`, while the steward model passes the same identifier
-    positionally (`exec <external-reference-id> -- <command>`). Both mean one thing, so the flag
-    form is rewritten into the positional one.
+def _normalize_child_argv(arguments: list[str]) -> list[str]:
+    """Canonicalise the child-dispatching verbs (`exec`/`run`) before argparse sees them.
 
-    The second job is a real defect this rewrite removes: `argparse.REMAINDER` hands everything
-    after the identifier to the child, so a trailing `--json` used to be passed to the child as an
-    argument *and* silently leave AIROOT in human mode. Everything before the `--` separator belongs
-    to AIROOT, so our own options are hoisted in front of the command where argparse reads them.
+    Two jobs, and both are about the same boundary — **AIROOT's own options belong to AIROOT, and the
+    payload's arguments belong to the payload**:
+
+    * `exec` has a second legal spelling. The frozen planning table (§15.1, §16.4) writes
+      `exec --env <name> -- <command>` while the steward model passes the same identifier
+      positionally (`exec <external-reference-id> -- <command>`). Both mean one thing, so the flag
+      form is rewritten into the positional one. `run` has one spelling by decision (ADR-0047), so
+      the rewrite is skipped for it.
+    * `argparse.REMAINDER` hands everything after the identifier to the child. Without hoisting, a
+      trailing `--json` is passed to the payload as an argument **and** silently leaves AIROOT in
+      human mode — the caller gets a child that saw a flag it never asked for and a document that
+      never appears. So AIROOT's options are moved in front of the verb, where argparse reads them.
+
+    The `--` separator governs everything after it: those tokens are the payload's, verbatim. Before
+    it there is exactly one identifier, and the rest are AIROOT's. **Known** in the last sentence is
+    derived from the parser (`_airoot_option_arity`), not from a hand list: `run <id> --json` is a
+    machine-mode request, while `run <id> -version` is an argument for the payload, and the
+    difference between those two has to come from the parser rather than from a second copy of its
+    flags (§115's rule about hand-kept copies).
     """
 
     index = _command_token_index(arguments)
-    if index is None or arguments[index] != "exec":
+    if index is None or arguments[index] not in CHILD_VERBS:
         return arguments
 
+    verb = arguments[index]
     head, tail = arguments[: index + 1], arguments[index + 1 :]
-    if tail[:1] == [EXEC_ALIAS_FLAG] and len(tail) > 1:
-        tail = [tail[1], *tail[2:]]
-    elif tail[:1] and tail[0].startswith(f"{EXEC_ALIAS_FLAG}="):
-        tail = [tail[0].split("=", 1)[1], *tail[1:]]
+    if verb == "exec":
+        if tail[:1] == [EXEC_ALIAS_FLAG] and len(tail) > 1:
+            tail = [tail[1], *tail[2:]]
+        elif tail[:1] and tail[0].startswith(f"{EXEC_ALIAS_FLAG}="):
+            tail = [tail[0].split("=", 1)[1], *tail[1:]]
 
-    if "--" not in tail:
-        # No separator: the child command starts right after the identifier and REMAINDER owns it.
-        return [*head, *tail]
+    arity = _airoot_option_arity()
 
-    separator = tail.index("--")
-    ours, child = tail[:separator], tail[separator:]
-    hoisted: list[str] = []
+    def take_options(tokens: list[str]) -> tuple[list[str], list[str]]:
+        """Split leading AIROOT options (with their values) off the front of ``tokens``."""
+
+        ours: list[str] = []
+        position = 0
+        while position < len(tokens) and tokens[position] in arity:
+            token = tokens[position]
+            ours.append(token)
+            if arity[token] and position + 1 < len(tokens):
+                ours.append(tokens[position + 1])
+                position += 2
+            else:
+                position += 1
+        return ours, tokens[position:]
+
+    if "--" in tail:
+        separator = tail.index("--")
+        before, child = tail[:separator], tail[separator:]
+    else:
+        before, child = tail, []
+
+    # Whatever lies before the separator: leading options, then the identifier, then (only when there
+    # is no separator to mark the boundary) any options that were written after the identifier.
+    hoisted, remainder = take_options(before)
     owned: list[str] = []
-    position = 0
-    while position < len(ours):
-        token = ours[position]
-        if token == "--root" and position + 1 < len(ours):
-            hoisted += [token, ours[position + 1]]
-            position += 2
-            continue
-        if token.startswith("-"):
-            hoisted.append(token)
-            position += 1
-            continue
-        owned.append(token)
-        position += 1
-    return [*arguments[:index], *hoisted, "exec", *owned, *child]
+    if remainder:
+        owned.append(remainder[0])
+        more, rest = take_options(remainder[1:])
+        hoisted += more
+        # With no `--`, whatever is left is the payload's command line, not AIROOT's.
+        child = rest if "--" not in tail else child
+
+    # The verb is `verb`, **not** a literal. It was the literal `"exec"` until draft §120, which was
+    # invisible while this helper served exactly one command and silently retargeted the second one:
+    # `run <id> -- --version` executed `exec <id> -- --version` and the caller got an
+    # "unknown reference" for a managed instance. `test_l1_runtime.py` holds every member of
+    # `CHILD_VERBS` to surviving this rewrite as itself.
+    return [*arguments[:index], *hoisted, verb, *owned, *child]
+
+
+@functools.lru_cache(maxsize=1)
+def _airoot_option_arity() -> dict[str, bool]:
+    """Every option string this CLI accepts → whether it consumes the next token.
+
+    Derived by walking the built parser (including every subparser), because the alternative — a list
+    of flags kept next to this function — is exactly the second copy of a rule this project keeps
+    removing: a new flag would silently stop being recognised before the verb.
+    """
+
+    found: dict[str, bool] = {}
+
+    def walk(parser: argparse.ArgumentParser) -> None:
+        for action in parser._actions:
+            for option in action.option_strings:
+                found[option] = action.nargs != 0
+            if isinstance(action, argparse._SubParsersAction):
+                for sub in action.choices.values():
+                    walk(sub)
+
+    walk(build_parser())
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = _normalize_exec_argv(list(argv) if argv is not None else sys.argv[1:])
+    arguments = _normalize_child_argv(list(argv) if argv is not None else sys.argv[1:])
     # Scanned up front: a usage error happens before argparse gives us a namespace.
     want_json = "--json" in arguments
     args: argparse.Namespace | None = None

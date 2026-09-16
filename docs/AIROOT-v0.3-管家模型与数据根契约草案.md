@@ -10391,4 +10391,105 @@ ADR-0046 是**造出**写者的那一次，缺陷落在另一半："表格说没
    各节、以及审查报告**前文**的快照（它写着"审查时的数字"）——ADR-0028 的规则是计数守卫不得要求重写
    历史，同一理由适用于这些句子：它们记录当时为真的事实，改了就成了伪造。
 
+## 120. 真的跑一次受管 payload：`airoot run`（ADR-0047）
+
+最小版本的定义（`docs/AIROOT-最小版本-v1.md` 判据 #9）要的是"**有一个动词**真的把这份受管 payload 跑
+起来并如实报告它的退出码与输出"。§118 做到了那件事，但方式是**手拼绝对路径**：不是动词、不是验收面、
+账本上也看不出来。本节把那次手跑变成一个动词，并且**真的在真机上跑了一次**——因为 §118 的教训就是
+"不真的跑一遍，就不知道缺什么"。
+
+### 120.1 交付
+
+| 件 | 内容 |
+|---|---|
+| 裁决 | **ADR-0047**（`run` 是"执行一次"，不是"持久化暴露"：六条决策 + 三条被否决的路各自附代价） |
+| 新模块 | `cli/app/airoot/caps/runtime.py`：`resolve_run_target`（把实例解析成 store 里的主入口点，所有权复用 `caps/lifecycle.find_target`，不新建第二个"AIROOT 拥有"的定义）与 `run_once`（起子进程并如实带回退出码与输出） |
+| CLI | `airoot run <instance-id> [-- args...]`（`cli.cmd_run`） |
+| 测试 | `cli/tests/test_l1_runtime.py`（**21 条**）：解析与四种拒绝、真子进程的退出码与输出、`--json` 的归属、以及一条**推导出来的**动词守卫 |
+
+**动词的形状**：`run <id> [-- args...]`；`--` 之后原样交给 payload。**只按事实拒绝**（`NOT_FOUND`(1) /
+`OWNERSHIP_REQUIRED`(7) / `PAYLOAD_MISSING`(3)——已回收的实例落在最后一个里，证据带 `collected_at`）。
+`retired`/`broken` **不拒绝**，它们是**报告**的事实。不注入环境或 PATH、不复核摘要（文档里
+`payload_digest_source: "registry"` 明说那个摘要是**登记值**，不是刚测的）、不动 registry。
+
+### 120.2 真机上的那次运行（本节的证据）
+
+在 §117 装进 store 的那份真实 payload 上跑：
+
+```text
+airoot --root D:\env\.airoot run rust-toolchain --json -- --version
+exit=0   exit_status=0   reason_code=SUCCESS   persisted=false
+command:  D:\env\.airoot\store\rust-toolchain\rustup-init\1.83.0\win-x64\rustup-init.exe --version
+stdout:   rustup-init 1.29.1 (d95a37b6a 2026-08-13)
+payload_digest: sha256:bbdc9e16b2faf619c4e5824717961a2024434317e8ec0ed185a0de781dad796e（**登记值**）
+lifecycle_status=active  health=healthy
+```
+
+非零子进程（同一个 payload，喂一个它不认识的参数）：`child exit_status=1`、AIROOT 退出码 **2**、
+`reason_code=CHILD_PROCESS_FAILED`，`stderr` 里是 rustup 自己的原话
+（`unexpected argument '--no-such-flag' found`）——**子进程的失败被如实带回，没有被折成 AIROOT 的错**。
+未登记的 id：`NOT_FOUND`(1)，证据列出**存在**的那些实例 id。
+
+### 120.3 真跑与"加第二个动词"各暴露了一个缺陷（两个都已修、都加了守卫）
+
+**缺陷一：共享的 pre-parse 重写把动词硬编码成 `"exec"`。** 第一次真跑就撞上：
+
+```text
+airoot run rust-toolchain --json -- --version
+→ {"reason_code": "NOT_FOUND", "message": "unknown reference: rust-toolchain"}
+```
+
+`_normalize_child_argv`（当时叫 `_normalize_exec_argv`）最后一行写的是
+`return [*arguments[:index], *hoisted, "exec", *owned, *child]`——**一个只服务一个动词时完全正确的字面量**。
+第二个动词一进来，`run` 被**静默改写成 `exec`**，于是受管实例去查引用表。修法是把动词本身传出去；
+守卫是**按 `CHILD_VERBS` 推导**的（每个成员都必须"以自己"穿过这次重写），所以第三个动词不可能再带同一个洞。
+
+**缺陷二：没有 `--` 分隔符时，`--json` 会被交给 payload，而 AIROOT 静默留在 human 模式。**
+`argparse.REMAINDER` 拥有标识符之后的一切，所以 `run <id> --json` 既把 `--json` 喂给子进程、又让
+调用方拿不到文档。修法不是"再列一份自己的选项表"（那正是 §115 删掉的那种手抄副本），而是**从 parser
+推导**（`_airoot_option_arity()` 走遍主 parser 与所有子 parser），于是"标识符之后、`--` 之前、且
+**parser 认识**的选项"属于 AIROOT，其余属于 payload；`run <id> -version` 仍然原样交给 payload。
+**逃生口是分隔符**：`run <id> -- --json` 里的那个 `--json` 是 payload 的（测试两个方向都断言）。
+
+### 120.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 把动词字面量放回去（`"exec"`） | 红 | ✅ 1 条（`test_every_child_verb_survives_the_argv_rewrite_as_itself`） |
+| 把无分隔符的提前返回放回去 | 红 | ✅ 1 条（`test_a_leading_airoot_option_is_not_handed_to_the_payload`） |
+| 载荷缺失 / 已回收 / 未登记 / 是引用 / 无入口点声明 / 入口点被删 | 各自指名拒绝 | ✅ 六种都有测试，理由码与退出码逐个断言 |
+| 子进程非零 | 报告而非抛 | ✅ `exit_status` + `CHILD_PROCESS_FAILED`(2)，输出原样带回 |
+| 载荷存在但不能启动（非可执行文件） | 带 OS 原话拒绝 | ✅ 证据含 `WinError` 与"这台机器拒绝启动它"（§62 的教训：不让裸 `OSError` 逃成 traceback） |
+
+**两次变异都是把缺陷放回去实测的**：`1 failed` / `1 failed`，改回后恢复全绿（脚本按字节还原并核对）。
+
+### 120.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1308 → 1329**（+21，全部在 `cli/tests/test_l1_runtime.py`） |
+| 审计检查（`test_l0_consistency.py`） | **109 → 109**（本阶段没动那个模块） |
+| golden 语料 | **43 → 43**（`run` 的文档是**报告面**，没有已发布 schema，所以不进语料；ADR-0047 决策六） |
+| 新增模块 | `cli/app/airoot/caps/runtime.py`（caps 模块 25 → **26**，repo map 同步） |
+| 新增测试文件 | `cli/tests/test_l1_runtime.py` |
+| 契约变更 | **无 schema 变更**；新增一个 CLI 动词与它打印的报告面 |
+| 新增 ADR | **ADR-0047** |
+| 新增最小版本文档 | `docs/AIROOT-最小版本-v1.md`（定义 + 16 条判据 + 显式排除清单，AGENTS.md 加了指针） |
+
+### 120.6 如实记录的边界
+
+1. **P4 那一半（`gc` 真的删掉真实 payload）本节没有实测。** 它需要一次 `gc --apply` 的批准，而签发批准
+   的 CLI 动词是 W4（`airoot issue`）；本阶段排在它前面，所以"真的删掉真实 payload"这条断言落在 W6 的
+   真机验收序列里，不在本节。**静态上这条路是通用的**（`apply_gc_plan` 只认 owned + 只碰 `store/` +
+   删前重算摘要），但那不是"实测过"，写在这里以免被读成已经验过。
+2. **`run` 不复核摘要**（ADR-0047 决策四）：一个已经漂移的 payload 仍然会被执行。要拦它，调用方在
+   `run` 之前自己 `tool verify`。这是**刻意的分工**，不是遗漏。
+3. **cwd 与 env 都继承调用方**（ADR-0047 决策三）：一个往 cwd 写文件的 payload 会把文件写到调用方那边，
+   而不是 store 里——这是为了**不破坏 store 的整树摘要**而付出的代价。
+4. **`run` 不是"受管运行时"的完整形态**：没有 runtime health 体系、没有多版本矩阵、没有持久化。
+   三条都在最小版本文档的显式排除清单里。
+5. **`--json` 之外没有别的 AIROOT 选项会 hoist 到子命令之前**：`run` 只有 `--root`/`--json`（以及
+   `--help`），所以这条规则的实测面就是这三个；将来加动词选项时，`_airoot_option_arity()` 会自动带上它
+   （它从 parser 推导），但**没有测试**专门断言"新选项一定被 hoist"——那是推导规则的固有性质，不是判据。
+
 
