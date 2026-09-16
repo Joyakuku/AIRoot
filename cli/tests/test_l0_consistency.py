@@ -4290,12 +4290,14 @@ ENTRY_DOC_BUDGET_BYTES = 65536
 
 #: What the budget is **not**: this file's private allowance (draft §138, measured in the wild).
 #: This guard used to compare the file against 65 536 directly and stayed green while the file was
-#: still cut: 65 489 bytes arrived as 65 242, then as 65 142, and 65 710 arrived as 65 243 — cuts of
-#: 247 / 347 / 467 bytes, every one of them swallowing the tail of §9. The loader spends part of the
-#: same budget on things this repository does not control (preamble, notes, any second instruction
-#: file), and how much is **not measurable from inside the repository** — so this is a self-imposed
-#: margin, not a measurement. Four times the largest observed cut: the bound should fire while there
-#: is still room to move detail into the draft, not after the reader has lost a section.
+#: still cut. Four load reports, one of them §54's own (`from 65840 to 65243`), all land in the same
+#: place: 65 489 arrived as 65 242 and then as 65 142, 65 710 as 65 243, 65 840 as 65 243 — landings
+#: of 65 142…65 243, i.e. **this file's real ceiling is about 65.2 KB, not 65 536**, and every cut so
+#: far swallowed the tail of §9. What the loader spends on things this repository does not control
+#: (preamble, notes, any second instruction file) is **not measurable from inside the repository**,
+#: so the margin below is a self-imposed one: five to seven times the 293–394-byte gap between the
+#: deployment number and where loads actually land. The bound should fire while there is still room
+#: to move detail into the draft, not after the reader has lost a section.
 ENTRY_DOC_OVERHEAD_MARGIN_BYTES = 2048
 
 #: The last non-empty line of the entry document. Its **presence** is the only end-of-document
