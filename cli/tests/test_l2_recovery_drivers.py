@@ -67,9 +67,9 @@ def test_an_artifact_transaction_recovers_from_the_commit_point(registry, clock,
     assert again["action"] == "no_action", "repair is idempotent"
 
 
-#: The boundaries this driver recovers from today. `FETCHED` is deliberately absent and has its own
-#: test below: resuming there raises `AttributeError: _artifact`, which is draft \u00a7128.5.
-@pytest.mark.parametrize("boundary", ["STAGED", "REGISTERED", "ACTIVE_BOUND", "EXPOSED"])
+@pytest.mark.parametrize(
+    "boundary", ["FETCHED", "VERIFIED", "STAGED", "REGISTERED", "ACTIVE_BOUND", "EXPOSED"]
+)
 def test_an_artifact_transaction_recovers_from_every_boundary(
     registry, clock, root, tmp_path: Path, boundary: str
 ) -> None:
@@ -84,22 +84,3 @@ def test_an_artifact_transaction_recovers_from_every_boundary(
     active = registry.bindings(active_only=True)
     assert len(active) == 1 and active[0]["instance_id"] == plan["target"]["instance_id"]
     assert registry.integrity_problems() == []
-
-
-@pytest.mark.xfail(
-    reason="draft §128.5: resuming the artifact runner from FETCHED raises AttributeError: '_artifact' -- the resume path does not re-fetch, so the artifact is never set",
-    strict=True,
-)
-def test_resuming_from_fetched_does_not_crash(registry, clock, root, tmp_path: Path) -> None:
-    """`FETCHED` means the bytes are on disk and nothing is verified yet: it must recover too.
-
-    `strict=True` is the point: this is a recorded defect, not a tolerance. The day the resume
-    path re-fetches, this XPASSes and forces whoever fixed it to delete the marker.
-    """
-
-    tx, _plan = build(registry, clock, root, tmp_path, version="4.0.0", boundary="FETCHED")
-    assert tx["state"] == "FETCHED"
-
-    result = repair(registry, tx["transaction_id"], clock=clock, keyring=fake_issuer.keyring())
-
-    assert result["state"] == "FINALIZED"

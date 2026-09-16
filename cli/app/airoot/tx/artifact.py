@@ -103,6 +103,34 @@ class ArtifactRunner:
 
     # ------------------------------------------------------------------- drive #
 
+    def _artifact_from_fetch_dir(self, artifact_path: Path, locator: str) -> Any:
+        """The fetched artifact, rebuilt from the file the fetch step left behind.
+
+        `self._artifact` is in-process state: it is set by the fetch step of *this* process, so a resumed
+        transaction starts without it, and reading it anyway is what made resuming from `FETCHED` raise
+        `AttributeError` instead of continuing or rolling back (draft §128.5). The file on disk is the one
+        the fetch step wrote, so the description can be rebuilt from it; when the file is gone, recovery
+        says so with a reason code rather than an attribute error -- a crash is not a verdict.
+        """
+
+        from ..caps.backends.base import Artifact, sha256_file
+
+        if not artifact_path.is_file():
+            raise AirootError(
+                "PAYLOAD_MISSING",
+                f"the fetched artifact is missing: {artifact_path}",
+                evidence=[
+                    "a resumed transaction rebuilds its artifact description from the fetch directory",
+                    "the file is not there, so this run cannot verify or stage it",
+                ],
+            )
+        return Artifact(
+            path=artifact_path,
+            digest=sha256_file(artifact_path),
+            size=artifact_path.stat().st_size,
+            fetched_from=locator,
+        )
+
     def drive(self, tx: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
         instance_id = str(tx["instance_id"])
         expected_source = plan["source"]["integrity"]["artifact_digest"]
@@ -111,6 +139,12 @@ class ArtifactRunner:
         store_dir = from_root_relative(f"store/{instance_id}", self.root)
         fetch_dir = self._fetch_dir(str(tx["transaction_id"]))
         artifact_path = fetch_dir / Path(locator).name
+
+        # A resumed run has no in-memory state, so `_artifact` -- which the fetch step of *this* process
+        # would have set -- is still unset, while the states from FETCHED onward dereference it. Rebuild it
+        # from the file the fetch step left behind; `getattr` because a fresh runner has no attribute at all.
+        if getattr(self, "_artifact", None) is None and tx["state"] not in {"PROPOSED", "APPROVED"}:
+            self._artifact = self._artifact_from_fetch_dir(artifact_path, locator)
 
         try:
             if tx["state"] == "PROPOSED":

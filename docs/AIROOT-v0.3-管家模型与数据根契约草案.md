@@ -11159,3 +11159,46 @@ digest 都在，够重建）。**先让那条 `xfail(strict)` 变成正常测试
 | 新增模块 | `cli/app/airoot/tx/runners.py` |
 | golden 语料 / schema / ADR | 不变 |
 | 行为变化 | `repair` 对真 artifact 事务在 `STAGED` 及之后**不再回滚**，改为完成 |
+## 129. #14 收口：恢复时重建**进程内**状态（`_artifact`），16 条判据全部成立
+
+§128 修掉了"`repair` 用错 driver"，并把 `FETCHED` 那一格的崩溃用 `xfail(strict=True)` 钉住。这一节修掉那一格。
+
+### 129.1 缺陷的形状
+
+`ArtifactRunner._artifact` 是**进程内**字段：只有 `drive()` 的 fetch 分支给它赋值。而 `FETCHED` 之后的每个
+状态（`FETCHED`/`VERIFIED`/`STAGED`/…）都会解引用它——于是**从这些状态恢复时**，新建的 runner 上它是
+**未赋值**，读它直接 `AttributeError`。上一轮只把 `FETCHED` 钉住了；这一轮顺手把 `VERIFIED` 也加进参数化，
+因为它属于**同一类**（状态在 fetch 之后、stage 之前），而当时的参数化正好漏掉它。
+
+**一个 `AttributeError` 当答复，是 §62 那条教训禁止的形状**：恢复要么继续、要么按规则回滚，不能给 traceback。
+
+### 129.2 修法
+
+在 `drive()` 进入状态机**之前**，若本进程还没拿到 artifact 且当前状态不是 `PROPOSED`/`APPROVED`，就从 fetch
+目录**重建**那份描述（`_artifact_from_fetch_dir`：文件在就 `sha256_file` + `stat`；文件不在就报
+`PAYLOAD_MISSING`，并说明"恢复靠 fetch 目录重建，而文件不在了"）。判断用
+`getattr(self, "_artifact", None)`，因为新建的 runner 上根本没有这个属性。
+
+**为什么重建是安全的**：那份文件就是 fetch 步骤写的同一个文件，而 `VERIFIED` 那一步本来就要重新校验它
+（`backend.verify(..., expected_digest=plan.digest)`）——重建只说明"我读到的是哪个文件"，**决定"它是否可信"
+的仍然是那次校验**，与首次运行同一条判据。文件真的丢了时，恢复给出的是 `PAYLOAD_MISSING`（一个裁决）。
+
+### 129.3 守卫
+
+`cli/tests/test_l2_recovery_drivers.py` 的参数化扩到六个边界（`FETCHED` / `VERIFIED` / `STAGED` /
+`REGISTERED` / `ACTIVE_BOUND` / `EXPOSED`），`xfail` 标记删除。每个边界都断言：`repair` 到 `FINALIZED`、
+active binding 恰好一条、`generation` 与之一致、`integrity_problems()` 为空。**顺序与 §128 相同：先看它红
+（`2 failed`：`FETCHED` 与 `VERIFIED`），再修，再看绿（`7 passed`）。**
+
+### 129.4 成本与口径
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1365 → 1366**（参数化从四条扩到六条、去掉一条 xfail） |
+| 行为变化 | 恢复时 `_artifact` 由 fetch 目录重建；文件缺失时报 `PAYLOAD_MISSING` 而不是属性错误 |
+| golden / schema / ADR | 不变 |
+| 16 条判据 | **全部成立**：`docs/AIROOT-最小版本-v1.md` §5 的 #14 改为 ✅；§4 的括注改成"闭环由真机脚本证成、崩溃恢复由 pytest 逐边界证成" |
+
+**口径没有放宽**：这一节没有把故障注入搬上真机、也没有把 pytest 的边界覆盖说成机器级验证——它把 #14 的
+**两条证据来源**写清楚（各自覆盖什么），这比一句"全部通过"更接近事实。**"最小版本完成"这句话现在可以说了，
+但只能按 §4 的写法说。**

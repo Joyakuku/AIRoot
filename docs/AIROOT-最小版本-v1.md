@@ -80,9 +80,9 @@
 > 真机验收脚本逐项通过。
 >
 >
-> **但 #14 仍要带括注**：它在提交点及之后的边界上已经成立（§128），但停在 `FETCHED` 的恢复
-> 今天会崩（§128.5 记着，测试用 strict xfail 钉住）——**按 §5 的实测状态说，不要把 16 条
-> 说成全部成立**。
+> **16 条判据现在全部成立**（逐条实测状态见 §5）。崩溃恢复由 pytest 的
+> `test_l2_recovery_drivers.py` 逐边界覆盖，真机闭环由 `real_machine_acceptance.py` 覆盖——
+> **两者合起来**才是这一条的证据，缺一条都不算。
 
 **不允许说**：AIROOT 已实现 / 已可用 / 具备 Everything 级性能 / 已具备受保护边界。
 ## 5. 结果：本轮结束时的实测状态
@@ -105,7 +105,7 @@
 | 11 | 切换活跃版本不改 PATH、不重写入口 | ✅ | §125：真机闭环上装了 `9.9.9` 再装 `9.9.10`，入口**逐字节相同**、入口路径不变、`where` 的目标变成新版本，machine PATH **读出来前后逐项相同** |
 | 12 | `retire` + `gc` 真的删掉真实 payload | ✅ | §124：`gc --apply` 之后那个 store 目录不在了 |
 | 13 | `doctor` 无 error | ✅ | §124：`status=healthy`、无 error/warning |
-| 14 | 中途崩溃能恢复或按规则回滚 | ⚠️ **一半** | §128 修掉了**一半**：真 artifact 事务停在 `STAGED`/`REGISTERED`/`ACTIVE_BOUND`/`EXPOSED` 后 `repair` 都到 `FINALIZED`（修之前 `repair` 用错 driver，会把成功的安装解绑）。**仍缺**：停在 `FETCHED` 恢复时会崩 `AttributeError: _artifact`，用 `xfail(strict=True)` 钉着（§128.5） |
+| 14 | 中途崩溃能恢复或按规则回滚 | ✅ | §128 + §129：`repair` 用**事务自己的** driver，且恢复时会从 fetch 目录重建进程内状态——真 artifact 事务停在 `FETCHED`/`VERIFIED`/`STAGED`/`REGISTERED`/`ACTIVE_BOUND`/`EXPOSED` **任一边界**之后都到 `FINALIZED`，generation 只加 1、`integrity_problems()` 为空、二次 `repair` 是 `no_action` |
 | 15 | 账本能表述"安装器又装了别人" | ✅ | §121 / ADR-0048：`.cargo`/`.rustup` 是 `external_reference`，`uninstall` 报 `OWNERSHIP_REQUIRED`(7)，`forget` 后文件一字节未少 |
 | 16 | 全程不提权、不写 machine PATH、`policy_only` | ✅ | 全轮无 UAC；`path verify` 的 `path_written=false`；五份文档的 posture 未变 |
 
