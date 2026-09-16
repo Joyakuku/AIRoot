@@ -23,6 +23,7 @@ from ..canon import digest_file, tree_digest
 from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
 from ..paths import from_root_relative
+from ..posture import SECURITY_MODE, enforcement_for
 from ..registry import Registry
 from ..registry.entities import load_json
 from ..registry.projection import projection_generation
@@ -801,7 +802,7 @@ def doctor(
     clock: Clock = SYSTEM_CLOCK,
     verify: bool = False,
     registry: Registry | None = None,
-    security_mode: str = "policy_only",
+    security_mode: str = SECURITY_MODE,
     include_unmanaged: bool = False,
     data_roots: bool = True,
 ) -> dict[str, Any]:
@@ -850,6 +851,9 @@ def doctor(
     )
 
     status = _status_for(diagnostics)
+    # The mode->enforcement rule is `posture.py`'s, not a second copy of it: `enforcement_for` is
+    # computed before the document so the key order and the emitted pair are unchanged.
+    enforcement = enforcement_for(security_mode)
     document: dict[str, Any] = {
         "schema_version": 1,
         "status": status,
@@ -858,7 +862,7 @@ def doctor(
         "diagnostics": diagnostics,
         "checked_at": clock.timestamp(),
         "security_mode": security_mode,
-        "enforcement": "acl_enforced" if security_mode == "protected_machine" else "same_user_can_bypass",
+        "enforcement": enforcement,
     }
     from ..schema_io import validate_self
 

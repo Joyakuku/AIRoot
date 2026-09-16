@@ -21,14 +21,13 @@ from .clock import SYSTEM_CLOCK
 from .exits import AirootError, EXIT_DEGRADED, EXIT_RECOVERY, EXIT_SUCCESS, exit_code_for
 from .ext.fake import FakeExtension
 from .ext.manifest import load_manifests
+from .posture import SECURITY_MODE, enforcement_for
 from .registry import Registry
 from .root import open_root, resolve_root
 from .schema_io import validate_document, validate_self
 from .tx import create_plan, repair
 from .tx.approval import load_keyring, record_approval, verify_approval
 from .tx.simulate import SimulationRunner
-
-SECURITY_MODE = "policy_only"
 
 
 # --------------------------------------------------------------------------- #
@@ -90,7 +89,7 @@ def cmd_root_status(args: argparse.Namespace, context: Context) -> tuple[dict[st
         "machine_id": "unknown",
         "registry_state": "available",
         "security_mode": SECURITY_MODE,
-        "enforcement": "same_user_can_bypass",
+        "enforcement": enforcement_for(SECURITY_MODE),
         "reason_code": "SUCCESS",
     }
     code = EXIT_SUCCESS

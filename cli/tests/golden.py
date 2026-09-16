@@ -172,6 +172,8 @@ def _write_broker_documents(root: Any, plan: dict, token: dict, *, stem: str) ->
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     return f"state/plans/{stem}.json", f"state/approvals/{stem}.json"
+
+
 def build_documents(base: Path) -> dict[str, dict[str, Any]]:
     """Every golden document, keyed by fixture name, normalised against ``base``.
 
@@ -513,6 +515,32 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "exit_code": exit_code_for(broker_collected["reason_code"]),
     }
     broker_registry.close()
+
+    # ---- the same refusal, through this build's own server (draft §115) ---- #
+    # `broker/pipe.py` is the first **core** writer of `broker-response`: it self-validates the document
+    # it is about to put on the wire, which is what makes the schema a *printed* document and obliges it
+    # to have a fixture here (`test_l0_consistency.py`'s printed-versus-corpus guard). The harness
+    # responses above are the test path's; this one is the core's.
+    #
+    # The framing layer is deliberately not in this path, and that is a measurement rather than a
+    # preference: `serve_pipe` refuses to start from an elevated token (its module docstring says why),
+    # and `test_golden_fixtures_reproduce_exactly` regenerates this corpus on every machine — so a
+    # fixture that could only be produced by a live pipe would be unreproducible on any elevated shell,
+    # including this one. What is frozen instead is the server's *decision*, reached through the same
+    # `ROUTING` entry and the same `_refusal` assembler the serving loop calls, on a request built by
+    # the wire layer and captured in `broker_request_commit_plan`. Which bytes go on the wire is
+    # `broker/transport.py`'s contract and is measured by its own tests.
+    from airoot.broker import pipe as pipe_module  # noqa: E402  (the core module, not `fake_broker`)
+
+    broker_pipe_refusal = pipe_module._refusal(
+        "req/broker/pipe-commit-0001",
+        pipe_module._operation_refusal("commit_plan"),
+        redact=False,
+    )
+    documents["broker_response_pipe_refusal"] = {
+        "document": broker_pipe_refusal,
+        "exit_code": exit_code_for(broker_pipe_refusal["reason_code"]),
+    }
 
     # ---- the two documents the transaction engine is about (draft §90) ----- #
     # Every document the core prints is self-validated first (`schema_io.validate_self`), and §90 found

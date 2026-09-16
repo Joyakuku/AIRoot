@@ -1,0 +1,41 @@
+{
+  "enforcement": "same_user_can_bypass",
+  "evidence": [
+    {
+      "detail": "commit_plan is refused by the user compatibility mode's server: a commit writes Zone R and moves the active binding at ACTIVE_BOUND, which needs both the elevated broker and the approval issuer ADR-0025's D1 leaves to P2 \u2014 the pipe is real but the process behind it is not, and a same-user server that changed a binding would be claiming an authority its own DACL does not give it (decided: ADR-0025 leaves the production approval issuer and the elevated broker to P2)",
+      "kind": "reason"
+    },
+    {
+      "detail": "operation: commit_plan",
+      "kind": "evidence"
+    },
+    {
+      "detail": "security_mode: policy_only, enforcement: same_user_can_bypass \u2014 this pipe is served by a same-user process, so nothing here could enforce what the operation needs",
+      "kind": "evidence"
+    },
+    {
+      "detail": "why this operation is not honoured: a commit writes Zone R and moves the active binding at ACTIVE_BOUND, which needs both the elevated broker and the approval issuer ADR-0025's D1 leaves to P2 \u2014 the pipe is real but the process behind it is not, and a same-user server that changed a binding would be claiming an authority its own DACL does not give it",
+      "kind": "evidence"
+    },
+    {
+      "detail": "ADR-0025 (D1) keeps the production issuer and the elevated broker waiting for P2",
+      "kind": "evidence"
+    },
+    {
+      "detail": "adr=ADR-0025",
+      "kind": "detail"
+    },
+    {
+      "detail": "operation=commit_plan",
+      "kind": "detail"
+    }
+  ],
+  "reason_code": "NOT_IMPLEMENTED",
+  "request_id": "req/broker/pipe-commit-0001",
+  "retryable": false,
+  "schema_version": 1,
+  "security_mode": "policy_only",
+  "state": null,
+  "status": "rejected",
+  "transaction_id": null
+}

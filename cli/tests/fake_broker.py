@@ -63,6 +63,7 @@ from airoot.caps import acl, lifecycle
 from airoot.clock import SYSTEM_CLOCK
 from airoot.exits import EXIT_SUCCESS, REASON_EXIT, AirootError
 from airoot.paths import from_root_relative
+from airoot.posture import ENFORCEMENT_BY_MODE, SECURITY_MODE, posture
 from airoot.registry import Registry
 from airoot.broker import protocol
 from airoot.tx import journal as journal_module
@@ -84,10 +85,13 @@ __all__ = [
 # the frozen User compatibility mode
 # --------------------------------------------------------------------------------------------- #
 
-#: The only security mode this harness can answer in (docs/broker §2, ADR-0002). It is a constant
-#: rather than a per-call choice on purpose: nothing about an in-process call ever makes it true.
-HARNESS_SECURITY_MODE = "policy_only"
-HARNESS_ENFORCEMENT = "same_user_can_bypass"
+#: The only security mode this harness can answer in (docs/broker §2, ADR-0002). It is a reference to
+#: `posture.py`'s constant rather than a second copy of the word, for the reason that module exists: the
+#: same pair was written by hand in `caps/doctor.py` and `ext/envelope.py` before it did. The names stay
+#: because `__all__` and this harness's own tests name them, and nothing about an in-process call ever
+#: makes the answer anything but this one.
+HARNESS_SECURITY_MODE = SECURITY_MODE
+HARNESS_ENFORCEMENT = ENFORCEMENT_BY_MODE[SECURITY_MODE]
 
 #: Every operation the harness can honour — the request schema's own `enum`, relayed from the
 #: protocol layer rather than copied, so the two cannot drift apart.
@@ -161,9 +165,15 @@ class HarnessDefect(RuntimeError):
 
 
 def compatibility_block() -> dict[str, str]:
-    """The two constants every answer carries, as a fresh dict (safe for a caller to mutate)."""
+    """The two constants every answer carries, as a fresh dict (safe for a caller to mutate).
 
-    return {"security_mode": HARNESS_SECURITY_MODE, "enforcement": HARNESS_ENFORCEMENT}
+    Delegated to `posture.posture()` rather than assembled from the two names above: the pair is the
+    build's one claim about its own posture, and a harness that rebuilt the dict by hand would be the
+    fourth copy of the rule `posture.py` exists to be the only one of. The names stay as aliases so a
+    reader of this module still sees the mode it answers in named where the answers are made.
+    """
+
+    return posture()
 
 
 def refusal_for_mode(security_mode: str) -> AirootError | None:
@@ -177,6 +187,12 @@ def refusal_for_mode(security_mode: str) -> AirootError | None:
     be the other defensible spelling; exit 5 is chosen because the thing that is missing is precisely
     the elevated, ACL-enforcing execution the mode names (ADR-0025's D1 leaves it to P2), not the
     operation itself, which this harness does implement.
+
+    The comparison is against :data:`HARNESS_SECURITY_MODE` alone, **not** through
+    `posture.enforcement_for`, and that is the point rather than an omission: a mode with no rule at
+    all (a typo, a typo'd `protected_machine`, a mode from a newer schema) must be refused here as a
+    returned `PRIVILEGE_REQUIRED` document. Asking the rule for an answer would raise `INVALID_INPUT`
+    out of a function whose whole contract is "a refusal is returned, never raised".
     """
 
     if security_mode == HARNESS_SECURITY_MODE:

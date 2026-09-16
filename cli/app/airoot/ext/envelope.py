@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..clock import Clock, SYSTEM_CLOCK, parse_timestamp
+from ..posture import SECURITY_MODE, enforcement_for
 from ..schema_io import validate_self
 
 
@@ -23,13 +24,15 @@ def envelope(
     reason_code: str | None = None,
     warnings: list[str] | None = None,
     evidence: list[dict[str, Any]] | None = None,
-    security_mode: str = "policy_only",
+    security_mode: str = SECURITY_MODE,
 ) -> dict[str, Any]:
     """Build and self-validate an envelope; ``elapsed_ms`` comes from the clock."""
 
     started_at = clock.timestamp()
     finished_at = clock.timestamp()
     elapsed = parse_timestamp(finished_at) - parse_timestamp(started_at)
+    # The mode->enforcement rule lives in `posture.py`; this module only asks for it.
+    enforcement = enforcement_for(security_mode)
 
     document: dict[str, Any] = {
         "schema_version": 1,
@@ -46,7 +49,7 @@ def envelope(
         "evidence": list(evidence or []),
         "reason_code": reason_code,
         "security_mode": security_mode,
-        "enforcement": "acl_enforced" if security_mode == "protected_machine" else "same_user_can_bypass",
+        "enforcement": enforcement,
     }
     validate_self("extension-envelope", document)
     return document

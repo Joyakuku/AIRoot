@@ -2112,3 +2112,62 @@ Windows 自己给"受限调用方"的名字。这是一条**不随参数变化�
 **不**适用于"被测对象就是权威、测试要证明它没变"的场合——但那种时候**必须有一处是字面量**，否则没有任何
 东西可以红。判据是一句话：**把被测对象改坏，测试必须红；如果改坏它的方式同时改坏了用例，那这个测试守不住
 任何东西。**
+
+## ADR-0043：线路本身——一帧一个完整 envelope、只接受本机客户端，而它仍然不是那条边界
+
+**背景**：§113 给了"读**别人** token"，§114 给了"谁可以问"的判定，两者之间还差一条线。§115 按
+`docs/broker` §2 与 §3 把它建出来：§2 明确允许"无 elevated Broker 的同用户模拟"，但要求响应**必须**带
+`security_mode` 与 `enforcement`；§3 规定 IPC 是受 ACL 保护的 named pipe、只接受本机客户端，并且**一次
+提交请求必须是一个完整 envelope，不能由客户端分段拼接安全字段**。
+
+**决策一：帧是数据，不是代码；而且上界在「读」之前生效。** 一帧 = 4 字节小端长度 + 该长度的 UTF-8 JSON。
+`MAX_FRAME_BYTES` 不是取整数的好看值，而是从文档自己的界推出来的：`broker-request` 的字段除
+`plan_ref`/`approval_ref`/`transaction_id` 外都被 schema 限长，而那两个 ref 是 root 相对路径（≤32 767 个
+UTF-16 码元 ⇒ 每个 ≤65 534 字节，一对 ≤~131 KiB），256 KiB 是覆盖这个最坏情况加 JSON 开销的最小 2 的幂；
+实测最大的现实 `commit_plan` 请求只有 **879 字节**（低于上界 298 倍），测试要求它保持在 1/64 上界以下，
+所以"上界"不会悄悄不再是现实文档的上界。三条同族的决定：**超限时在读 body 之前就拒**（读完 4 GiB 再检查
+不叫上界）、**`encode_frame` 用同一个上界**（发送方不该发出自己的读者会拒的帧）、**`decode_frame` 刻意
+不校验 `broker-request` 的 schema**（帧 ≠ 协议，"字节能解出来"永远不能读成"请求合法"）。规范化字节序是
+发送方的礼貌，读者**不得**依赖 key 顺序——两个方向都有测试。
+
+**决策二：只接受本机客户端在 Windows 上是一个参数，而 MSDN 指错了它。** `PIPE_REJECT_REMOTE_CLIENTS`
+（`0x00000008`）在 MSDN 的 `CreateNamedPipeW` 页面里列在 `dwOpenMode` 下，**而这台机器不接受放在那里**：
+实测（`ctypes` 与 C# P/Invoke 两条独立路径）放在 `dwOpenMode` 里 `CreateNamedPipeW` 直接返回
+`INVALID_HANDLE_VALUE`、`GetLastError()=87`，pipe **根本没被创建**；放在 `dwPipeMode` 里成功，且
+`GetNamedPipeInfo` 把这一位读回来（`0x9` 对 `0x1`）。Windows SDK 头文件也把它归在 `dwPipeMode` 一节。
+**MSDN 与头文件不一致，OS 说了算**——而且这个位**是可以验证的**，所以"只接受本机客户端"在这台机器上是
+读数，不是声明。（本阶段之前我把这条判成"本地不可验证"，那句话被这次实测推翻。）
+
+**决策三：判定只吃观测，而观测从 OS 来。** 服务端用 `GetNamedPipeClientProcessId` 拿**对端进程号**，再用
+`probe_process` 读那个 token，再问 `admit_caller`。**请求里的 `client` 块在任何一步都不参与**——这是
+ADR-0041 那条不对称在真机上的第一次执行：一个谎报 SID 与 `application_id` 的请求，与一个诚实的请求得到
+同一个裁决。
+
+**而"从 OS 来"只对**本机**对端成立**（§115.4 量过）：loopback-SMB 对端的 `GetNamedPipeClientProcessId` 返回
+**65279**——那不是连接进程，也不是任何一个本机进程（`OpenProcess(65279)` 报 87，`probe_process` 读不到任何
+事实）。所以远端的"进程号"是客户端那一侧的一个数，而**如果它恰好撞上一个活着的本机 pid，admission 会把这次
+调用归给一个无关的本机进程**。因此判定之前必须先断言**本机**，而这件事是可测的：
+`GetNamedPipeClientComputerNameW` 对本机对端返回 `FALSE` 且 `err=229 (ERROR_PIPE_LOCAL)`，对远端返回真和一个
+非空名字。**远端的对端没有可信的进程号，所以没有任何东西可以用来准入它**——这是拒绝的理由，不是保守。
+
+**决策四：每一份响应都必须说自己是什么。** `security_mode` 与 `enforcement` 是 `broker-response` 的
+**必填**字段，不是礼貌：一个不受保护的服务声称 `protected_machine` 是**假话**，而 `same_user_can_bypass`
+是**真话**。已发布的 schema 允许四对组合、且一对都禁不掉（跨字段约束会拒掉今天合法的文档，而已发布 schema
+不能在 `schema_version: 1` 里加这种约束），所以自洽性住在 `cli/app/airoot/posture.py` 这一处，由守卫保证：
+`posture.py` 是**唯一**拼写那四个词（`policy_only` / `protected_machine` / `same_user_can_bypass` /
+`acl_enforced`）的 app 模块。这次收拢顺带量到一条：`field-values.md` 里 `protected_machine` 与
+`acl_enforced` 原本**没有** †，而它的"有写者"证据是 `doctor.py`/`envelope.py` 里那句
+`security_mode == "protected_machine"`——**一次比较被读成了写出**；† 是 §115 补上的。
+
+**决策五：这不是那条边界，而且它知道自己不是。** 没有提权、没有 Rust 服务器、没有跨用户的强制：pipe 的
+DACL **按设计**允许当前用户（否则这个模式根本无法工作），所以它只能在"同用户进程本来就能做同样的事"的
+地方运行。**而且这条"不是边界"是量出来的，不是声称的**：pipe 的名字**永远不是独占的**——实测一个后到的
+进程可以给同一个名字挂上自己的实例，而 `FILE_FLAG_FIRST_PIPE_INSTANCE` 只让**你自己**的创建在名字已被占用时
+失败（那是防蹲，不是独占）；名字在叶子与 `\pipe\` 两段都**大小写不敏感**，所以它也不能当身份令牌。DACL 拦不住
+同用户进程，因为 DACL 管的是**连接的权利**，而那些进程本来就有这个权利。**跨用户那一半仍然是未测量的**
+（§115.4 写了它需要什么，以及为什么这些事被 `AGENTS.md` §8 禁止）——所以 docs/broker §2 的兼容模式**不能**
+被读成关于跨用户行为的证据。`allowed_sids` 与 `minimum_integrity` 仍然只是显式入参——**它们该从哪来，本条没有决定**，因为
+那需要一个 root 的声明，而那个声明还不存在。
+
+**本条没有决定的事**：`allowed_sids`/`minimum_integrity` 的来源；受保护的 Rust 服务器（ADR-0001 的语言切换，
+而它要等一个生产签发方）；pipe 是否变成一个 CLI 动词（今天它是库加测试入口，没有动词）。

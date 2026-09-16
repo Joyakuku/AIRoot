@@ -30,11 +30,20 @@ from .protocol import (
     parse_response,
     required_fields,
 )
+from .transport import (
+    FRAME_HEADER_BYTES,
+    MAX_FRAME_BYTES,
+    decode_frame,
+    encode_frame,
+    read_frame,
+)
 
 __all__ = [
     "ADDITIONAL_REQUIREMENTS",
     "ADDITIONAL_REQUIREMENT_REASONS",
+    "FRAME_HEADER_BYTES",
     "INTEGRITY_LADDER",
+    "MAX_FRAME_BYTES",
     "OPERATIONS",
     "PROTOCOL_VERSION",
     "REFUSAL_REASONS",
@@ -44,7 +53,10 @@ __all__ = [
     "admit_caller",
     "broker_unavailable",
     "build_request",
+    "decode_frame",
+    "encode_frame",
     "parse_response",
+    "read_frame",
     "required_facts",
     "required_fields",
 ]

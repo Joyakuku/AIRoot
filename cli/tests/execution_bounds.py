@@ -36,6 +36,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from airoot.broker import transport
 from airoot.caps import search as search_module
 from airoot.caps import searchindex
 from airoot.caps.backends import https_artifact, portable_file
@@ -65,6 +66,7 @@ RECORDED_ONLY: dict[str, str] = {
     "discovery_scan": "the whitelist limits are exercised in `test_l1_discovery.py`; a tree deep enough to hit `max_objects` would make the suite slow",
     "artifact_bounds": "the caps are 2 GiB / 8 GiB; a real oversize artifact is a P4 concern (needs a real backend), so only the numbers are frozen here",
     "inspection_bounds": "the PE inspection caps are 64 KiB / 8 MiB and are exercised by `test_l1_probe_pe.py` with synthetic headers",
+    "transport": "the frame bound is exercised in `test_l1_broker_transport.py` — a payload of exactly `max_frame_bytes` is accepted, one byte above is refused, and an oversized header is refused with the body never requested; the guard here cannot re-execute it because that refusal needs a `read` callable, not a document",
     "policy_revisions": "a revision string is not a bound; it is recorded so a bump cannot go unnoticed in the corpus",
     "selection": "membership in `PRECEDENCES` is already enforced at load time by `load_selection_policy`, and the ordering behaviour is covered by `test_l1_selection.py`",
 }
@@ -128,6 +130,14 @@ def build_bounds() -> dict[str, Any]:
             "probe_pe_header_bytes": MAX_HEADER_BYTES,
             "probe_pe_resource_section_bytes": MAX_RESOURCE_SECTION_BYTES,
         },
+        # The broker's frame layout. Both numbers decide refusals the service has to reproduce: the
+        # header width it must read before it knows anything, and the size above which it refuses
+        # **without reading a body at all**. Resolved from `broker/transport.py` rather than copied,
+        # because a second copy of a bound is the one that drifts from the reader that enforces it.
+        "transport": {
+            "frame_header_bytes": transport.FRAME_HEADER_BYTES,
+            "max_frame_bytes": transport.MAX_FRAME_BYTES,
+        },
         "policy_revisions": {
             "discovery_whitelist": whitelist.revision,
             "sources": sources.revision,
@@ -189,5 +199,6 @@ SOURCES: dict[str, str] = {
     "selection": "caps/selection.py (PRECEDENCES) + policy/selection-policy.json",
     "artifact_bounds": "caps/backends/{portable_file,https_artifact}.py",
     "inspection_bounds": "caps/probe_pe.py",
+    "transport": "broker/transport.py (FRAME_HEADER_BYTES, MAX_FRAME_BYTES)",
     "policy_revisions": "the five policy files' `revision` fields",
 }

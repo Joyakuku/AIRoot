@@ -2,6 +2,7 @@
   "broker_request_commit_plan": 0,
   "broker_response_commit_plan": 0,
   "broker_response_gc_apply": 0,
+  "broker_response_pipe_refusal": 1,
   "broker_response_recover_transaction": 0,
   "broker_response_refused_missing_plan": 1,
   "discover_report": 0,

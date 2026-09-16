@@ -38,6 +38,10 @@ SCHEMA_FOR_FIXTURE = {
     "reference_plan": "reference-plan",
     "error_not_implemented": "error-response",
     "broker_request_commit_plan": "broker-request",
+    # The core's own first `broker-response` (draft §115). The harness responses below are the *test*
+    # path's writer, so this schema appears in both maps on purpose — the corpus needs one document the
+    # core produces and documents the harness can reach past a live pipe.
+    "broker_response_pipe_refusal": "broker-response",
     "search_response": "search-response",
     "search_timeout_response": "search-response",
     "search_truncated_index_response": "search-response",
@@ -60,11 +64,21 @@ SCHEMA_FOR_HARNESS_FIXTURE = {
 
 
 def test_every_harness_document_satisfies_its_schema() -> None:
-    """§112: a corpus entry no core prints still has to satisfy the contract it claims."""
+    """§112: a corpus entry no core prints still has to satisfy the contract it claims.
+
+    The two maps are kept apart by **fixture name**, not by schema. Until §115 the assertion was
+    `set(a) & set(b) == []` over the *values*, which forbade the two sets from sharing a schema at all —
+    a rule that was never the point (two fixtures may legitimately show the same documented contract
+    from a core path and a harness path) and that became wrong the moment `broker/pipe.py` made
+    `broker-response` a core-printed document: the core's fixture has to live in `SCHEMA_FOR_FIXTURE`
+    while the harness's four stay here, so a value-level assertion would have rejected the corpus the
+    printed-versus-corpus guard requires. A **name** in both maps is still a defect: the two files would
+    disagree about which schema that fixture claims.
+    """
 
     assert SCHEMA_FOR_HARNESS_FIXTURE, "the harness corpus is empty, so this guard is about nothing"
     overlap = set(SCHEMA_FOR_HARNESS_FIXTURE) & set(SCHEMA_FOR_FIXTURE)
-    assert not overlap, f"a fixture is declared in both maps: {sorted(overlap)}"
+    assert not overlap, f"a fixture name is declared in both maps: {sorted(overlap)}"
 
     for name, schema in SCHEMA_FOR_HARNESS_FIXTURE.items():
         document = json.loads(_fixture_path(name).read_text(encoding="utf-8"))

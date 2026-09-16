@@ -287,10 +287,39 @@ def producer_text(spec: str) -> str:
     return "".join(item.read_text(encoding="utf-8") for item in producer_files(spec) if item.is_file())
 
 
+#: The vocabulary a module defines rather than emits (§115). A producer column may name the module
+#: that defines the words — for the two posture fields it should, because that is where they live — and
+#: that is a different claim from "this module writes the value into a document". `broker/../posture.py`
+#: spells **both** members of each pair so that `enforcement_for` is total over the schema's enum, which
+#: is exactly why its text cannot also be evidence that the never-taken half was produced: a module
+#: whose job is to name a value set cannot testify that any member of it was emitted. The values that
+#: *are* emitted are declared next door in `PAIR_COMPLEMENTS`, because that is a fact about this build
+#: rather than something a literal scan can read.
+VOCABULARY_MODULES = frozenset({"posture.py"})
+
+#: `(row key, vocabulary-only value, emitted value, the module's answer to re-read)` for a field whose
+#: value is a **choice out of one vocabulary module** (§115). This is the one shape the literal scan
+#: above cannot decide, and the reason is structural: the module has to spell the member it never
+#: returns, so "the word is in the file" stops meaning "the word is written". Declaring it here is the
+#: honest alternative to either of the two wrong fixes — moving the vocabulary to where only the live
+#: value appears would make the rule half-written, and counting the vocabulary as a writer would dagger
+#: a value the build really does emit. The last element is not a restatement of the third: it is the
+#: **module's own answer**, re-read by the test below, so a flip in the module is caught here rather
+#: than only in whatever document first notices.
+PAIR_COMPLEMENTS: dict[str, tuple[str, str, str]] = {
+    # `common::$defs.securityMode` — `posture.py`'s `SECURITY_MODE = "policy_only"`.
+    "common::$defs.securityMode": ("protected_machine", "policy_only", "policy_only"),
+    # `common::$defs.enforcement` — the mapping entry that constant selects.
+    "common::$defs.enforcement": ("acl_enforced", "same_user_can_bypass", "same_user_can_bypass"),
+}
+
+
 def written_values(row: Row) -> set[str]:
     pattern = WRITE_PATTERN.get(row.key)
     found: set[str] = set()
     for spec in row.producers:
+        if spec in VOCABULARY_MODULES:
+            continue
         text = producer_text(spec)
         if pattern is None:
             found.update(value for value in row.values if re.search(r"[\"']" + re.escape(value) + r"[\"']", text))
@@ -299,7 +328,84 @@ def written_values(row: Row) -> set[str]:
             for group in match.groups():
                 if group:
                     found.add(group)
+    if row.key in PAIR_COMPLEMENTS:
+        # The value the eliminated vocabulary module actually returns. `posture()` joins the module's
+        # mode constant to its mapping, so the emitted half is a computed fact the text scan cannot
+        # reach; `test_the_declared_pairs_are_the_pairs_this_build_emits` holds this to the module.
+        _vocabulary_only, emitted, _measured = PAIR_COMPLEMENTS[row.key]
+        found.add(emitted)
     return found
+
+
+def vocabulary_module_answer(row_key: str) -> str | None:
+    """Re-read the value a vocabulary module answers for its own row, from the **file**.
+
+    Two regexes rather than an import, so the answer is what the file says and not what an imported
+    object happens to hold: this guard is about a declaration drifting from its source, and an import
+    followed by two attribute reads would be checking the interpreter's copy of the same thing.
+
+    `$defs.securityMode` is answered by the module's mode constant. `$defs.enforcement` is answered by
+    the mapping entry that constant **selects** — which is what makes it a different answer from the
+    one a plain literal scan gives (the scan sees both mapping entries and cannot say which is live).
+    """
+
+    row = next((item for item in ROWS if item.key == row_key), None)
+    if row is None:
+        return None
+    text = "".join(producer_text(spec) for spec in row.producers if spec in VOCABULARY_MODULES)
+    if not text:
+        return None
+    mode = re.search(r"SECURITY_MODE\s*=\s*[\"']([a-z_]+)[\"']", text)
+    if mode is None:
+        return None
+    if row_key.endswith("securityMode"):
+        return mode.group(1)
+    mapping = re.search(
+        r"[\"']" + re.escape(mode.group(1)) + r"[\"']\s*:\s*[\"']([a-z_]+)[\"']", text
+    )
+    return mapping.group(1) if mapping else None
+
+
+def test_the_declared_pairs_are_the_pairs_this_build_emits() -> None:
+    """The pair declaration is checked against the module, and the ways it could rot are refused.
+
+    A literal scan can say what a file *contains*; it cannot say which member of a two-word vocabulary
+    is the one that gets written. So the emitted value for those two fields is declared in
+    `PAIR_COMPLEMENTS` — and a declaration that nothing checks is the shape ADR-0042 is about, so this
+    test re-reads the module's own answer and holds the declaration to it. The failure it is built to
+    catch is a **flip**: switch `SECURITY_MODE` to `protected_machine` and the document's daggers become
+    wrong on both fields at once (one value stops being written, the other starts), while
+    `ENFORCEMENT_BY_MODE` still spells both — so the scan alone would keep reporting "no writer" for the
+    value now being emitted.
+
+    The table half is read from `ROWS` rather than assumed, and the key check is against those rows
+    rather than against `PAIR_COMPLEMENTS` itself: `set(x) == set(x) & set(x)` is true for any `x`,
+    which is the self-referential shape this test exists to avoid.
+    """
+
+    problems: list[str] = []
+    for key, (vocabulary_only, emitted, declared_answer) in PAIR_COMPLEMENTS.items():
+        row = next((item for item in ROWS if item.key == key), None)
+        if row is None:
+            problems.append("%s is declared here but is not a row of the document" % key)
+            continue
+        measured = vocabulary_module_answer(key)
+        if measured != declared_answer:
+            problems.append(
+                "%s: this file says the module answers %r, and it answers %r"
+                % (key, declared_answer, measured)
+            )
+        if emitted != declared_answer:
+            problems.append(
+                "%s: the emitted value %r and the module's answer %r disagree" % (key, emitted, measured)
+            )
+        if vocabulary_only == emitted:
+            problems.append("%s: the pair names one value twice, so it decides nothing" % key)
+        if vocabulary_only not in row.daggers:
+            problems.append("%s: %r is the half with no writer, so it has to carry the dagger" % (key, vocabulary_only))
+        if emitted in row.daggers:
+            problems.append("%s: %r is emitted, so it must not be daggered" % (key, emitted))
+    assert not problems, "the declared pairs no longer match the module:\n" + "\n".join(problems)
 
 
 # --------------------------------------------------------------------------------------------

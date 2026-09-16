@@ -65,7 +65,8 @@
     "inspection_bounds": "caps/probe_pe.py",
     "policy_revisions": "the five policy files' `revision` fields",
     "search_request": "policy/search-policy.json + caps/search.py (MAX_ROOTS, MAX_CURSOR_LENGTH, code fallbacks)",
-    "selection": "caps/selection.py (PRECEDENCES) + policy/selection-policy.json"
+    "selection": "caps/selection.py (PRECEDENCES) + policy/selection-policy.json",
+    "transport": "broker/transport.py (FRAME_HEADER_BYTES, MAX_FRAME_BYTES)"
   },
   "schema_version": 1,
   "search_request": {
@@ -105,5 +106,9 @@
       "owned"
     ],
     "shipped_precedence": "steward"
+  },
+  "transport": {
+    "frame_header_bytes": 4,
+    "max_frame_bytes": 262144
   }
 }

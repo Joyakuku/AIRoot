@@ -9804,7 +9804,7 @@ AIROOT 不拥有的 payload、`PRIVILEGE_REQUIRED` 讲"这个操作要一个你�
 
 | 项 | 变化 |
 |---|---|
-| 测试 | **1104 → 1198**（本阶段新增：身份观测的九件事与两道交叉核对、判定的五条规则与结构证明、reason code 与计数守卫） |
+| 测试 | **1104 → 1198**（**+94**）。**这一格的加数当时是错的，§115 量过之后改的是加数**：原文写 +120（+85 Ed25519 · +11 身份探针 · +10 审批/Ed25519 集成 · +14 ACL 写一侧），而那一刻（`c838fe4`）的 `pytest cli/tests --collect-only` 是**正好 1198**，从 1104 起算即 +94。逐文件实测把这 94 拆得出来：`test_l1_broker_policy.py` **57**（随 `broker/policy.py` 一起在 `c838fe4` 进来）、`test_l1_identity.py` 从 §113 的 20 涨到 **62**（+42，`probe_process` 读**别人** token 的那批）、`test_l1_ed25519.py` **85**、`test_l2_approval_ed25519.py` **10**、`test_l1_acl.py` 里写一侧那批 **14**——**四个加数各自都对，加起来却多了 26**，因为 `caps/identity.py` 的两半（§113 的 `probe_process` 与 §114 的"身份观测"）分属两次提交、却都记在同一个阶段小节里。不改掉而是写在这里：**一条被下一阶段实测推翻的加数，比一个被改平的数字有用**，而且它与 §54 是同一个缺口——数字只跟自己的副本对账，只是这次两份副本都是阶段记录 |
 | 审计检查（`test_l0_consistency.py`） | **102 → 108**（**不是"加了 6 条"**：其中 4 条是那条推导器一直少数出来的） |
 | golden 语料 | **41 → 41**（逐字节再生无漂移；`reason_code_table.json` 内容 +1 行） |
 | reason code | **96 → 97** |
@@ -9829,3 +9829,215 @@ AIROOT 不拥有的 payload、`PRIVILEGE_REQUIRED` 讲"这个操作要一个你�
    所以它答不出这个码。等它接上判定时再加，而不是先把码放进表里装作能答。
 6. **本阶段没有给任何 schema、任何 CLI 动词、任何 golden 语料加东西**（除了那张 reason code 表的一行）：
    `client` 块的形状是已发布契约，**不因为服务端观测变宽而变宽**——这正是 114.1 那条不对称的处置。
+
+## 115. 把线接起来：本机 named pipe（user compatibility mode，ADR-0043）
+
+§113 给了"读**别人** token"，§114 给了"谁可以问"的判定，本阶段把两者接到**一条真实的线**上。权威是
+`docs/broker` §2 与 §3：§2 明确允许"无 elevated Broker 的同用户模拟"，但要求**响应必须带**
+`security_mode=policy_only` 与 `enforcement=same_user_can_bypass`；§3 规定 IPC 是用受 ACL 保护的 named pipe、
+只接受本机客户端、并且**一次提交请求必须是一个完整 envelope，不能由客户端分段拼接安全字段**。
+
+### 115.1 量到的一条：`PIPE_REJECT_REMOTE_CLIENTS` 不在 MSDN 说的那个参数里
+
+"只接受本机客户端"（§3）在 Windows 上有现成的开关：`PIPE_REJECT_REMOTE_CLIENTS`（`0x00000008`）。
+**MSDN 的 `CreateNamedPipeW` 页面把它列在 `dwOpenMode` 下，而这台机器不接受放在那里**——实测（两条独立路径，
+一条 `ctypes`、一条 C# P/Invoke，所以不是 ctypes 的假象）：
+
+| 放法 | 结果 |
+|---|---|
+| `dwOpenMode = 0x00000003`（duplex） | 建pipe 成功 |
+| `dwOpenMode = 0x0000000B`（duplex\|0x8） | `INVALID_HANDLE_VALUE`，`GetLastError() = 87 (ERROR_INVALID_PARAMETER)`——**pipe 根本没被创建** |
+| `dwOpenMode = 0x00000003` + `dwPipeMode = 0x00000008` | 成功，且 `GetNamedPipeInfo` 读回 `flags = 0x00000009`（server-end \| 0x8）；不带这个位时读回 `0x00000001` |
+
+佐证在 Windows SDK 头文件本身：`WinBase.h` 把 `#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008` 归在
+"Define the **dwPipeMode** values for CreateNamedPipe" 一节里。**MSDN 与头文件不一致，而这台机器站在头文件
+那一边；OS 说了算。** 两件事因此进了记录：(1) 按 brief 原样写，pipe 会在创建那一步就失败，而 `err=87`
+**不是** DACL 的问题——一个看起来像权限问题的错误码，实际是参数位置；(2) **这个位是可以本地验证的**，
+`GetNamedPipeInfo` 的 flags 会把它读回来（0x9 对 0x1），所以"我们设了它"可以变成"OS 说它设了"，不必只写在
+散文里。（本阶段之前我把这一条判成"本地不可验证"，那句话被这次实测推翻了——记在这里，因为那个判断本会
+让"只接受本机客户端"永远停留在声称。）
+
+### 115.2 量到的一条：模式与执行方式**四对组合**，schema 一对都禁不掉，而这条规则当时写着两遍
+
+`common.schema.json` 的 `securityMode` 有两个取值、`enforcement` 有两个取值，所以已发布的契约允许**四对**，
+其中两对是**互相矛盾**的：
+
+| 组合 | 是否自洽 |
+|---|---|
+| `policy_only` + `same_user_can_bypass` | ✅ 本 build 的诚实状态 |
+| `protected_machine` + `acl_enforced` | ✅ 将来受保护 build 的状态 |
+| `policy_only` + `acl_enforced` | ❌ 声称了一种没有任何实现的强制 |
+| `protected_machine` + `same_user_can_bypass` | ❌ 声称了一种同用户进程可以绕过的"保护" |
+
+schema **一对都禁不掉**：这两个字段是共享的 `$defs`，跨字段约束要在**每个**用到它们的 schema 里写 `if/then`，
+而那会拒掉今天合法的文档——已发布的 schema 不能在 `schema_version: 1` 里加一条会拒绝的约束（AGENTS §7）。
+所以自洽性只能住在代码里。而它当时住在**两处**，一字不差：
+
+* `caps/doctor.py:861` — `"enforcement": "acl_enforced" if security_mode == "protected_machine" else "same_user_can_bypass",`
+* `ext/envelope.py:49` — 同一个表达式。
+
+本阶段的 pipe 会是**第三个**。处置：这条规则搬进一个新模块 `cli/app/airoot/posture.py`（`SECURITY_MODE`、
+`enforcement_for()`、`posture()`），三处调用点全部改成引用它，并加一条守卫——**`acl_enforced` 这个字面量在
+`cli/app/airoot` 下只允许出现在 `posture.py`**，所以第四份手抄本不可能悄悄出现。守卫还要求这条映射对
+schema 的枚举**完备**（枚举多一个值而没有规则就红），并且 `enforcement_for` 对认不出的模式**抛错而不是给默认值**
+——默认值等于替一个没人认识的模式宣布一种强制。
+
+### 115.3 量到的一条：`broker-response` **没有结果通道**
+
+`broker-response.schema.json` 是 `additionalProperties: false`，字段恰好十个：`schema_version`、`request_id`、
+`status`（枚举 `ok|rejected|failed|recovery_required`）、`security_mode`、`enforcement`、`transaction_id`、
+`state`、`reason_code`、`evidence`、`retryable`（只有最后一个是可选的，其余**必填**）。
+
+**没有一个字段装得下一次操作的"结果"。** 后果要写清楚：这条线**不是查询通道**，它是**提交通道**——问一句
+只读问题，能拿回来的只有"裁决 + 证据"（`status`/`reason_code`/`state` + `evidence`），拿不回一个 payload。
+这不是缺陷，是 §4 的形状：那十七条步骤是一条提交流水线，字段是为"我提交的那件事怎么样了"准备的（所以有
+`transaction_id`/`state`），而**读**属于 CLI 的只读投影面（`where`/`doctor`/`inventory`）。**能从这里读到的，
+是别人对你这次提问的裁决，不是世界本身。** 把它读成查询接口，是这一层最近的误读。
+
+### 115.4 量到的：这条线到底保护了什么
+
+这一节全部是**实测**（一台机器、两条独立路径互相印证），不是推断。它是本阶段最有价值的部分，因为它把
+"兼容模式"从一句声明变成一组读数。
+
+| 问题 | 实测 | 后果 |
+|---|---|---|
+| 请求的 DACL 落下来了吗 | **是**：3 条 `ACCESS_ALLOWED`、无继承 ACE、无多余条目、掩码 `0x001F01FF` | 但有三件事必须记下来，见下 |
+| 对端是谁 | 本机对端：`GetNamedPipeClientProcessId` **等于**真实连接进程的 pid（与子进程比对相等），请求里故意谎报的 pid 与它无关；`probe_process` 读到了那个真实 token | 进程号只对**本机**对端可信 |
+| 远端（loopback-SMB）对端 | pid 返回 **65279**——不是连接进程、也不是本机任何进程（`OpenProcess` 报 87） | 那个数是**客户端填的**；撞上活着的本机 pid 就会把调用归错人 |
+| connect 竞态 | 客户端先连上并保持 → `FALSE` + **535**，句柄仍可用 | **535 = 已经连上了，继续** |
+| 同一个 API 的另一种 `FALSE` | 客户端连上后**又断开** → `FALSE` + **232 `ERROR_NO_DATA`**（两次） | 把任何 `FALSE` 当"已连接"的服务器会去服务一个**死掉的**对端 |
+| 没有客户端时 | `ConnectNamedPipe` **永远阻塞**（服务端没有超时；探针自己挂在这里） | 没有可中断等待的服务端会**永远关不掉** |
+| `PIPE_REJECT_REMOTE_CLIENTS` 可验证吗 | **可，两条路**：`GetNamedPipeInfo` 的 flags 位 `0x8` 精确跟随（`0x1` 对 `0x9`）；行为上 loopback-SMB **不带标志连得上、带上 `err=5`**，本机两种都成功 | "只接受本机客户端"是**读数**，不是声明 |
+| 跨用户 | **测不了**（见下） | 兼容模式**不能**被读成跨用户行为的证据 |
+
+**DACL 那三条要写下来**：(1) **读回的 SDDL 字符串不等于请求**——`GA` 被规范化成 `FA`，所以**用字符串比 SDDL
+会永远误报"漂移"**，要比的是 ACE 集合（类型/标志/掩码/受托者）；(2) `GetNamedSecurityInfoW` 按**名字**
+读（`\\.\pipe\<name>`）**失败 `rc=161 ERROR_BAD_PATHNAME`**，必须从**服务端自己的句柄**上读
+（`GetSecurityInfo(handle, SE_KERNEL_OBJECT, ...)`）；(3) **不给 SDDL 不是"安全默认"**——DACL 来自创建 token
+的默认 DACL，实测 **5 条**，里面有 `Everyone` 与 `ANONYMOUS LOGON` 的 `READ|EXECUTE`，也就是说 pipe 变成
+"谁都能连上读"。所以 SDDL 必须显式给，**而"不给"这个选项要写清为什么不能用**。
+
+**远端的进程号不可信，所以判定前必须先断言"本机"**：`GetNamedPipeClientComputerNameW` 对本机对端返回
+`FALSE` 且 `err=229 (ERROR_PIPE_LOCAL)`，对远端返回真与一个非空名字。**远端的对端没有可信的进程号，因此没有
+任何东西可以用来准入它**——拒绝它不是保守，而是没有可用的观测。
+
+**客户端会看到什么**（这些决定了 `call_broker` 能说什么）：没有服务器 → `CreateFileW` `err=2`；**服务器中途
+死掉也是 `err=2`**（两者不可区分，所以**不得**把它报成"broker 崩了"）；实例忙 → `231 ERROR_PIPE_BUSY`；
+`WaitNamedPipeW` 超时 → **`121 ERROR_SEM_TIMEOUT`**（不是 1460）；对端在帧中间消失 → `ReadFile`
+`err=109 ERROR_BROKEN_PIPE`。两条要命的：**字节模式下"短读"是成功**——服务器写了 10 字节中的 4 个，客户端
+`ReadFile` 返回 `ok=True, bytes=4`，所以**截断的帧会以"成功"到达**，必须看字节数，绝不能把 `ok=True` 当
+"一个完整帧"；**消息模式救不了你**——普通 `CreateFileW` 客户端在 `PIPE_TYPE_MESSAGE` 的 pipe 上仍按**字节**
+模式读（只有显式 `SetNamedPipeHandleState(PIPE_READMODE_MESSAGE)` 之后短读才变成 `err=234
+ERROR_MORE_DATA`）。这正是帧必须是**显式长度前缀**、不能依赖 pipe 消息边界的原因。另外 `WaitNamedPipeW` 的
+`dwTimeout = 0` 意思是 `NMPWAIT_USE_DEFAULT_WAIT`，**不是**"不等"。
+
+**名字从来没有独占性**：实测矩阵（两个独立进程）——holder=普通 / second=first → 后来者 `err=5`；
+holder=first / second=**普通** → 后来者**创建成功**；first/first → `err=5`；普通/普通 → 两个都成功。所以
+`FILE_FLAG_FIRST_PIPE_INSTANCE` 只让**你自己**的创建在名字已被占用时失败（**防蹲**，不是独占），后来者可以给
+同一个名字挂上自己的实例；而名字在叶子与 `\pipe\` 两段都**大小写不敏感**（`\\.\PIPE\AIROOT-…` 能连上），
+所以它也不能当身份令牌。顺带两条：`nMaxInstances` 是**上限**不是创建数（上限设 1 时第二次创建报 231，
+`PIPE_UNLIMITED_INSTANCES` 读回 255）；overlapped 句柄上的 `ConnectNamedPipe` 返回 `FALSE` + `997
+ERROR_IO_PENDING`，必须等事件再 `GetOverlappedResult`。
+
+**跨用户为什么测不了**（写清它需要什么，而不是含糊过去）：需要**一个知道密码的第二个本地账户**，以及
+`runas /user:` 或 `LogonUser`/`CreateProcessWithLogonW` 这样的载体；而且被测的 SDDL 按设计就允许管理员，所以
+有意义的是"**非管理员**的第二个账户"。创建账户、设置密码、持久化 runas 凭据，正是 `AGENTS.md` §8 那句
+"任何测试都不得污染开发机的 PATH、注册表、ACL 或真实 AIROOT root" 所指的那一类，而且它需要一个**不能凭空
+发明**的秘密。**所以结论是：docs/broker §2 的 user compatibility mode 与跨用户行为无关，本轮没有也不能改变
+这一点。**
+
+**一句话的诚实位置**（与 docs/broker §2 完全一致）：**请求的 DACL 完整落下来了，OS（而不是请求）说出了
+本机对端是谁，而这个名字永远不独占**——所以这是**同用户模拟**，不是信任边界。
+
+### 115.5 守卫与验红
+
+本阶段加的守卫分四组，每一组都量过"它能不能红"，因为**能验红**与**红得对**是两件事（§114.5 的教训）。
+
+| 守卫 | 位置 | 它拒的是什么 | 验红 |
+|---|---|---|---|
+| 四个字面量只许出现在 `posture.py` | `test_l1_posture.py::test_only_posture_py_names_an_enforcement_value` | 第四份手抄本 | ✅ 往 `caps/doctor.py` 塞一行 `_INLINE_ENFORCEMENT = "acl_enforced"` → **1 红** |
+| `enforcement_for` 的实参不许是字面量 | `test_l1_posture.py::test_no_module_passes_a_hard_coded_mode_to_enforcement_for` | 硬编码的模式（**它错，不是因为词写错，而是因为形状**） | ✅ 把 `enforcement_for(SECURITY_MODE)` 改回 `enforcement_for("policy_only")` → **1 红** |
+| 提权服务端必须拒绝启动 | `test_l1_broker_pipe.py::test_an_elevated_server_refuses_to_start_and_says_why` | 把那条拒绝放宽成警告 | ✅ 见下（**这是本阶段唯一能在这台机器上跑的 live-pipe 断言**） |
+| 打印集 ⟷ 语料双向相等 | `test_l0_consistency.py`（既有） | 核心自己写出的 `broker-response` 没有验收面 | ✅ 加 fixture 前它**就是红的**——它是本阶段第一个发现的缺口，不是事后补的 |
+
+**第一组的范围是 §115 才从"一个词"扩到"四个词"的，而扩之前它是漏的。** 原来只扫 `acl_enforced`，而
+`broker/pipe.py` 当时写的是 `enforcement_for('policy_only')`——一个**硬编码的模式**。把它改对之后，
+`SECURITY_MODE` 的来源只剩 `posture.py` 一处，而 `SECURITY_MODE` 一旦换值、`enforcement_for(SECURITY_MODE)`
+就会跟着换，两个字段**不可能**再各自说一套。这一条同时是第二组存在的理由：**只按词扫的守卫挡不住形状**
+（把 `'policy_only'` 改成 `'protected_machine'` 一样能躲过按词扫描），所以补了一条按**形状**扫的。
+
+**第三组要单独说，因为它在"测试都跳过"的机器上是唯一还在断言的东西。** 这台开发机的 shell 是**提权**的，
+而 `serve_pipe` 按设计拒绝从提权 token 启动，于是本阶段 23 条 live-pipe 测试全部 `skip`。如果提权拒绝本身
+也只由那些被跳过的测试覆盖，那么"放宽它"这件事在这台机器上**永远不会红**——那才是真正的坏形状：一个看起来
+有覆盖、实际一次都没跑过的断言。所以这一条**不挂 `_requires_unelevated`**：提权时它断言拒绝（本机走这条），
+非提权时它启动一个没人调用的服务器并断言它干净停下（`stop` 那条路，本机走不到）。**一条测试覆盖两个世界，
+而这两个世界里它都是真的。**
+
+**另一处验红顺带修掉了一个真缺陷**（不是守卫，是实现的判断）：`broker/pipe.py` 原本把"名字已被别人占住"
+（`CreateNamedPipeW` 的 `err=5`）报成 `ACL_MISMATCH`。这个码讲的是**目录的 ACL 与基线不符**，而这里讲的是
+**本进程没拿到这个名字**——两件事，只是共用退出码 5。**借一个码是因为退出码相同，正是码表开始失去意义的
+方式**，所以改报 `PRIVILEGE_REQUIRED`，并在证据里写清"补救办法是一个别人不占的名字，不是提权"（提权拿不到
+一个独占的名字）。改回旧写法 → `test_l1_reason_codes.py` **1 红**。副作用是好的：`ACL_MISMATCH` 恢复了它
+在《这一版发不出来的码》里的位置——§113 的写一侧仍然**只是库**，没有调用者，所以这个码仍然没有写者。
+
+### 115.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1198 → 1294**（**+96**）。逐文件实测：`test_l1_broker_transport.py` **29** · `test_l1_broker_pipe.py` **32** · `test_l1_posture.py` **9** · `test_l1_broker_policy.py` 里**本阶段新增的那 26 条**（该文件共收集 57 条，其余 31 条是 `c838fe4` 的 §114 加的，所以它整体记在 §114.6 那一格）。**"从"取的是 §114.6 的"到"，不是 1124**：本阶段第一次写这张表时，把"HEAD 上收集到多少"当成了"本阶段从多少起算"——`git stash` 之后实测 HEAD 正好是 1198，与 §114.6 闭合；那个 1124 是把本阶段的 96 减过头算出来的。**这是本阶段第二处"看着像链断了、其实是加数错了"**（第一处是 §114.6 那一格），两者同因：链条守卫（§83）只在链**断**的地方红，它管不了某一段的加数本身 |
+| 审计检查（`test_l0_consistency.py`） | **108 → 108**（本阶段没动这个模块；它上一次变是 §114 修掉推导器少数出来的 4 条） |
+| golden 语料 | **41 → 42**（新增 `broker_response_pipe_refusal.json`，逐字节再生无漂移） |
+| reason code | **97 → 97**（新增 `CALLER_NOT_AUTHORIZED` 是 §114 的事；本阶段只把一个用错的码改对） |
+| 新增模块 | `cli/app/airoot/posture.py`、`cli/app/airoot/broker/transport.py`、`cli/app/airoot/broker/pipe.py` |
+| 新增测试文件 | `cli/tests/test_l1_posture.py`、`cli/tests/test_l1_broker_transport.py`、`cli/tests/test_l1_broker_pipe.py` |
+| 契约变更 | 无（`cli/schema/*.schema.json` 一个字节没动；本阶段加的是**使用者**，不是新边界） |
+| 新增 ADR | **ADR-0043**（线路的五条决策：兼容模式只允许本机、模式与执行方式的自洽规则只能住在代码里、反驳必须到达调用方、名字永不独占、`probe_root` 只能回裁决） |
+
+**fixture 的产法要写清楚，因为它是本阶段唯一一处"没有用最真的那条路"的地方。** 那份语料**不是**从一条活
+pipe 里截下来的：`serve_pipe` 在提权 token 下拒绝启动，而 `test_golden_fixtures_reproduce_exactly` 要在
+**每台机器**上重新生成语料——所以"只能由一条活 pipe 产出"的 fixture 在任何提权 shell 上都是不可复现的
+（包括本机）。冻结的是**服务端的判定**：同一个 `ROUTING` 条目、同一个 `_refusal` 装配器（服务循环调的就是
+它）、一个由 wire 层构造并被 `broker_request_commit_plan.json` 记下的请求。**哪些字节上线**是
+`broker/transport.py` 的契约，由它自己的测试量；`probe_root` 不能当 fixture 的理由见 §112（它的答案是
+机器观测），`CALLER_NOT_AUTHORIZED` 也不能（它的证据带观测到的 SID）。
+
+**加这份 fixture 时，撞出一条既有断言的反向错误。** `test_golden.py` 原本要求两张映射的**值**（schema 名）
+不相交。那条规则从来不是重点——两张表本来就允许展示同一个契约（一张来自核心路径、一张来自 harness 路径）
+——而它会**主动拒绝**这里必须写下的东西：`broker-response` 现在是核心自己写的文档，它的 fixture 必须在
+`SCHEMA_FOR_FIXTURE` 里，同时 harness 那四份仍在 `SCHEMA_FOR_HARNESS_FIXTURE` 里。改成按**fixture 名**
+不相交：两张表不能对同一个名字声称不同的 schema，那才是真正的缺陷。
+
+**`references/field-values.md` 的两行也改了，而改的过程暴露了那把尺子的极限。** 两个 posture 字段的
+"写者"栏加上了 `posture.py`（词汇的唯一处所），于是那条按**字面量**判"有没有写者"的守卫**反了**：词汇模块
+必须把**两个**成员都写出来（这样规则对枚举才是完备的），所以"这个词在文件里"不再等于"这个词被写出过"
+——`protected_machine` 与 `acl_enforced` 会因为它俩正好是映射里没被选中的那一半而**看起来有写者**。处置：
+这两个字段的**被发出的值**在一处数据里声明（`PAIR_COMPLEMENTS`），并且那个声明**不是凭信**——同一文件里
+另有一条测试回到 `posture.py` 读它的 `SECURITY_MODE` 与映射，把声明与模块逐个对上。三种漂移都验过红：
+把 `SECURITY_MODE` 翻成 `protected_machine`（**3 红**）、把映射的两个值对调（**3 红**）、把模式的键写错
+（**6 红**）。**这条的教训与 §114.5 同族、方向相反**：那里的守卫在读自己写的用例（自指），这里的守卫在读
+一个模块的**全部**词汇，而"文件里有这个词"对**两个值的字段**根本不构成证据。
+
+### 115.7 如实记录的边界
+
+1. **这条线不是信任边界，本阶段没有把它变成边界。** 同用户进程能做服务端能做的一切：pipe 的名字按设计
+   就不独占（后来者可以给同一个名字挂自己的实例），DACL 也**故意**允许当前用户——那是这个模式的名字
+   （same_user_can_bypass）的字面意思。DACL 买到的是**只接本机**（`PIPE_REJECT_REMOTE_CLIENTS`，可读回验证），
+   不是"别的用户进不来"这个更强的说法（那条**这一轮没有量**，见下）。
+2. **跨用户那一半没有测，而且这里记的是"为什么测不了"而不是"没测"。** 需要有密码的第二个本地账户；
+   而创建账户、设密码、持久化 runas 凭据正是 `AGENTS.md` §8 禁止测试污染的那一类，且它要一个**不能凭空
+   发明**的秘密。所以 **user compatibility mode 与跨用户行为无关**，本轮没有也不能改变这一点。
+3. **提权拒绝的覆盖面是有条件的。** 本机 23 条 live-pipe 测试全部跳过，因为它们要的是一条能启动的服务。
+   这不是"绿"，是 `skip`（`AGENTS.md` §8 要求测试不污染宿主机，而唯一能拆掉这个条件的东西是提权）。
+   唯一在两个世界都运行的是 §115.5 第三组那条。
+4. **没有任何动词走到这条线。** `serve_pipe` / `call_broker` 是库加一个测试路径上的服务端：CLI 里没有
+   `broker` 动词、`agents/airoot.json` 里没有 lane、没有 schema 变化。**从 CLI 走不到这条 pipe**，它今天
+   的消费者是测试。要接上它需要的东西不是代码，是策略来源（`allowed_sids` / `minimum_integrity` 从哪来）
+   与一个**受保护的**服务端（提权 + 私钥）。
+5. **`probe_root` 经这条线只回裁决与证据，不回值。** `broker-response` 没有结果字段（§115.3），所以调用方
+   知道"根探针成功了、看了什么"，不知道探到的数。这不是缺陷，是那张 schema 的形状；要读世界请走 CLI 的
+   只读投影面。
+6. **`probe_root` 与 `CALLER_NOT_AUTHORIZED` 都不能进语料**（前者是机器观测、后者带 SID），所以这份
+   fixture 冻结的**只有**"被拒绝的提交"这一条路。它不是"这条线的验收面全在这里"的意思。
+7. **`nMaxInstances`、overlapped 句柄、`WaitNamedPipeW` 的 `dwTimeout=0` 语义**等读数记在 §115.4 与模块
+   文档里，属于"将来写 Rust 版时不要再摸一遍"的知识，而不是本阶段的实现。
+
