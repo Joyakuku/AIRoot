@@ -27,6 +27,7 @@ from airoot.caps.planner import SCOPE_DATA_ROOT, SCOPE_PROJECT
 from airoot.cli import DECLARED_ABSENT, EXEC_ALIAS_FLAG, build_parser
 from airoot.exits import EXIT_MEANINGS, REASON_EXIT
 from airoot.schema_io import load_schema, schema_names
+from schema_walk import enums_by_path
 
 REPO = Path(__file__).resolve().parents[2]
 APP = REPO / "cli" / "app" / "airoot"
@@ -860,26 +861,20 @@ NULL_SPELLING = "null"
 
 
 def _enum_spelling(item: Any) -> str:
+    """Kept for the synthetic cases below; the walk itself spells values through `schema_walk`."""
+
     return NULL_SPELLING if item is None else str(item)
 
 
 def _enums_in(schema: dict[str, Any]) -> dict[str, list[str]]:
-    """`{documented path: values}` for every `enum` the schema declares, at any depth."""
+    """`{documented path: values}` for every `enum` the schema declares, at any depth.
 
-    found: dict[str, list[str]] = {}
+    The walk itself lives in `schema_walk.py` since §104: this module and `test_l1_field_values` used
+    to answer the same question with two walkers, and the one here descended only `properties` and
+    `items` — 23 of the published set's 61 enums were invisible to it while it claimed "any depth".
+    """
 
-    def walk(node: Any, prefix: str) -> None:
-        if not isinstance(node, dict):
-            return
-        if isinstance(node.get("enum"), list):
-            found[prefix] = [_enum_spelling(item) for item in node["enum"]]
-        for name, child in (node.get("properties") or {}).items():
-            walk(child, f"{prefix}.{name}" if prefix else name)
-        if "items" in node:
-            walk(node["items"], f"{prefix}[]")
-
-    walk(schema, "")
-    return found
+    return enums_by_path(schema)
 
 
 #: Every enum the checked document declares, **derived from the schema**, not listed here. §89 covered
@@ -981,6 +976,52 @@ def test_every_search_result_value_has_a_fixture_or_a_written_exception(path: st
     assert _values_at({"a": {"b": [{"c": "x"}]}}, "a.b[].c") == {"x"}, (
         "the path walker has to reach a value through a list, or this guard checks nothing"
     )
+
+
+def test_the_enum_walk_descends_every_keyword_that_can_hold_a_subschema() -> None:
+    """§104: the walk claimed "any depth" while descending only `properties` and `items`.
+
+    Measured on the published set: that walk missed **23 of 61** enums — all 18 of `common`'s (they
+    live under `$defs`), `extension-manifest`'s three under `operations.additionalProperties`, the
+    injection blacklist under `reference-plan.exposure.variables.propertyNames`/`not`, and
+    `registry-projection.external_references[].source_kind`'s `anyOf`. Nothing depended on the
+    missing half *today* (the only schema it walked was `search-response`, where it saw all five),
+    which is exactly why the false claim survived: the guard was right for a reason nobody wrote down.
+
+    So the shape is checked on a synthetic schema that puts one enum under every keyword that can
+    carry a subschema. The path set is asserted **exactly**, both directions — a walk that finds the
+    right number of enums in the wrong places is still wrong — and the constraining keywords merge
+    into one path rather than overwriting, because a walk that silently drops a value is the defect
+    this test exists for.
+    """
+
+    synthetic = {
+        "properties": {"direct": {"enum": ["a"]}},
+        "items": {"enum": ["b"]},
+        "prefixItems": [{"enum": ["c"]}],
+        "contains": {"enum": ["d"]},
+        "$defs": {"shared": {"enum": ["e"]}},
+        "additionalProperties": {"enum": ["f"]},
+        "patternProperties": {"^x": {"enum": ["g"]}},
+        "propertyNames": {"not": {"enum": ["h"]}},
+        "oneOf": [{"enum": ["i"]}],
+        "anyOf": [{"enum": ["j"]}],
+        "allOf": [{"enum": ["k"]}],
+        "if": {"enum": ["l"]},
+        "then": {"enum": ["m"]},
+        "else": {"enum": ["n"]},
+        "dependentSchemas": {"dep": {"enum": ["o"]}},
+    }
+
+    found = enums_by_path(synthetic)
+    assert {path: sorted(values) for path, values in found.items()} == {
+        "": ["h", "i", "j", "k", "l", "m", "n"],
+        "*": ["f", "g"],
+        "[]": ["b", "c", "d"],
+        "dep": ["o"],
+        "direct": ["a"],
+        "shared": ["e"],
+    }, found
 
 
 def test_a_schema_permitted_null_is_never_demanded_from_the_corpus() -> None:

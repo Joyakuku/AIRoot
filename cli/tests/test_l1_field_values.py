@@ -23,6 +23,8 @@ import re
 
 import pytest
 
+import schema_walk
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SCHEMA_DIR = REPO / "cli" / "schema"
 DOC = REPO / "references" / "field-values.md"
@@ -229,24 +231,14 @@ def spell(value: object) -> str:
 
 
 def enum_value_sets(name: str) -> set[frozenset[str]]:
-    """Every enum this schema file contains, wherever it sits."""
+    """Every enum this schema file contains, wherever it sits.
 
-    found: set[frozenset[str]] = set()
+    One definition since §104: this used to be a second walker next to `test_l0_consistency`'s, and
+    the other one could not see `$defs`/`additionalProperties`/`anyOf`, so the two disagreed about
+    "every enum" — this one was the complete one, and the shared walk keeps it that way.
+    """
 
-    def walk(node: object) -> None:
-        if isinstance(node, dict):
-            if isinstance(node.get("enum"), list):
-                found.add(frozenset(spell(item) for item in node["enum"]))
-            for key, value in node.items():
-                if key in ("enum", "const"):
-                    continue
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(schema_document(name))
-    return found
+    return schema_walk.enum_value_sets(schema_document(name))
 
 
 def schema_files() -> list[str]:

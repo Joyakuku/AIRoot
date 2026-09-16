@@ -1429,6 +1429,63 @@ reason_code: DATA_ROOT_MISSING        # 退出码 6
 - **"折叠"这件事本身没有台账**：哪些命令允许把失败折进成功文档、折在哪个字段，散在代码与各阶段记录里，
   没有一份清单。本条只把**今天存在的三处**列全。
 
+## ADR-0030：同一句"schema 里的每个 enum"只能有一个走法，完整性用**形状**证明
+
+**状态：已裁决。** 本条处理 §97.7-4 记下的那条边界（"`_enums_in` 不管 `oneOf`/`allOf`"），
+量出来的洞比那条记录写的更大。
+
+### 实测（不是推断）
+
+仓库里有**两个**走法在回答同一个问题——"这个 schema 声明了哪些 enum"：
+
+| 走法 | 位置 | 下降的关键字 | 看到 / 全部 |
+|---|---|---|---|
+| `_enums_in` | `test_l0_consistency.py`（fixture 覆盖规则 + 合成自检） | 只有 `properties`、`items` | **38 / 61** |
+| `enum_value_sets` | `test_l1_field_values.py`（取值表完整性） | **每一个 dict/list**（完整） | 61 / 61 |
+
+`_enums_in` 的 docstring 写着"every `enum` the schema declares, **at any depth**"——**这句话是假的**。
+它看不见的 23 个：`common` 的**全部 18 个**（都在 `$defs` 里）、`extension-manifest` 的 3 个
+（在 `operations.additionalProperties` 下）、`reference-plan` 的注入黑名单
+（`exposure.variables.propertyNames`/`not`）、`registry-projection` 的 `source_kind.anyOf`。
+
+**而今天没有任何东西依赖那看不见的一半**：它只被用来走 `search-response`（那里 5/5 都可见），
+取值表的完整性用的是**另一个**走法（完整的那个）。**守卫是对的，对的理由却没人写下来**——
+这正是 §104 要修的东西：一次"把规则拓宽到第二份 schema"的尝试（§97 就考虑过）会直接继承这份失明，
+而那时它的答案会**静默地**只覆盖一半。
+
+### 裁定
+
+1. **一个走法**：`cli/tests/schema_walk.py` 的 `enums_by_path`（路径 → 取值）是唯一定义，
+   `enum_value_sets` 由它派生。`test_l0_consistency` 与 `test_l1_field_values` 都改为委托。
+2. **路径拼法保持原样**（`properties` 用 `.` 连接、`items` 追加 `[]`），新可见的关键字各有约定：
+   map 形状（`additionalProperties`/`patternProperties`）贡献一段 `.*`，
+   `constraining` 关键字（`oneOf`/`anyOf`/`allOf`/`not`/`if`/`then`/`else`/`propertyNames`）**保持当前路径**，
+   `$defs`/`definitions`/`dependentSchemas` 用名字连接。
+3. **两条路到同一个键要合并，不许覆盖**：一次静默丢值的走法正是本条要终结的缺陷。
+4. **完整性由形状证明，不由计数证明**：一张合成 schema 在每个能带 subschema 的关键字下各放一个 enum，
+   断言**路径集合恰好等于**预期（双向）。计数会随"任何地方多一个 enum"而变，形状只在这个关键字
+   停止被下降时变红——后者才是要守的那件事。
+
+### 没有改变什么
+
+- **没有改任何 schema 文件、没有改任何对外输出、没有改退出码**：改的是**读者**，不是**契约**。
+- **fixture 覆盖规则仍然只覆盖 `search-response`**：§97 拒绝拓宽的理由（别的 schema 会产生大量假 †）
+  没有被本条推翻；本条让"要不要拓宽"这个决定在**信息完整**的前提下重新可做。
+- 取值表的 30 行一条没动——它本来就完整（人工读过 `$defs`），这一轮让**机器**也能看见那些行。
+
+### 这一版仍然挡住的（诚实清单）
+
+- **新可见关键字的路径拼法（`operations.*.operation_kind`、`exposure.variables`）是这一轮引入的约定**，
+  今天没有第二个消费者，所以它**不是契约**；将来谁要按路径引用它们，得先把约定写下来。
+- **`enum_value_sets` 把路径丢掉了**：两个不同字段共用同一套词汇（`management` 出现在三处）在表里
+  是**一行**。这正是取值表需要的（一处解释、多处引用），代价是它**查不出**"只documented 了一次、
+  却用在三处"。
+- **走法只认 `enum`，不认 `const`**：`status: {"const": "failed"}` 这样的字段**永远**进不了这个问题
+  （`error-response` 就是，§102 的处理是把它放进取值表的 EXEMPT 一节人工说明）。
+- **走法不跟 `$ref`**：它问的是"**这个文件里**声明了哪些 enum"。`where-response.health` 是
+  `{"$ref": "common.schema.json#/$defs/health"}`，所以在 `where-response` 这一侧**看不到**那 5 个取值——
+  完整性靠"每个文件各自被走一遍"的**并集**成立，而 `common` 自己在受检名单里。
+
 ## 尚未决策（本日志自己的一份清单）
 
 **§86 更正了标题。** 它原来写的是"（仍属规划 §23 的未冻结项）"——**那句话从来不是真的**：规划 §23
