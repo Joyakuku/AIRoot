@@ -11017,7 +11017,24 @@ where (after repair)      exit=1 NOT_FOUND
 doctor                    exit=0 healthy
 ```
 
-1. **`StopAfter("ACTIVE_BOUND")` 一次都没触发**：`checkpoint(state)` 收到的参数显然不等于 `ACTIVE_BOUND`（要么传的是**目标**状态、要么传的是别的名字）。**先读 `tx/journal.py` 里 `checkpoint` 的调用点**，别再猜——这一条一次读取就能定。
+1. **注入器确实触发了，是我的探针读错了。** 上一轮这里写着"一次都没触发"——**那句话是错的**，测量如下：`journal.py:214` 调 `self.checkpoint(tx)`，`:266-268` 把 `str(tx["state"])` 交给注入器。换一个**记录每一个状态**的注入器之后，序列是
+
+   ```text
+   ['PROPOSED','APPROVED','FETCHED','VERIFIED','STAGED','COMMITTED','REGISTERED','ACTIVE_BOUND']
+   commit returned: {"state": "ACTIVE_BOUND", "journal_seq": 7, "failure": null}
+   ```
+
+   **`commit` 不抛 `InterruptedError`——它把停住的事务原样返回**。上一轮的探针只区分"抛了 InterruptedError"与"抛了别的"，于是把"正常返回的停住事务"读成了"注入器没触发"。**要写 #14 的断言，必须读返回值里的 `state`，不能等异常。**
 2. **同一条直驱路径的结果与 CLI 不同**：`adopt --mode import` 的同一份计划，走 CLI 的 `install` 报 `FINALIZED`（§124/§125 实测），直驱 `ArtifactRunner.commit(plan, token)` 却在 post-bind 校验处 `VERIFY_FAILED` 并回滚（`tree_digest(store_dir) != row["artifact_digest"]`）。**同一个 API、同一份计划、两种结果**，说明两者之间有一处我们没看见的差异（时钟、registry 句柄、还是 `drive()` 的入口条件）。**在解释它之前，任何 #14 断言都会把其中一个当成"对的那个"。**
 
+2. **停住之后 `repair` 的行为（这一条才是真问题）**：`where` 在停住时看到实例**已绑且 healthy**（提交点确实生效了），随后 `repair` 报
+
+   ```text
+   action=reconcile_binding_then_resume_or_revert  state=ROLLED_BACK  outcome=VERIFY_FAILED
+   同一份计划不注入时是 FINALIZED，generation 1；注入后 repair 走到 generation 2
+   where (after repair) -> NOT_FOUND
+   ```
+
+   **同一个提交点被走第二遍，`generation_after` 从 1 变成 2**，然后在 post-bind 校验处失败并回滚。所以下一轮的真正问题不是"怎么接注入器"（已解决），而是：**从 `ACTIVE_BOUND` 恢复时重放提交点、再因 post-bind 校验失败而回滚——这是设计要的行为，还是一个重放缺陷？**
+   判据是现成的：pytest 里已有针对 **artifact runner** 的故障注入覆盖（若它期望 `FINALIZED` 而这里回滚，那么两者之间又有一处差异要解释；若它也期望回滚，那 #14 的断言就照这个形状写，并把它写进文档）。**在回答之前不要动 `tx/rollback.py` 或 resume 逻辑。**
 **这两条是这一轮的实际产出**：路径缺陷是真缺陷（已修、已守卫）；而注入本身还差"读一处调用点 + 解释一处差异"，不是"设计还缺什么"。**#14 仍然是 16 条里唯一只做了一半的那条。**
