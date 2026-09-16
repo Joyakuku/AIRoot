@@ -11038,3 +11038,66 @@ doctor                    exit=0 healthy
    **同一个提交点被走第二遍，`generation_after` 从 1 变成 2**，然后在 post-bind 校验处失败并回滚。所以下一轮的真正问题不是"怎么接注入器"（已解决），而是：**从 `ACTIVE_BOUND` 恢复时重放提交点、再因 post-bind 校验失败而回滚——这是设计要的行为，还是一个重放缺陷？**
    判据是现成的：pytest 里已有针对 **artifact runner** 的故障注入覆盖（若它期望 `FINALIZED` 而这里回滚，那么两者之间又有一处差异要解释；若它也期望回滚，那 #14 的断言就照这个形状写，并把它写进文档）。**在回答之前不要动 `tx/rollback.py` 或 resume 逻辑。**
 **这两条是这一轮的实际产出**：路径缺陷是真缺陷（已修、已守卫）；而注入本身还差"读一处调用点 + 解释一处差异"，不是"设计还缺什么"。**#14 仍然是 16 条里唯一只做了一半的那条。**
+## 127. #14 的答案：`repair` 用错 driver ——真 artifact 的事务**永远修不回来**
+
+上一节把问题问对了："从 `ACTIVE_BOUND` 恢复时重放提交点再回滚，是设计还是缺陷？" 这一节给出答案，
+而且它比"缺覆盖"严重：**这是一个可复现的缺陷**。
+
+### 127.1 判据是现成的，而且它说的很清楚
+
+`cli/tests/test_l1_transaction.py` 的 `test_every_boundary_is_recoverable` **对 happy path 的每个状态各跑一次**
+（`@pytest.mark.parametrize("boundary", list(happy_path_states()))`），断言：
+
+```python
+tx = runner.commit(plan, token)
+assert tx["state"] == boundary, "the interruption happens only after the state is durable"
+...
+result = repair(registry, tx["transaction_id"], clock=clock, keyring=fake_issuer.keyring())
+assert result["state"] == "FINALIZED"          # ← 每一个边界，包括 ACTIVE_BOUND
+assert len(active) == 1 and registry.generation == active[0]["generation"]
+assert registry.integrity_problems() == []
+```
+
+**设计要的是"每个边界都恢复到 FINALIZED"**，不是回滚。而 §126.5 量到的是：真 artifact 停在 `ACTIVE_BOUND`
+之后 `repair` 报 `ROLLED_BACK / VERIFY_FAILED`、`where` 变成 `NOT_FOUND`。
+
+### 127.2 原因（读一处就够）
+
+`tx/simulate.py` 的 `repair()` **把 driver 写死成模拟 runner**：
+
+```python
+def repair(registry, transaction_id, *, clock=SYSTEM_CLOCK, keyring=None):
+    journal = TransactionJournal(registry, clock=clock)
+    tx, _plan, _token = journal.load_context(transaction_id)
+    ...
+    runner = SimulationRunner(registry, clock=clock, keyring=keyring)   # ← 无论这份计划是什么后端
+    result = runner.resume(transaction_id)
+```
+
+于是**真 artifact 的事务被模拟 runner 接着跑**：它把提交点重走一遍（`generation` 1 → 2），用**它自己的**
+post-bind 校验去核一个真 artifact 实例，失败，回滚。三个读数（generation 2、`VERIFY_FAILED`、
+`NOT_FOUND`）与这个原因**逐条对上**。
+
+**而 `install` 那一侧是不写死的**：`cli.py` 的 `_runner_for` 按 `plan["metadata"]["backend_id"]` 选
+（`fake_fixture` → 模拟，其余 → `ArtifactRunner`）。**同一个状态机、两种 driver，恢复路径上只有一处会选错。**
+
+### 127.3 后果（为什么这不是"覆盖不够"而是缺陷）
+
+* 判据 #14 的字面要求是"中途崩溃能恢复**或按规则回滚**"。**这里既没恢复、回滚也不按规则**：规则说回滚只切
+  binding，而这次回滚把一次**本来会成功**的真实安装判成了失败——`where` 从 healthy 变成 `NOT_FOUND`。
+* 真实场景下这意味着：**真机安装中途崩一次，`repair` 会把已经装好的东西解绑**，而用户看到的是一次
+  "校验失败"。§117 那次真机安装能成功，是因为它没崩。
+* §109 / ADR-0035 把"回滚语义的唯一实现"放在 `tx/rollback.py`，两个 runner 共读它——**共享的是回滚，
+  不是 driver 选择**；`repair` 的 driver 选择从来没被接上。
+
+### 127.4 下一轮要做的（配方，不再需要测量）
+
+1. 把 driver 选择抽成**一处**（`tx/runners.py` 的 `runner_for(registry, plan, *, clock, keyring=None,
+   injector=None)`，在函数内 import 两个 runner 以避免环），`cli._runner_for` 与 `repair` 都用它；
+2. 用 journal 里已有的 `plan` 决定 backend（`repair` 已经 `load_context` 出了 `plan`，它现在把 `_plan` 丢掉了）；
+3. 守卫写成 artifact runner 版的 `test_every_boundary_is_recoverable`：停在 `ACTIVE_BOUND`（以及其余边界）
+   之后 `repair` 必须到 `FINALIZED`、`generation` 只加 1、`integrity_problems()` 为空、二次 `repair` 是
+   `no_action`——**先把这条测试写出来看它红**，再修；
+4. 定义文档 §5 的 #14 要等这条测试绿了才能改成 ✅。
+
+**在测试红之前不改 `repair`**：这是这一节留给下一轮的顺序。
