@@ -124,6 +124,20 @@ AIROOT 不是：
 - 用 Skill 规则代替 Windows ACL 的安全系统；
 - 对抗已经拥有管理员权限的恶意进程的安全产品。
 
+**"不是安全产品"这一条是定位，不是欠债。** AIROOT 面向**家用主机**上的单用户场景，它提供的是
+**确定、可审计、可诊断、可恢复**的能力管理；**"是否可信、是否放行、要不要在执行前拦一下"属于使用 AIROOT 的
+那一层的职责**——例如 DeepSeek Harness 这类上游 harness，它有自己的确认、审批与沙箱策略。AIROOT 交出的是
+**可核对的账**（state、journal、audit、diagnostic 与验证语料），不是** enforceable 的边界**。
+
+这条归属决定了几件事，它们是设计而不是缺陷：
+
+* `security_mode=policy_only` + `enforcement=same_user_can_bypass` 是这个 build 的**正确永久自述**，
+  不是"还没实现受保护模式"的临时标记；
+* 同用户进程能绕过 AIROOT 的任何限制，**这是已知且接受的**——所以 AIROOT 不把任何机制建立在
+  "调用方被挡住了"之上；
+* 需要提权或受保护服务才能成立的能力（受保护 broker、ACL 强制、machine 级写入、真实批准签发方）
+  **不在本项目的必做范围内**，见路线图 P2 与 P9 的处置。
+
 ## 3. 核心原则
 
 ### 3.1 能力优先，不以软件名称为中心
@@ -1892,22 +1906,41 @@ Manifest 需要有来源、版本、平台、架构、digest、策略版本和�
 - 不接真实外部软件也能跑通状态和协议；
 - registry 损坏和 generation 冲突有明确结果。
 
-### P2：Windows Protected State
+### P2：Managed State（原「Windows Protected State」）
 
-交付：
+> **这一阶段的定位已被重定，理由见 §2.3。** 原名是 Windows Protected State，交付清单里有四项本质是
+> **安全强制**：ACL 基线、elevated broker、path backup/restore，以及"普通用户无法直接写 R"这个退出条件。
+> 按 §2.3 的归属，这四项**不该由 AIROOT 承担**——它们是使用方（上游 harness）的职责。
+> 本节因此只保留**不需要提权、与安全无关**的那部分：管家的确定性与可审计性。
+> 被移出的部分见 **P9（可选加固）**，它们不是欠债，是**已裁决的归属**。
 
-- `AIROOT\\cli` 专用目录；
-- ACL 基线；
-- machine PATH 单一 exposure；
-- elevated broker；
-- path backup/restore；
-- 权限和批准记录。
+交付（保留部分，均不需要提权）：
+
+- `AIROOT\cli` 专用目录；
+- machine PATH 单一 exposure（**一个** AIROOT 条目；版本目录绝不直接进 PATH）；
+- 权限和批准记录（**可审计的账**：谁在什么时候提交了什么，而不是"谁能做什么"）。
 
 退出条件：
 
-- 普通用户无法直接写 R；
-- UAC 取消不会破坏旧 active generation；
-- User compatibility mode 结果明确标记为 policy-only。
+- User compatibility mode 结果明确标记为 `policy_only`（**这是本 build 的永久自述**，不是待消除的状态）；
+- 普通用户**可以**直接写 R——这不再是需要消除的事实，而是 §2.3 已接受的归属；AIROOT 必须在
+  "同用户可以绕过"这个前提下仍然做到确定与可恢复；
+- UAC 取消不会破坏旧 active generation（保留：这是**事务**性质，不是安全性质——取消发生在外部，
+  而 journal 必须让取消之后的恢复有据可依）。
+
+### P9：可选加固（原 P2 的安全强制部分）
+
+**不在必做范围。** 只有当下面的前提成立时才做：有人真的需要 AIROOT 自己扛住同用户进程。
+
+- ACL 基线与其**强制**（`caps/acl.py` 的写一侧今天只作为库存在）；
+- elevated broker（**服务器那一半**；客户端线路面与判定已落地，见契约草案 §108/§114/§115）；
+- 真实批准签发方与私钥的受保护存放——**已由 ADR-0044 裁决为不做**，因为在本机做不到
+  （CNG 不支持 Ed25519，且"用户自己的进程能签名的密钥，同用户进程都读得到"），
+  方案与被否决的三条路见 `docs/AIROOT-v0.3-受保护签发方方案-草案.md`；
+- `path backup` / `path restore` / `root adopt` / `root relocate` / `bootstrap` 这五条动词
+  （它们今天报 `NOT_IMPLEMENTED`(1)，理由 `needs-admin`，解锁词 `p2-protected-state`——
+  **那个词现在指的是本阶段**）；
+- 跨用户行为（§115.4 已写清它需要什么、为什么测不了）。
 
 ### P3：第一条完整能力扩展
 
