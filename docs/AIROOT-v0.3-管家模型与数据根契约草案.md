@@ -8551,3 +8551,141 @@ $ airoot bootstrap
 6. 用合成变异验红四个方向，并确认 `where bootstrap` 不被吞掉；
 7. 顺手把 `SKILL.md` 两处过期陈述改成与登记表一致；
 8. 回写计数、重生语料；跑全量 + 旧切片 + 真机验收；提交。
+## 102. 第 102 阶段：每一次失败打印的那份文档，有没有契约
+
+### 102.1 这一阶段要解决什么
+
+§101 在记录末尾如实写下了一条边界：
+
+> **错误信封没有已发布的 schema 描述**（19 个 schema 里没有 error-response 那一份），所以
+> `NOT_IMPLEMENTED` 的 `details` 形状是**代码定义的**。
+
+这一轮做那条边界：先量它**是不是可以被一份 schema 钉住**，再量**钉住它要付什么代价**。
+
+### 102.2 实测一：一个形状覆盖全部 96 个码——与 §100 恰好相反
+
+`AirootError.to_envelope` 是这份文档**唯一**的写者，`_report_error` 是**唯一**的打印点。
+把 96 个已注册 reason code 各走一遍：
+
+| 项 | 数 |
+|---|---|
+| 已注册 reason code | **96** |
+| 顶层形状（`schema_version`/`status`/`reason_code`/`message`/`evidence`） | **1 个，覆盖 96/96** |
+| 可选键 | **1 个**（`details`，今天只有 §101 的 `NOT_IMPLEMENTED` 写它） |
+
+**§100 量出 29 条 lane 有 29 个互不相同的形状，所以"一份信封"不存在；这里一个形状覆盖全部，
+所以一份 schema 是量出来的可行。** 同一个问题、两次测量、相反的结论——差别在**谁写它**：
+那边 29 条 lane 各写各的报告，这边一个写者、一个打印点。
+
+同时量到三件不该同时成立的事：
+
+1. **19 个 schema 里没有一份描述它**，而 §7 写着"核心在打印任何对外 JSON 之前调用
+   `validate_self`"——对这份文档那句话是**假的**：没有 schema 可校验；
+2. 它是**每次失败**都会打印的文档，也就是 agent 出错时唯一会读的那份；
+3. §101 刚往它里面加了一个键（`details`），加在一个**没有契约**的形状上。
+
+### 102.3 实测二：加第 20 个 schema，今天会让 **41 行**变红，其中 **38 行是历史**
+
+先把 `actual` 从 19 改成 20，看计数的守卫会说什么：
+
+```
+actual=19: checked=43 failing=0
+actual=20: checked=43 failing=41     # 38 行在契约草案里
+```
+
+那 38 行是 §21/§31/§49… 的**逐阶段记录**（"`schema_count` 仍为 19"、"`schema_count: 19`"）。
+**它们写下的时候都是真的。** 满足那条守卫的唯一办法是**改写历史**——而同一个仓库里**测试计数**
+的守卫早就有正确的写法：草案里的总数是逐阶段记录，**允许不同，但不允许超过当前值**。
+
+两条守卫、同一种文档、两套规则。这不是"将来会咬人"：**P4/P5/P6 每个阶段都可能新增 schema**，
+每次都要求重写 38 行历史——这条守卫**扛不住路线图**。
+
+### 102.4 裁定（ADR-0028）
+
+1. **发布 `error-response.schema.json`（第 20 个）**：`schema_version` 钉 1、`status` 是
+   `const: "failed"`、`reason_code` 用 `common.$defs.errorCode`（**第一次被 `$ref`**，pattern 从此
+   只有一处定义）、`message` 非空、`evidence` 是**短字符串数组**、`details` 是可选的**标量映射**。
+2. **`evidence` 用字符串数组不是新分歧**：已发布的 `doctor-response` 对单条诊断的 `evidence`
+   **就是**字符串数组，而 `common.$defs.evidence` 的 `{kind, detail}` 对象在另外 8 处（`where`/
+   `doctor` 顶层/`search`/`transaction`/扩展信封/`broker-response`/`registry-projection`/
+   `common.externalReference`）。两类文档本来就是两种意思——**结构化发现**与**一句话说明**。
+   本条把这条同形不同义**写进 schema 的 `description`**，不再让它当巧合。
+3. **`_report_error` 自校验，但永不遮蔽失败**：缺陷追加到 `evidence`，`reason_code` 保持原样。
+   别的对外文档都是"校验通过才替换上一个"，所以可以报 `SELF_VALIDATION_FAILED`；在这里那样做是
+   **反的**——被校验的文档就是"失败的报告"。
+4. **计数守卫按文档分档**：当前状态文档（`AGENTS.md`、schema README、审查报告状态节）必须写出当前
+   计数；契约草案是逐阶段记录，只要求**不声称超过当前值**的数。**这是对审计守卫的修改，按 ADR-0021
+   的第四条例外如实报出来**（放宽"历史行必须重述当前值"，收紧"草案不得声称超过当前的数"）。
+5. **失败文档进验收语料**：守卫第三十二组要求"被 `validate_self` 校验的 schema"与"golden 里有
+   fixture 的 schema"双向相等，所以新增 `error_not_implemented.json`——它**从工件推导**
+   （`DECLARED_ABSENT` 的第一条 + `main` 用的同一个构造器），不是把手写句子抄进生成器
+   （手抄的 fixture 会让"逐字节可复现"这句话变空：代码改了而 fixture 不变时，测试仍然绿）。
+
+### 102.5 做了什么
+
+1. 量失败文档的形状（96/96 一个形状）与它的写者数（1 个写者、1 个打印点）；
+2. 量"加第 20 个 schema"的真实代价（41 行，38 行历史）；把新的分档规则写成 `CURRENT_COUNT_DOCUMENTS`
+   + `_schema_count_lines` + `_stated_count_problems`，并给两个方向各写合成变异；
+3. 写 `error-response.schema.json` 并让 `_report_error` 自校验（不遮蔽）；
+4. 生成 `error_not_implemented.json`，接进 `SCHEMA_FOR_FIXTURE`；
+5. 写两条守卫：**每个已注册码的失败文档都过 schema**（96 × 2 种形状）+ **形状缺陷不遮蔽失败**
+   （monkeypatch 掉一个必填键，断言 `reason_code` 仍是 `NOT_IMPLEMENTED` 且 `evidence` 点名缺陷）；
+6. 同步 schema README 的边界表 / "哪几个会被打印" / 修正记录表，并把 `error-response` 记进
+   `references/field-values.md` 的《不在这张表的 schema》（它**没有枚举字段**：`status` 是 const，
+   `reason_code` 的取值表就是 reason code 那张表）；
+7. 回写计数（20 个 schema、36 个 fixture、867 项测试）；跑全量 + 旧切片 + 真机验收；提交。
+
+### 102.6 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 某个码的失败文档少一个必填键 | 红 | ✅ 红（`test_every_registered_reason_code_produces_a_schema_valid_failure_document`） |
+| `evidence` 里放一个对象（`common` 的形状）而不是字符串 | 红 | ✅ 红（同上，schema 只收字符串） |
+| `to_envelope` 掉了 `message`（真实形状缺陷） | 红 | ✅ 红：失败**不被遮蔽**——`reason_code` 仍是 `NOT_IMPLEMENTED`，`evidence` 多一行 `self-validation failed: ...` |
+| 当前状态文档里留一个旧计数 | 红 | ✅ 红（合成的 stale 行被 `_stated_count_problems` 报出） |
+| 草案里声称一个**超过**当前值的计数 | 红 | ✅ 红（合成语料把声明值改成"当前值 + 1"；**这一格刻意不写具体数字**——写了，它自己就成了守卫读到的一条声明，第一版正是这么红的） |
+| 草案里的历史行（19） | 绿 | ✅ 绿（这是这一轮**故意放开**的方向） |
+| 阶段记录里同一行带测试总数（618 项） | 绿 | ✅ 绿（第一版**错**在这里：它把 618 读成 schema 计数，把 4 行真历史判成"超过当前"——所以改成只读**贴着 `schema_count`/`N 个 schema` 的数字**） |
+
+### 102.7 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| schema | **19 → 20**（新增 `error-response.schema.json`；**已发布的其他 19 个一个字节没动**） |
+| golden fixture | **35 → 36**（`error_not_implemented.json`） |
+| 测试 | **864 → 867**（+1 全码覆盖、+2 CLI 行为） |
+| 审计检查（`test_l0_consistency.py`） | **98 → 98**（改的是既有那条计数守卫，没有新增检查函数） |
+| 对外输出 | 成功路径**一字未改**；失败信封多了**一位契约**（形状没改） |
+| 新增 ADR | **ADR-0028** |
+| 被修的文档 | schema README（边界表 + 打印集合 + 修正记录）、`references/field-values.md`、`AGENTS.md` §7 |
+
+### 102.8 如实记录的边界
+
+1. **计数守卫只扫"提到 `schema_count` 或 `JSON Schema`"的行。** 草案里"19 个 schema"那种散文
+   （不含这两个字面量）**从来没被扫到**；`docs/schema/README.md` 里"从 18 涨到 19 个文件"那句本来
+   也逃过了（这一轮顺手改对了，但**不是守卫逼的**）。一句话换个说法就能绕过它——这是粒度，不是新缺陷。
+2. **`details` 的值被钉成标量**（string/integer/boolean/null）。将来某个码要放对象进去，按 README
+   规则 2 那是一次需要新 schema id 的改动。这是**有意的**：今天唯一写它的地方全是字符串，而
+   "接受任何东西"的契约等于没有契约。
+3. **只有"顶层打印器"这一条路被钉住。** 四条命令把错误**折进领域文档**（`root status` 的
+   `registry_state`、`discover` 的 `missing[]`、`tool pin` 的 `plan_blocked_by`、`session` 的老值），
+   它们不走 `_report_error`，**没有被这条契约覆盖**。这一轮**没有**去量那四条折叠出来的形状
+   有没有契约——它们是下一轮的候选。
+4. **失败文档不是任何 lane 读的文档**：lane 读的是成功回答。它的字段是**被契约钉住**，
+   不是**被 lane 覆盖**——这两件事从 §94 起就分开记。
+5. **"每一次失败都校验"这句话仍然只对顶层打印器成立**：被折进领域文档的四条路径、以及 `--json`
+   之外的人读输出，都不经过它。人读输出用的是同一个文档对象（`error.message` + `document["evidence"]`），
+   但**没有人读校验**。
+6. **`error-response` 的"没有写者"状态就此结束，但 ADR-0026 的 5 个仍没有写者**（`broker-*`、
+   `desired-manifest`、`gc-plan`、`runtime-instance`）。守卫第三十四组那条推导是**算出来的**，
+   所以它自己就跟着变——这一轮没有改它。
+
+### 102.9 实施顺序
+
+1. 先读 §101 留下的那条边界，把它当成**待验的假设**（"这份文档该不该有契约"）；
+2. 量它的形状（96/96 一个形状）与写者数——**假设成立**，与 §100 的结论相反；
+3. 再量"加第 20 个 schema 的代价"，发现计数守卫会要求重写 38 行历史——**先把这条挡住**，
+   否则"发布第 20 个 schema"这件事本身不可做；
+4. 写 schema、让 `_report_error` 自校验（不遮蔽）、生成 fixture；
+5. 写两条守卫并用合成变异验红（含"失败不被遮蔽"这一条）；
+6. 同步 README / 取值表 / 计数；跑全量 + 旧切片 + 真机验收；提交。

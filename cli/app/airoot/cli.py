@@ -23,7 +23,7 @@ from .ext.fake import FakeExtension
 from .ext.manifest import load_manifests
 from .registry import Registry
 from .root import open_root, resolve_root
-from .schema_io import validate_document
+from .schema_io import validate_document, validate_self
 from .tx import create_plan, repair
 from .tx.approval import load_keyring, record_approval, verify_approval
 from .tx.simulate import SimulationRunner
@@ -3344,11 +3344,31 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_RECOVERY
 
 
+def _printable_error(document: dict[str, Any]) -> dict[str, Any]:
+    """The failure document, self-validated — without ever **masking** the failure (draft §102).
+
+    Every other outward document is validated before it can replace anything, so a validation
+    failure is reported as ``SELF_VALIDATION_FAILED``. That is backwards here: the document being
+    validated *is* the report of a failure, and swapping the caller's reason code for the
+    implementer's would hide the thing they asked about. So a shape defect is appended to
+    ``evidence`` — visible to the caller, the human output and the suite — and ``reason_code`` stays
+    the one the command actually produced.
+    """
+
+    try:
+        validate_self("error-response", document)
+    except AirootError as defect:
+        evidence = document.get("evidence")
+        lines = list(evidence) if isinstance(evidence, list) else []
+        return dict(document, evidence=[*lines, f"self-validation failed: {defect.message}"])
+    return document
+
+
 def _report_error(error: AirootError, *, as_json: bool) -> None:
-    document = error.to_envelope()
+    document = _printable_error(error.to_envelope())
     if as_json:
         print(json.dumps(document, indent=2, sort_keys=True))
     else:
         print(f"error: {error.reason_code}: {error.message}", file=sys.stderr)
-        for item in error.evidence[:8]:
+        for item in document["evidence"][:8]:
             print(f"  - {item}", file=sys.stderr)

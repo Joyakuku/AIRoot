@@ -5,6 +5,7 @@
   "doctor_healthy": 0,
   "doctor_recovery_required": 6,
   "doctor_stale_search_index": 2,
+  "error_not_implemented": 1,
   "execution_bounds": 0,
   "extension_probe_envelope": 0,
   "frozen_capabilities": 0,

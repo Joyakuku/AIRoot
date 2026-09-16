@@ -165,6 +165,26 @@ def test_airoot_error_envelope_is_stable() -> None:
     }
 
 
+def test_every_registered_reason_code_produces_a_schema_valid_failure_document() -> None:
+    """The failure document is the one outward document every command can print (draft §102).
+
+    One schema covers all of them because `to_envelope` is the single writer and it puts the same
+    keys on every code — measured, not assumed, and the opposite of §100's 29 distinct lane shapes.
+    Both shapes are exercised: with `details` (only §101's refusal uses it today) and without.
+    """
+
+    problems: list[str] = []
+    for code in sorted(REASON_EXIT):
+        for details in (None, {"command": "bootstrap", "unblocked_by": "p2-protected-state"}):
+            document = AirootError(code, "a message", evidence=["one line"], details=details).to_envelope()
+            for problem in schema_io.errors_for("error-response", document):
+                problems.append(f"{code}{' +details' if details else ''}: {problem}")
+
+    assert problems == [], "failure documents the published schema rejects:\n" + "\n".join(problems)
+    # Non-vacuity: the walk has to be reaching the documents, not an empty loop.
+    assert len(REASON_EXIT) >= 50, f"only {len(REASON_EXIT)} codes were walked"
+
+
 # --------------------------------------------------------------------------- #
 # paths
 # --------------------------------------------------------------------------- #
@@ -244,7 +264,7 @@ def test_junction_under_root_is_rejected(tmp_path: Path) -> None:
 
 
 def test_all_published_schemas_are_meta_valid() -> None:
-    assert schema_io.check_schemas_are_meta_valid() == 19
+    assert schema_io.check_schemas_are_meta_valid() == 20
 
 
 def test_relative_refs_resolve_against_common() -> None:
@@ -287,6 +307,7 @@ def test_self_validation_failure_is_distinguishable() -> None:
 
 def test_schema_catalog_is_unexpectedly_stable() -> None:
     names = schema_io.schema_names()
-    assert len(names) == 19
+    assert len(names) == 20
     assert "common.schema.json" in names and "where-response.schema.json" in names
     assert "reference-plan.schema.json" in names, "the reference-domain plan is a published boundary"
+    assert "error-response.schema.json" in names, "the failure document is a published boundary (§102)"

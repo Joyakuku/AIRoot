@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://airoot.local/schema/error-response-v1.json",
+  "title": "AIROOT Error Response",
+  "description": "The document the CLI prints when a command cannot answer, whatever the command was. One shape covers every registered reason code (measured: all 96 produce these keys). `evidence` here is the short human-readable line, the same form doctor-response uses on a diagnostic; the structured {kind, detail} object that common.$defs.evidence defines belongs to documents that report findings, not to the failure of one command.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "reason_code", "message", "evidence"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "status": { "type": "string", "const": "failed" },
+    "reason_code": { "$ref": "common.schema.json#/$defs/errorCode" },
+    "message": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "integer", "boolean", "null"] }
+    }
+  }
+}

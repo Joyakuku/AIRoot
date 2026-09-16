@@ -519,7 +519,15 @@ def test_the_in_scope_schemas_are_the_ones_an_agent_reads() -> None:
         "transaction",
         "common",
     }
-    assert set(EXEMPT) == {"broker-request", "broker-response", "managed-tool-instance", "root-marker"}
+    # `error-response` joined §102: the failure document has no enum either — `status` is a const and
+    # `reason_code`'s values are the reason-code tables' business, not this table's.
+    assert set(EXEMPT) == {
+        "broker-request",
+        "broker-response",
+        "managed-tool-instance",
+        "root-marker",
+        "error-response",
+    }
     assert len(ROWS) >= 50, "the table lost rows: %d" % len(ROWS)
 
 

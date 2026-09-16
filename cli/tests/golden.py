@@ -21,6 +21,7 @@ from airoot.caps.discovery import discover_data_root
 from airoot.caps.exposure import ExposureTarget, build_reference_plan, request_from_entry
 from airoot.caps.inventory import inventory
 from airoot.caps.where import WhereQuery, where
+from airoot.cli import DECLARED_ABSENT, _declared_absent_error
 from airoot.clock import FakeClock
 from airoot.exits import REASON_EXIT, exit_code_for
 from airoot.ext.fake import load_fake_extension
@@ -624,6 +625,20 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
     documents["search_physical_verify_response"] = {
         "document": _normalize_search(verify_document),
         "exit_code": verify_code,
+    }
+
+    # ---- the failure document (draft §102) -------------------------------- #
+    # One shape covers all 96 reason codes, which is what makes a single schema possible here — the
+    # opposite of §100's finding, where 29 lane reports had 29 distinct shapes and no envelope could
+    # describe them. The document is *derived* from the same table and the same builder `main` calls,
+    # so this fixture cannot go stale the way a hand-written copy would: a changed register reddens
+    # group 35 first, and regenerating here would not silently keep an old sentence alive.
+    _absent_path, (_absent_category, _absent_unlock) = sorted(DECLARED_ABSENT.items())[0]
+    documents["error_not_implemented"] = {
+        "document": _declared_absent_error(
+            " ".join(_absent_path), _absent_category, _absent_unlock
+        ).to_envelope(),
+        "exit_code": exit_code_for("NOT_IMPLEMENTED"),
     }
 
     # ---- the reason-code table itself ------------------------------------- #

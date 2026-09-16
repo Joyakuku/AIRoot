@@ -7,7 +7,7 @@ These files are the versioned wire and state contracts for the first implementat
 - JSON exports are projections and are never accepted as direct database edits;
 - `store` owns payloads while `tools` and `env` own bindings/views.
 
-The schema set is intentionally split by contract so a caller can validate a single boundary without importing the whole registry model:
+The schema set is intentionally split by contract so a caller can validate a single boundary without importing the whole registry model. It holds **20** published JSON Schema files:
 
 | File | Boundary |
 |---|---|
@@ -29,15 +29,17 @@ The schema set is intentionally split by contract so a caller can validate a sin
 | `search-response.schema.json` | Search envelope and freshness semantics |
 | `where-response.schema.json` | Deterministic capability selection result |
 | `doctor-response.schema.json` | Diagnostic result with stable remediation |
+| `error-response.schema.json` | The document printed when a command cannot answer: one shape for every reason code |
 | `gc-plan.schema.json` | Payload garbage collection plan |
 
 **Which of these does P1 actually print?** The table above says which boundary each file guards, not
 whether this build produces the document. `schema_io.validate_self` is called before any outward JSON
-is printed (AGENTS.md §7), so the names passed to it *are* the printed set — nine of the nineteen:
+is printed (AGENTS.md §7), so the names passed to it *are* the printed set — ten of the twenty:
 `where-response`, `doctor-response`, `registry-projection`, `search-response`, `transaction`, `plan`,
-`managed-tool-instance`, `reference-plan` and `extension-envelope`. **Every one of them has a golden
-fixture**, and guard group 32 holds those two sets to exact equality in both directions (a printed
-document with no fixture has no acceptance face; a fixture for a document nothing prints is a wish).
+`managed-tool-instance`, `reference-plan`, `extension-envelope` and `error-response`. **Every one of
+them has a golden fixture**, and guard group 32 holds those two sets to exact equality in both
+directions (a printed document with no fixture has no acceptance face; a fixture for a document
+nothing prints is a wish).
 
 The other ten are not printed by this build. Five of them are **used elsewhere**: four are validated on
 the way *in*, or written to disk rather than printed (`approval-token`, `extension-manifest`,
@@ -67,8 +69,8 @@ Compatibility rules:
 5. `test_hmac_sha256` is permitted only in the fake slice. Production approval tokens must use `ed25519` or an equivalent protected signing mechanism.
 
 Corrections and minor additions made while implementing P1 (see
-`../AIROOT-v0.3-实现决策记录.md`, ADR-0002/ADR-0003). The set grew from 18 to **19** files in
-the ADR-0004 work, and `schema_version` stays 1:
+`../AIROOT-v0.3-实现决策记录.md`, ADR-0002/ADR-0003). The set grew from 18 to **20** files — 19 in the
+ADR-0004 work, and the failure document's contract in §102 — and `schema_version` stays 1:
 
 | Change | Kind | Why |
 |---|---|---|
@@ -80,6 +82,7 @@ the ADR-0004 work, and `schema_version` stays 1:
 | `reference-plan.schema.json`: `operations[].target_scope` is an inline `user\|machine` enum, not `common.schema.json#/$defs/scope` | scoped consistency | `$defs.scope` describes a *binding* scope (`system/machine/session/project`) and has no spelling for a per-user **persisted** value, which is exactly what this operation writes. `exposure.scope` already uses `user\|machine`, so using `$defs.scope` here would have made one document describe the same step two different ways. The enum is not relaxed anywhere else. |
 | `registry-projection.schema.json`: optional `instances[].collected_at` | optional addition (rule 2) | `gc --apply` removes a payload but keeps the instance row, because `bindings.instance_id` references it and the binding history is exactly what `retired` exists to preserve. Without this field a consumer cannot tell a deliberate collection from a payload that vanished (`PAYLOAD_MISSING`). The `lifecycle` enum is deliberately **not** extended. |
 | `where-response.schema.json`: optional `candidates[].machine_discoverable` | optional addition (rule 2) | ADR-0022 makes `where` refuse to machine-discover a Zone W binding, and the machine-level slots are where that refusal happens. Without this field the response would show a healthy row with `usable: true` that is silently passed over — a reader could not tell a deliberate exclusion from a bug. `zone` is not projected on candidate rows, so the reason had nowhere to live; the top-level `zone` describes only the *selected* candidate. |
+| `error-response.schema.json` added (20th file) | new boundary | The document every failure prints had **no contract at all**: `AirootError.to_envelope` was its only writer, no published schema described it, and it was therefore the one outward document `validate_self` could not check — while AGENTS.md §7 says the core self-validates before printing any outward JSON (draft §102 measured this; §101 had just added `details` to a shape nothing pinned). One schema suffices here, unlike the 29 lane reports §100 measured, because all 96 reason codes produce the same keys. `evidence` is an array of strings, the form `doctor-response` already uses for a diagnostic's evidence; the structured `{kind, detail}` object in `common.$defs.evidence` belongs to documents that report findings. |
 
 The validation runners are:
 

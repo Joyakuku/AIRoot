@@ -45,32 +45,110 @@ DECISION_LOG = REPO / "docs" / "AIROOT-v0.3-实现决策记录.md"
 GOLDEN = REPO / "cli" / "tests" / "fixtures" / "golden"
 
 
+#: A standalone count: not a `§17.6` section reference, a `draft 2020-12` date or an `ADR-0003`
+#: identifier — hence the delimiter guards.
+STANDALONE_NUMBER = re.compile(r"(?<![\w§.\-/])(\d{2,3})(?![\w.\-/])")
+
+#: Where a stated schema count is a claim about **current** state. The draft is deliberately not in
+#: this tuple: it is the per-stage record, and a §31 line reading "`schema_count` 仍为 19" was true
+#: when it was written. Rewriting forty of those to say 20 replaces a record with a fiction — the
+#: same rule the test-count guard already applies to the draft ("per-stage historical records … none
+#: may exceed the current total"). §102 measured what the old uniform rule cost: adding the 20th
+#: schema reddened **41 lines**, 38 of them per-stage history.
+CURRENT_COUNT_DOCUMENTS = (AGENTS, SCHEMA_README, REVIEW)
+
+
+def _schema_count_lines(path: Path) -> list[str]:
+    """The guard's own population: lines that state a schema count at all."""
+
+    return [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if ("schema_count" in line or "JSON Schema" in line) and STANDALONE_NUMBER.search(line)
+    ]
+
+
+def _claimed_schema_counts(line: str) -> list[int]:
+    """The numbers a line states **as the schema count**, not every number that appears on it.
+
+    The two halves need different extractions, and the asymmetry was measured rather than chosen: a
+    stage record puts the suite total on the same line as the schema count ("`pytest cli/tests` **618
+    项全绿**；… `schema_count: 19`"), so §102's first version of the lenient half read 618 as a schema
+    count and reported four stage records as being ahead of a tree they describe. The strict half
+    only asks whether the current count is mentioned *somewhere* on the line, which is the property
+    that stops a stale-only line, so it keeps the simple form.
+    """
+
+    claims: list[int] = []
+    for match in re.finditer(r"schema_count[^\d\n]{0,14}(\d{2,3})", line):
+        claims.append(int(match.group(1)))
+    for match in re.finditer(r"(\d{2,3})\s*(?:\*\*)?\s*个\s*(?:\*\*)?(?:JSON )?[Ss]chema", line):
+        claims.append(int(match.group(1)))
+    return claims
+
+
+def _stated_count_problems(actual: int, path: Path, lines: list[str], *, strict: bool) -> list[str]:
+    """Count lines that state a value they are not allowed to state.
+
+    ``strict`` (a current-state document): the line must name the current count, unless it marks
+    itself as a transition or as superseded. Non-strict (the stage record): the count it *claims*
+    must not be **ahead** of the current one — a record cannot have been written against a bigger
+    schema set than exists now.
+    """
+
+    problems: list[str] = []
+    for line in lines:
+        if strict:
+            numbers = {int(value) for value in STANDALONE_NUMBER.findall(line)}
+            if actual not in numbers and "取代" not in line and "原提案" not in line:
+                problems.append(
+                    f"{path.name}: states {sorted(numbers)} and never the current {actual}: {line.strip()[:110]}"
+                )
+            continue
+        ahead = sorted(value for value in _claimed_schema_counts(line) if value > actual)
+        if ahead:
+            problems.append(f"{path.name}: claims {ahead}, ahead of the current {actual}: {line.strip()[:110]}")
+    return problems
+
+
 def test_the_cli_schema_count_matches_every_document_that_states_it() -> None:
     actual = len(schema_names())
-    assert actual == 19, "the published schema set changed; update the docs and this test together"
+    assert actual == 20, "the published schema set changed; update the docs and this test together"
 
-    # Only documents that *state* a count are checked (SKILL.md deliberately states none).
-    # A line may legitimately describe the transition ("18 → 19") or be marked superseded; what it
-    # may not do is present 18 as the current value on a line that never mentions 19.
-    #
-    # The number has to be a real standalone count, not a `§17.6` section reference, a
-    # `draft 2020-12` date or an `ADR-0003` identifier — hence the delimiter guards.
-    standalone = re.compile(r"(?<![\w§.\-/])(\d{2,3})(?![\w.\-/])")
-    checked = 0
-    for path in (AGENTS, SCHEMA_README, DRAFT, REVIEW):
-        text = path.read_text(encoding="utf-8")
-        for line in text.splitlines():
-            if "schema_count" not in line and "JSON Schema" not in line:
-                continue
-            numbers = {int(value) for value in standalone.findall(line)}
-            if not numbers:
-                continue
-            checked += 1
-            assert actual in numbers or "取代" in line or "原提案" in line, (
-                f"{path.name}: a schema-count line states {sorted(numbers)} "
-                f"and never the current {actual}: {line.strip()[:120]}"
-            )
-    assert checked, "no document states the schema count at all"
+    problems: list[str] = []
+    current_lines = 0
+    for path in CURRENT_COUNT_DOCUMENTS:
+        lines = _schema_count_lines(path)
+        current_lines += len(lines)
+        problems += _stated_count_problems(actual, path, lines, strict=True)
+    assert current_lines, "no current-state document states the schema count at all"
+
+    draft_lines = _schema_count_lines(DRAFT)
+    assert draft_lines, "the stage record states no schema count; the lenient half checks nothing"
+    problems += _stated_count_problems(actual, DRAFT, draft_lines, strict=False)
+
+    assert problems == [], "schema-count lines that state the wrong thing:\n" + "\n".join(problems)
+
+    # Non-vacuity, one mutation per half: neither direction may depend on anyone remembering to
+    # break a real document.
+    stale_line = "| `cli/schema/*.schema.json` | **19** 个 JSON Schema |"
+    assert _stated_count_problems(20, AGENTS, [stale_line], strict=True), (
+        "a current-state line with a stale count must be reported"
+    )
+    assert _stated_count_problems(20, AGENTS, ["`schema_count` 已是 20（取代 19）"], strict=True) == [], (
+        "a line that marks the transition must pass"
+    )
+    assert _stated_count_problems(20, DRAFT, ["`schema_count` 仍为 **21**。"], strict=False), (
+        "a record stating a count ahead of the tree must be reported"
+    )
+    assert _stated_count_problems(20, DRAFT, ["`schema_count` 仍为 **19**。"], strict=False) == [], (
+        "a record stating an older count is history, not an error"
+    )
+    # The measured false positive this extraction exists for: a stage record whose line carries the
+    # suite total as well. Reading every number on the line made four real records look "ahead".
+    assert _stated_count_problems(
+        20, DRAFT, ["`pytest cli/tests` **618 项全绿**；`schema_count: 19`。"], strict=False
+    ) == [], "the suite total on the same line is not a schema count"
 
 
 def test_every_schema_file_is_referenced_somewhere_outside_itself() -> None:

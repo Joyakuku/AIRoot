@@ -36,6 +36,7 @@ SCHEMA_FOR_FIXTURE = {
     "plan_fake_tool": "plan",
     "managed_tool_instance": "managed-tool-instance",
     "reference_plan": "reference-plan",
+    "error_not_implemented": "error-response",
     "search_response": "search-response",
     "search_timeout_response": "search-response",
     "search_truncated_index_response": "search-response",

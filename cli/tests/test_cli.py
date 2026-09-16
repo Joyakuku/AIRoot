@@ -317,6 +317,51 @@ def test_a_capability_named_like_a_deferred_verb_is_not_swallowed(capsys, prepar
     assert document["reason_code"] != "NOT_IMPLEMENTED", document
 
 
+# --------------------------------------------------------------------------- #
+# the failure document itself (draft §102)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_failure_document_the_cli_prints_satisfies_its_schema(capsys) -> None:
+    """This is what `--json` prints whenever a command cannot answer — now a published contract.
+
+    Until §102 it was the only outward document with no schema, which also made it the only one
+    `validate_self` could not check while AGENTS.md §7 says the core validates before printing.
+    """
+
+    from airoot import schema_io
+
+    code, document = run(capsys, "--json", "--root", str(Path.cwd() / "no-such-root"), "bootstrap")
+    assert code == 1, document
+    assert schema_io.errors_for("error-response", document) == [], document
+
+
+def test_a_shape_defect_in_the_failure_document_does_not_mask_the_failure(capsys, monkeypatch) -> None:
+    """The error path is the one place where self-validation must not replace what it validates.
+
+    Every other outward document is validated *before* it can replace anything, so a defect is
+    reported as `SELF_VALIDATION_FAILED`. Here that would swap the caller's reason code for the
+    implementer's and hide the thing they asked about, so §102 appends the defect to `evidence` and
+    keeps the original code.
+    """
+
+    from airoot.exits import AirootError
+
+    original = AirootError.to_envelope
+
+    def defective(self: AirootError) -> dict:
+        document = original(self)
+        document.pop("message")  # a real shape defect: a required key is gone
+        return document
+
+    monkeypatch.setattr(AirootError, "to_envelope", defective)
+    code, document = run(capsys, "--json", "--root", str(Path.cwd() / "no-such-root"), "bootstrap")
+
+    assert code == 1, document
+    assert document["reason_code"] == "NOT_IMPLEMENTED", "the failure was masked by its own validation"
+    assert any("self-validation failed" in line for line in document["evidence"]), document
+
+
 
 def test_global_flags_work_after_the_subcommand(capsys, prepared) -> None:
     """The documented form is ``airoot doctor --json``, not ``airoot --json doctor``."""

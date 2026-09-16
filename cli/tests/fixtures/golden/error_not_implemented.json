@@ -1,0 +1,16 @@
+{
+  "details": {
+    "command": "bootstrap",
+    "deferred_category": "needs-admin",
+    "unblocked_by": "p2-protected-state"
+  },
+  "evidence": [
+    "deferred category: needs-admin",
+    "unlocks when: p2-protected-state",
+    "why: agents/airoot.json -> deferred -> 'bootstrap'"
+  ],
+  "message": "bootstrap is named by the planning document and deliberately absent from this build",
+  "reason_code": "NOT_IMPLEMENTED",
+  "schema_version": 1,
+  "status": "failed"
+}
