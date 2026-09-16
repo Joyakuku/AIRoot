@@ -320,7 +320,16 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
         "--class",
         "external_reference",
     )
+    # `discover` reads `missing[].data_root_id` / `missing[].reason_code` since §103, and §99's screen
+    # refuses a read path whose list is empty ("a renamed key would pass"). So a second data root is
+    # declared and its directory removed for exactly this one command, then put back: the registry row
+    # stays, so every verb recorded after this one sees a healthy root again.
+    ghost = tmp_path / "ghost-root"
+    ghost.mkdir()
+    run(capsys, *base, "data-root", "add", str(ghost), "--id", "dr-ghost", "--role", "runtime")
+    shutil.rmtree(ghost)
     record("discover", "discover")
+    ghost.mkdir()
     record("capability list", "capability", "list")
     record("capability check <path>", "capability", "check", str(data_root / "python"))
     record(

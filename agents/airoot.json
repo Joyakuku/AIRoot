@@ -42,7 +42,13 @@
     {
       "question": "what is actually inside the data roots (read-only scan)",
       "command": ["discover"],
-      "read": ["reports[].candidates", "reports[].counts", "whitelist_revision"],
+      "read": [
+        "reports[].candidates",
+        "reports[].counts",
+        "whitelist_revision",
+        "missing[].data_root_id",
+        "missing[].reason_code"
+      ],
       "document_schema": null
     },
     {

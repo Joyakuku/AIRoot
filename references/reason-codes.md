@@ -93,6 +93,10 @@ P1 没有 broker，所以 machine 级写入一定报这个；**不要**建议用
 `RECOVERY_REQUIRED`、`JOURNAL_TRUNCATED`。
 **停止**，先 `repair`；不要在身份不可证明的 root 上继续任何操作。
 
+`discover` 报的 `DATA_ROOT_MISSING`（退出码 6）是一个**聚合**："某个已声明的数据根读不了"是**状态**问题，
+**具体原因**在 `missing[].reason_code`（每条还带 `data_root_id` 与 `detail`）——报的时候要说清是哪个数据根、
+为什么，不要只说一句"有数据根缺失"（§103）。
+
 ## 7 — 计划/来源问题
 
 `INVALID_PLAN`（hash 不匹配、缺 digest）、`DIGEST_MISMATCH`、`PROVENANCE_FAILED`

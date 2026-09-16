@@ -371,7 +371,18 @@ def cmd_discover(args: argparse.Namespace, context: Context) -> tuple[dict[str, 
                     path=Path(data_root.path), data_root_id=data_root.data_root_id, whitelist=rules
                 )
             except AirootError as error:
-                missing.append(f"{data_root.data_root_id}: {error.message}")
+                # The code travels with the entry (draft §103). Keeping only the prose made this the
+                # one fold of the three that threw the machine-readable cause away, and it was right
+                # only because `discover_data_root` happened to have exactly one raise: the day it
+                # grows a second one, the aggregate below would report the wrong code *and* the wrong
+                # exit code with a sentence as the only clue.
+                missing.append(
+                    {
+                        "data_root_id": data_root.data_root_id,
+                        "reason_code": error.reason_code,
+                        "detail": error.message,
+                    }
+                )
                 continue
             document = report.to_document()
             if args.record:
@@ -393,13 +404,18 @@ def cmd_discover(args: argparse.Namespace, context: Context) -> tuple[dict[str, 
         "recorded": recorded,
         "reports": reports,
         "missing": missing,
+        # The **aggregate**: "a declared data root could not be read" is a state problem (exit 6),
+        # whatever the specific cause was — the cause travels in `missing[].reason_code` (draft §103).
+        # `root status` folds to the document's own code because its document *is* about the registry;
+        # here several roots can fail at once, so the top level states the class and the rows state the
+        # cause.
         "reason_code": "DATA_ROOT_MISSING" if missing else "SUCCESS",
         "files_touched": 0,
     }
     lines = [f"discover: {len(reports)} data root(s), {sum(len(r['candidates']) for r in reports)} object(s)"]
     for report in reports:
         lines.append(f"  {report['data_root_id']}: {report['counts']}")
-    lines.extend(f"  missing: {item}" for item in missing)
+    lines.extend(f"  missing: {item['data_root_id']} ({item['reason_code']}): {item['detail']}" for item in missing)
     _emit(document, as_json=args.json, lines=lines)
     return document, exit_code_for(document["reason_code"])
 

@@ -209,6 +209,40 @@ def test_discover_missing_directory_is_recovery_required(capsys, cli_root: Path,
     assert document["missing"]
 
 
+def test_a_folded_failure_carries_its_own_code_not_only_a_sentence(
+    capsys, cli_root: Path, data_root: Path, monkeypatch
+) -> None:
+    """Draft §103: `discover` was the one fold of the three that kept only the message.
+
+    It happened to be right because `discover_data_root` has exactly one raise, so the hard-coded
+    `DATA_ROOT_MISSING` always matched. This drives the *second* raise and holds the shape: the top
+    level keeps the aggregate (a declared data root could not be read — a state problem, exit 6,
+    whatever the cause), and the row says what actually happened. Without the code on the row, the
+    only clue would be a sentence, and the exit code would silently never change.
+    """
+
+    from airoot.caps import discovery
+    from airoot.exits import AirootError
+
+    add_root(capsys, cli_root, data_root)
+
+    def refusing(**_kwargs):
+        raise AirootError("REPARSE_POINT_REJECTED", "a data root may not be a reparse point")
+
+    monkeypatch.setattr(discovery, "discover_data_root", refusing)
+    code, document = run(capsys, "--json", "--root", str(cli_root), "discover")
+
+    assert code == 6, document
+    assert document["reason_code"] == "DATA_ROOT_MISSING", "the aggregate is the state code"
+    assert document["missing"] == [
+        {
+            "data_root_id": "dr-env",
+            "reason_code": "REPARSE_POINT_REJECTED",
+            "detail": "a data root may not be a reparse point",
+        }
+    ], document
+
+
 def test_discover_is_read_only_by_default(capsys, cli_root: Path, data_root: Path) -> None:
     place_pe(data_root / "python", "python.exe")
     add_root(capsys, cli_root, data_root)
