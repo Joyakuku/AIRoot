@@ -1603,6 +1603,9 @@ SUBSTRING_CHECKS_ARE_FINE = frozenset(
         # and the question is "does this section name the script?", not "is this vocabulary token
         # documented?". A longer file name cannot make a shorter one look present by accident.
         "source not in body",
+        # The entry document's own end-of-document announcement (§138): a whole sentence, so the
+        # question is "is this sentence still there?", and a substring is exactly that question.
+        "ENTRY_DOC_MARKER_ANNOUNCEMENT not in text",
     }
 )
 
@@ -4276,8 +4279,72 @@ def test_the_old_substring_rule_could_not_go_red_and_the_new_one_does() -> None:
 #   * growing past the budget again — silent, and nothing else in this file would notice;
 #   * shrinking by deleting detail and leaving no route to it — which would turn the entry document
 #     into a dead end, the opposite failure of the one being fixed.
+#
+# §138 re-opened the first of those *without* the file growing past the budget: the comparison was
+# against the deployment's number as though that number belonged to this file alone. It does not.
+# The guard now compares against `budget - margin`, and the entry document also carries an
+# end-of-document marker, because a bound we cannot measure is a guess while a marker the reader
+# can see is not.
 
 ENTRY_DOC_BUDGET_BYTES = 65536
+
+#: What the budget is **not**: this file's private allowance (draft §138, measured in the wild).
+#: This guard used to compare the file against 65 536 directly and stayed green while the file was
+#: still cut: 65 489 bytes arrived as 65 242, then as 65 142, and 65 710 arrived as 65 243 — cuts of
+#: 247 / 347 / 467 bytes, every one of them swallowing the tail of §9. The loader spends part of the
+#: same budget on things this repository does not control (preamble, notes, any second instruction
+#: file), and how much is **not measurable from inside the repository** — so this is a self-imposed
+#: margin, not a measurement. Four times the largest observed cut: the bound should fire while there
+#: is still room to move detail into the draft, not after the reader has lost a section.
+ENTRY_DOC_OVERHEAD_MARGIN_BYTES = 2048
+
+#: The last non-empty line of the entry document. Its **presence** is the only end-of-document
+#: proof a reader has: an agent that cannot see it is holding a truncated copy. The announcement
+#: below must sit in §1, because truncation cuts the tail — so a reader who has never seen the end
+#: of the document still learns that an end marker exists and that its absence means something.
+ENTRY_DOC_END_MARKER = (
+    "> **末行哨兵（§138）**：读到本行 = 本文完整到达；没读到 = 你手里是被截断的副本"
+    "（草案 §138 量过：这里的预算不是这份文件一个人的）。"
+)
+ENTRY_DOC_MARKER_ANNOUNCEMENT = "本文最后一行是哨兵"
+
+
+def _entry_doc_size_problems(size: int) -> list[str]:
+    """Both ways a size can be wrong: over the usable budget, or too small to be the document."""
+
+    limit = ENTRY_DOC_BUDGET_BYTES - ENTRY_DOC_OVERHEAD_MARGIN_BYTES
+    problems: list[str] = []
+    if size > limit:
+        problems.append(
+            f"AGENTS.md is {size} bytes; the usable budget is {limit} ({ENTRY_DOC_BUDGET_BYTES} minus "
+            f"{ENTRY_DOC_OVERHEAD_MARGIN_BYTES} for the shared-budget overhead), and exceeding it "
+            "truncates the document **silently** — its reader loses the tail with no marker at all. "
+            "Move detail into the draft (draft §54/§138) rather than growing the entry document."
+        )
+    if size <= 10_000:
+        problems.append(
+            f"AGENTS.md is {size} bytes, which is too small to hold the rules; the ceiling check "
+            "above is meaningless at this size"
+        )
+    return problems
+
+
+def _entry_doc_marker_problems(text: str) -> list[str]:
+    """The end marker is last and unique, and something in the document says that it exists."""
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    problems: list[str] = []
+    if not lines or lines[-1] != ENTRY_DOC_END_MARKER:
+        problems.append("the last non-empty line of AGENTS.md is not the end-of-document marker")
+    count = text.count(ENTRY_DOC_END_MARKER)
+    if count != 1:
+        problems.append(f"the end-of-document marker appears {count} time(s), expected exactly once")
+    if ENTRY_DOC_MARKER_ANNOUNCEMENT not in text:
+        problems.append(
+            "nothing tells the reader that the document ends with a marker, so its absence is "
+            "undetectable by the reader it is meant to protect (draft §138)"
+        )
+    return problems
 
 #: The document that holds the stage-by-stage implementation record (§31…§54).
 STAGE_RECORD = DRAFT
@@ -4309,15 +4376,26 @@ def _newest_stage_section() -> str:
 
 
 def test_the_entry_document_fits_the_reader_budget() -> None:
-    size = len(AGENTS.read_bytes())
-    assert size <= ENTRY_DOC_BUDGET_BYTES, (
-        f"AGENTS.md is {size} bytes and the reader budget is {ENTRY_DOC_BUDGET_BYTES}; exceeding it "
-        "truncates the document **silently**, so its reader loses the tail with no marker at all. "
-        "Move detail into the draft (draft §54) rather than growing the entry document."
-    )
-    # Not vacuous: a file that fits because it is nearly empty would satisfy the assertion above while
-    # meaning nothing. The entry document has real work to do, so it has a floor as well as a ceiling.
-    assert size > 10_000, "AGENTS.md is suspiciously small; the ceiling check above is now meaningless"
+    """Size **and** arrival: the file must fit the *shared* budget, and say so at its own end."""
+
+    text = AGENTS.read_text(encoding="utf-8")
+    size = len(text.encode("utf-8"))
+    problems = _entry_doc_size_problems(size) + _entry_doc_marker_problems(text)
+    assert problems == [], "; ".join(problems)
+
+    # Not vacuous, in both halves. The size half: the usable limit passes, one byte more does not,
+    # a file under the deployment budget but over the usable one is **still** reported (that gap is
+    # §138), and a document that fits only because it is nearly empty is refused.
+    limit = ENTRY_DOC_BUDGET_BYTES - ENTRY_DOC_OVERHEAD_MARGIN_BYTES
+    assert _entry_doc_size_problems(limit) == []
+    assert _entry_doc_size_problems(limit + 1) != []
+    assert _entry_doc_size_problems(ENTRY_DOC_BUDGET_BYTES) != []
+    assert _entry_doc_size_problems(10_000) != []
+    # The marker half: a lost marker, a duplicated one and an unannounced one are each reported.
+    assert _entry_doc_marker_problems(text) == []
+    assert _entry_doc_marker_problems(text.rstrip().rsplit(ENTRY_DOC_END_MARKER, 1)[0]) != []
+    assert _entry_doc_marker_problems(text + "\n" + ENTRY_DOC_END_MARKER) != []
+    assert _entry_doc_marker_problems(text.replace(ENTRY_DOC_MARKER_ANNOUNCEMENT, "本文最后一行是别的")) != []
 
 
 def _stage_record_delegation(text: str) -> list[str]:
