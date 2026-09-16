@@ -10874,3 +10874,44 @@ issue D:\env\plan_rust-toolchain_1.83.0_5e63c3f68c3a.json --out D:\env\token-pro
 3. **`where` 的 `launcher` 不是"能不能用"的判据**：`usable` 仍然只讲那个 payload，入口在不在是另一件事
    （由 `path verify` 报）。把两者混起来会让"入口丢了"看起来像"能力坏了"。
 4. **没有给 reference 建入口**：reference 的稳定入口是用户自己的环境（§14.2），AIROOT 不替它建。
+## 124. 把整条闭环跑成可复跑的验收（W6），并清掉残留的测试目录（W1）
+
+**判据 #16 要的是"这条闭环能被重复跑一遍"，而不是"某一次跑通过"。** 这一节把最小版本定义里那条闭环
+（`plan → issue → approve → install → FINALIZED → verify → run → where → 稳定入口 → retire → gc（真的删
+payload）→ doctor 无 error`）做成 `cli/tests/real_machine_acceptance.py` 里的第二个半边：它自建一个临时
+root，**不联网**，用 `adopt --mode import` 从一个本地文件造出真实 artifact——于是整条路既不需要上游，也不
+需要操作者的 root 里预先有东西。
+
+### 124.1 它量到的两件事
+
+| 断言 | 为什么单独列出来 |
+|---|---|
+| **第二次 `install` 同一份计划是终态，且不推高 generation** | 这条才是"幂等"的机器可读形式。签名被消费掉之后要再签一份 token 才能重放，所以它同时量到了"批准是一次性的"与"重放不会第二次安装" |
+| **`retire` 之后 `path verify` 报的是漂移（exit 2 / violations=1），不是健康** | ADR-0050 的三类漂移里最容易悄悄消失的一类：入口还在、绑定没了。**如果它报 0，那这条验收就是空的** |
+
+同一次还量到：`--provision` 第二次是 `INVALID_INPUT`(8) 且**密钥字节不变**（不是轮换）、`run --capability`
+真的启动了 payload 且 `persisted=false`、`where` 给出的 `launcher` 就是 `cli\exposure\bin\archive.cmd`、
+`gc --apply` 之后那个 store 目录**真的不在了**。**.tmp 之外没有写任何东西，PATH/注册表/ACL 全程未动。**
+
+### 124.2 验收自己报了一次假阴性
+
+第一次跑，"`where` 给出的稳定入口就是那个文件"这条**红了**，而两边打印出来是同一个路径：`root` 来自
+`tempfile.mkdtemp`，CLI 拿到的是它**规范化**之后的拼写（大小写/短名），字符串比较因此不等。修法是两边都
+`.resolve()` 再比，而且**把两个拼写打出来**。这一条值得记：一个验收脚本的假阴性会和假阳性一样浪费一轮，
+而它比假阳性更坏——**它会让人去改没坏的东西**。
+
+### 124.3 这一节没有做的事（写清楚，免得被当成做到了）
+
+1. **P4 的四个退出条件没有做故障注入**：这一节的回滚证据是"真实的成功路径 + 真实的删除"，不是"中途断电
+   再 `repair`"。故障注入目前只在 pytest 套件里（`conftest.FaultInjector` + `tx/rollback.py`）。
+2. **`--online` 那一段仍然只到 fetch/verify**，不跑 stage/commit（§59 的边界，不是新的）。
+3. **没有跨 root 重跑**：验收每次自建临时 root；"同一个 root 上跑第二遍"由 pytest 的幂等测试覆盖。
+
+### 124.4 成本与 W1
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1357 → 1357**（验收脚本不是 pytest 模块，不进这个数；它的结论是 `real-machine acceptance: PASS` + `closed loop: PASS`） |
+| golden 语料 / schema | **43 / 20**（不变） |
+| 新增 ADR | 无（这一节是验收，不是设计变更） |
+| W1 | `cli/tests/.tmp/` 的 7 个残留目录（`agent-acl-finish`、`agent-aclwrite`、`orchestrator`×2、`airoot-test-*`×3）已清掉；它本来就会被 pytest 的会话夹具删掉，残留只说明某些运行是被中断的 |

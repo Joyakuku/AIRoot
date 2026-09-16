@@ -487,7 +487,168 @@ def main_run() -> int:
     return 1 if failures else 0
 
 
+def closed_loop() -> int:
+    """The whole minimum-version loop, on a scratch root, **without the network** (W6).
+
+    `docs/AIROOT-最小版本-v1.md` defines "done" as one closed loop: plan -> issue -> approve ->
+    install -> FINALIZED -> verify -> run -> where -> stable entry -> retire -> gc -> doctor, with the
+    payload **really deleted** at the end. This runs it end to end with an `adopt --mode import` plan,
+    so the artifact is a local file: no upstream, no token beyond the root's own signer, nothing written
+    outside the scratch root.
+
+    Two properties get their own checks because they are the ones that quietly rot:
+
+    * **idempotence** -- the second `install` of the same plan must be terminal already and must not bump
+      the registry generation again;
+    * **the entry outliving the binding** -- after `retire`, `path verify` must report exactly the drift
+      ADR-0050 named (a stable entry with no binding), not a clean bill of health.
+    """
+
+    import sys as _sys
+
+    failures = 0
+
+    def check(label: str, condition: bool) -> None:
+        nonlocal failures
+        print(f"  [{'ok ' if condition else 'FAIL'}] {label}")
+        if not condition:
+            failures += 1
+
+    root = Path(tempfile.mkdtemp(prefix="airoot-closed-loop-")) / "root"
+    payload_source = Path(tempfile.mkdtemp(prefix="airoot-closed-loop-payload-")) / "probe-tool.exe"
+    shutil.rmtree(root, ignore_errors=True)
+    init_root(root, root_instance_id="root-closed-loop", machine_id="host-closed-loop")
+    Registry.initialize(
+        root, machine_id="host-closed-loop", root_instance_id="root-closed-loop"
+    ).close()
+    shutil.copy2(_sys.executable, payload_source)
+
+    def call(*argv: str) -> tuple[int, dict]:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = main(["--json", "--root", str(root), *argv])
+        text = buffer.getvalue().strip()
+        return code, (json.loads(text) if text.startswith("{") else {"raw": text})
+
+    print("\nclosed loop (minimum version, scratch root, no network)")
+
+    try:
+        code, adopted = call(
+            "adopt", str(payload_source), "--mode", "import", "--capability", "archive", "--version", "9.9.9"
+        )
+        plan_file = str(adopted.get("plan_file") or "")
+        show("adopt --mode import", code, adopted, ("plan_file", "reason_code"))
+        check("import produced a plan file", code == 0 and Path(plan_file).is_file())
+        if not plan_file:
+            return failures
+
+        token = root / "state" / "approvals" / "loop-token.json"
+        code, issued = call("issue", plan_file, "--out", str(token), "--provision")
+        show("issue --provision", code, issued, ("provisioned", "permission_proof", "reason_code"))
+        check("the verb signed a token", code == 0 and token.is_file())
+        check("and says what it is worth", issued.get("permission_proof") is False)
+
+        key = root / "state" / "issuer-key.json"
+        before = key.read_bytes()
+        again, repeated = call("issue", plan_file, "--out", str(token), "--provision")
+        show("issue --provision (again)", again, repeated, ("reason_code",))
+        check("a second --provision is refused, not a rotation", again == 8 and key.read_bytes() == before)
+
+        code, approved = call("approve", plan_file, "--token-file", str(token))
+        show("approve", code, approved, ("approval_id", "reason_code"))
+        check("the approval is recorded", code == 0)
+
+        code, installed = call("install", plan_file, "--token-file", str(token))
+        show("install", code, installed, ("state", "instance_id", "generation_after", "reason_code"))
+        instance = str(installed.get("instance_id") or "")
+        generation = installed.get("generation_after")
+        check("the real payload installs and FINALIZEs", code == 0 and installed.get("state") == "FINALIZED")
+
+        second = root / "state" / "approvals" / "loop-token-2.json"
+        call("issue", plan_file, "--out", str(second))
+        code, replayed = call("install", plan_file, "--token-file", str(second))
+        show("install (again)", code, replayed, ("state", "generation_after", "reason_code"))
+        check(
+            "installing the same plan again is terminal, not a second install",
+            code == 0
+            and replayed.get("state") == "FINALIZED"
+            and replayed.get("generation_after") == generation,
+        )
+
+        code, verified = call("tool", "verify", instance)
+        show("tool verify", code, verified, ("verified", "problems"))
+        check("the payload verifies against its registered digest", verified.get("verified") is True)
+
+        code, ran = call("run", "--capability", "archive", "--", "--version")
+        show("run --capability", code, ran, ("exit_status", "persisted", "reason_code"))
+        check("the payload really starts", ran.get("exit_status") == 0)
+        check("and nothing was persisted by running it", ran.get("persisted") is False)
+
+        entry = root / "cli" / "exposure" / "bin" / "archive.cmd"
+        code, where = call("where", "archive")
+        show("where archive", code, where, ("management", "launcher", "selection_reason"))
+        # Compared **resolved**: the root comes from `mkdtemp` while the CLI canonicalizes it, so the
+        # two spellings of the same file can differ (this check failed on exactly that once).
+        named = where.get("launcher")
+        check(
+            f"where names the stable entry ({named!r})",
+            bool(named) and Path(str(named)).resolve() == entry.resolve() and entry.is_file(),
+        )
+        check("and it is the version-independent one", entry.read_bytes().count(b"--") >= 1)
+
+        code, path = call("path", "verify")
+        show("path verify", code, path, ("launcher_present", "violations", "expected_launchers"))
+        check("the stable entry is present", path.get("launcher_present") is True)
+        check("and the PATH invariant holds", path.get("violations") == 0)
+        check("the entry matches what this build writes", path.get("launchers", [{}])[0].get("matches_current") is True)
+
+        code, retired = call("tool", "retire", instance)
+        show("tool retire", code, retired, ("payload_removed", "reason_code"))
+        check("retiring clears the binding and keeps the payload", retired.get("payload_removed") is False)
+
+        code, drifted = call("path", "verify")
+        show("path verify (after retire)", code, drifted, ("launcher_present", "violations"))
+        check(
+            "an entry with no binding is reported as drift, not as healthy",
+            code == 2 and drifted.get("violations") == 1,
+        )
+
+        code, gc_plan = call("tool", "gc", "--plan")
+        show("tool gc --plan", code, gc_plan, ("collectable", "reason_code"))
+        check("the retired payload is collectable", gc_plan.get("collectable") == 1)
+
+        plan_entry = (gc_plan.get("plans") or [{}])[0]
+        gc_file = str(plan_entry.get("plan_file") or "")
+        if gc_file:
+            gc_token = root / "state" / "approvals" / "loop-gc-token.json"
+            call("issue", gc_file, "--out", str(gc_token))
+            code, collected = call("tool", "gc", "--apply", "--token-file", str(gc_token))
+            show("tool gc --apply", code, collected, ("payloads_removed", "reason_code"))
+            store_dir = root / "store" / instance
+            check("gc really deletes the payload", code == 0 and not store_dir.exists())
+        else:
+            check("gc --plan named a plan file to approve", False)
+
+        code, doctor = call("doctor")
+        errors = [
+            item
+            for item in doctor.get("diagnostics", [])
+            if item.get("severity") in {"error", "warning"}
+        ]
+        show("doctor", code, doctor, ("status", "reason_code"))
+        check("doctor reports no error after the loop", code == 0 and not errors)
+    finally:
+        shutil.rmtree(root.parent, ignore_errors=True)
+        shutil.rmtree(payload_source.parent, ignore_errors=True)
+
+    print(f"closed loop: {'PASS' if failures == 0 else 'FAIL'} ({failures} failed check(s))")
+    return failures
+
 if __name__ == "__main__":
     if not DATA_ROOT.is_dir():
         raise SystemExit(f"this check needs a real data root to look at: {DATA_ROOT} is missing")
-    raise SystemExit(main_run())
+    # Both halves always run: an early failure must not hide whether the closed loop still works.
+    raise SystemExit(main_run() | closed_loop())
