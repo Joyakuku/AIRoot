@@ -2314,9 +2314,28 @@ _STAGE_JUMP_ROW = re.compile(
     r"^\|\s*§(\d+)\s*\|\s*§(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|(.+?)\|", re.M
 )
 
+#: A fenced code block, fence line included.
+_FENCE = re.compile(r"(?m)^[ \t]*```.*?^[ \t]*```[ \t]*$", re.S)
 
-def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int]]:
-    """Per stage section: ``(stage, stated_from_or_None, to, heading_line)``.
+
+def _mask_fences(text: str) -> str:
+    """Blank the inside of fenced code blocks **without moving a single character**.
+
+    A stage record quotes things — pytest output, a previous stage's row, the assertion this guard
+    itself produced — and a quoted row is indistinguishable from a stated one to a regex. §133 did
+    exactly that: it quotes this guard's own failure message, which contains a count row, and the
+    parser then had two rows in that section. Masking keeps every offset and every line number, so
+    the caller can search the masked text and slice the real one.
+    """
+
+    def blank(match: re.Match[str]) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    return _FENCE.sub(blank, text)
+
+
+def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int, int | None]]:
+    """Per stage section: ``(stage, stated_from_or_None, to, heading_line, row_line_or_None)``.
 
     A section that states a single total (`**684 项全绿**`) has no `from` of its own; the pair form
     (`681 → **684 项**`) does. When a section holds several pairs — a stage record quoting an earlier
@@ -2324,22 +2343,42 @@ def _stage_count_chain(text: str) -> list[tuple[int, int | None, int, int]]:
     pair with the largest `to`: the chain is monotone, so a *quoted* historical pair always ends below
     the section's own end. Positional rules (first, last) are what §84 broke: its prose quotes
     `826 → 827` above its own row, and taking the first pair read the section as ending there.
+
+    Two refinements, both measured into existence by §133 rather than guessed:
+
+    * **fenced code blocks do not count** unless a section has nothing outside them (then they are all
+      there is, and dropping the section would hide it instead of reporting it);
+    * ties on `to` go to the **last** pair, and the row's own line comes back with it, because a stage
+      that changes no tests states exactly what the stage before it did — §132 and §133 are the first
+      two in a row to do that. A caller wanting "this section's own row" then has the line the parser
+      chose instead of searching for the text again: text is not unique, position is.
     """
 
     starts = [(int(match.group(1)), match.start()) for match in _STAGE_HEADING.finditer(text)]
-    chain: list[tuple[int, int | None, int, int]] = []
+    chain: list[tuple[int, int | None, int, int, int | None]] = []
     for position, (stage, index) in enumerate(starts):
         end = starts[position + 1][1] if position + 1 < len(starts) else len(text)
         body = text[index:end]
         line = text.count("\n", 0, index) + 1
-        pairs = _STAGE_PAIR.findall(body)
-        if pairs:
-            own = max(pairs, key=lambda pair: int(pair[1]))
-            chain.append((stage, int(own[0]), int(own[1]), line))
+        outside = _mask_fences(body)
+        found = [
+            (match, int(match.group(1)), int(match.group(2))) for match in _STAGE_PAIR.finditer(outside)
+        ]
+        if not found:
+            found = [
+                (match, int(match.group(1)), int(match.group(2)))
+                for match in _STAGE_PAIR.finditer(body)
+            ]
+        if found:
+            chosen, stated_from, to = max(
+                enumerate(found), key=lambda item: (item[1][2], item[0])
+            )[1]
+            row_line = line + body.count("\n", 0, chosen.start())
+            chain.append((stage, stated_from, to, line, row_line))
             continue
-        solos = _STAGE_SOLO.findall(body)
+        solos = _STAGE_SOLO.findall(outside) or _STAGE_SOLO.findall(body)
         if solos:
-            chain.append((stage, None, int(solos[-1]), line))
+            chain.append((stage, None, int(solos[-1]), line, None))
     return chain
 
 
@@ -2369,7 +2408,7 @@ def _stage_chain_problems(text: str, current: int | None = None) -> list[str]:
     jumps: set[tuple[int, int]] = set()
     previous_stage: int | None = None
     previous_to: int | None = None
-    for stage, stated_from, to, line in chain:
+    for stage, stated_from, to, line, _row in chain:
         if stated_from is not None and stated_from > to:
             problems.append(f"§{stage} (line {line}) reads {stated_from} → {to}: the suite cannot shrink")
         if previous_to is not None and to < previous_to:
@@ -2398,7 +2437,7 @@ def _stage_chain_problems(text: str, current: int | None = None) -> list[str]:
         problems.append(f"declared jumps that the chain does not have: {stale}")
 
     if current is not None and chain:
-        last_stage, _, last_to, _ = chain[-1]
+        last_stage, _, last_to, _, _row = chain[-1]
         if last_to != current:
             problems.append(f"the chain ends at §{last_stage}'s {last_to}; the suite has {current} tests")
     return problems
@@ -2462,11 +2501,21 @@ def test_the_stage_records_count_the_suite_without_an_unexplained_jump() -> None
     # stage will reuse silently retargets itself; deriving it from the chain cannot. (§85 then found
     # the second half of the same problem: the derivation also assumed the row was `N-1 → N`, which
     # is only true when a stage adds one test.)
-    last_stage, last_from, last_to, _ = _stage_count_chain(text)[-1]
+    #
+    # And §133 found the third: **the row is located by the line the parser chose**, because a stage
+    # that changes no tests at all states the same numbers as the one before it (§132 does, and so
+    # does §133), and because a record may quote the very row it is describing. Text is not unique;
+    # the position the parser used is. Both halves were measured: the count of the row's text was 2,
+    # and after moving to a per-section search it was still the *quoted* copy that got rewritten.
+    last_stage, last_from, last_to, _heading_line, row_line = _stage_count_chain(text)[-1]
     assert last_from is not None, f"§{last_stage} states a solo total, so it has no row to shorten"
+    assert row_line is not None, f"§{last_stage}'s row was not located; the mutation has no anchor"
+    lines = text.splitlines(keepends=True)
+    row = lines[row_line - 1]
     tail = f"| 测试 | **{last_from} → {last_to}**"
-    assert text.count(tail) == 1, f"§{last_stage}'s own count row is not in the shape this mutation needs"
-    shortened = text.replace(tail, f"| 测试 | **{last_from} → {last_to - 1}**", 1)
+    assert tail in row, f"§{last_stage}'s own count row is not in the shape this mutation needs: {row!r}"
+    lines[row_line - 1] = row.replace(tail, f"| 测试 | **{last_from} → {last_to - 1}**", 1)
+    shortened = "".join(lines)
     assert shortened != text and "the suite has" in problems(shortened), (
         "a chain that ends below the real total must be reported"
     )

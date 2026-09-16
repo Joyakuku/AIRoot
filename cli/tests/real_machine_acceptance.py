@@ -12,15 +12,23 @@ suite stays hermetic.
 It is **not** a pytest module (the suite must not depend on the host's real `D:\\env`).
 It never writes HKCU: the persisted path stops at the no-token / dry-run boundaries.
 
+**And it now proves it.** The two halves are bracketed by host snapshots -- the machine and user
+environment blocks, a per-file manifest of the AIROOT root and the two rustup trees, and a summary of
+the data root -- and the pass fails if any of them moved. See the isolation contract at the end of the
+file for what that does and does not cover.
+
 The scratch root lives in the system temp directory and is deleted on the way out.
 """
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import shutil
 import sys
 import tempfile
+import winreg
 from pathlib import Path
 
 APP = Path(__file__).resolve().parent.parent / "app"
@@ -681,8 +689,172 @@ def closed_loop() -> int:
     print(f"closed loop: {'PASS' if failures == 0 else 'FAIL'} ({failures} failed check(s))")
     return failures
 
+
+# --- the isolation contract -----------------------------------------------------------------------
+#
+# This script is the only part of the project that runs against the real machine, so "it does not touch
+# your environment" cannot stay a sentence in the module docstring. It is **measured**: every surface
+# AIROOT could reach is snapshotted before and after, and a single difference is a failure.
+#
+# What is covered, and how strongly:
+#
+#   * the machine and user environment blocks -- read with `winreg`, never written; equality is exact;
+#   * `D:\env\.airoot`, `~\.cargo` and `~\.rustup` -- a per-file `(size, mtime_ns)` manifest, exact;
+#   * `D:\env` itself -- `(files, bytes, newest mtime)`, because a per-file manifest of ~190 000 entries
+#     taken twice is a lot of memory for a check whose answer is "no file was written". The summary
+#     catches an added, a deleted or a resized file and any write that moves the newest mtime forward;
+#     it does not catch a same-size edit with the timestamp put back, and nothing would.
+#
+# The surfaces deliberately *not* here, named so their absence is a decision rather than an oversight:
+# the process environment (a child cannot change its parent's), PATH (this script never writes it) and
+# elevation (nothing in the pass asks for it).
+
+WATCHED_TREES = (DATA_ROOT / ".airoot", Path.home() / ".cargo", Path.home() / ".rustup")
+
+MACHINE_ENVIRONMENT = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+
+
+def _environment_block(hive: int, subkey: str) -> dict[str, str]:
+    """One registry environment block, read-only. An unreadable key is data, not an exception."""
+
+    try:
+        with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ) as key:
+            count = winreg.QueryInfoKey(key)[1]
+            values: dict[str, str] = {}
+            for index in range(count):
+                name, value, _ = winreg.EnumValue(key, index)
+                values[name] = str(value)
+            return values
+    except OSError as exc:
+        return {"<unreadable>": str(exc)}
+
+
+def _file_manifest(path: Path) -> dict[str, tuple[int, int]]:
+    """Per-file `(size, mtime_ns)`, keyed by relative posix path."""
+
+    manifest: dict[str, tuple[int, int]] = {}
+    if not path.is_dir():
+        return manifest
+    for base, directories, names in os.walk(path):
+        directories.sort()
+        for name in sorted(names):
+            file = Path(base) / name
+            try:
+                info = file.stat()
+            except OSError:
+                continue
+            manifest[file.relative_to(path).as_posix()] = (info.st_size, info.st_mtime_ns)
+    return manifest
+
+
+def _tree_summary(path: Path) -> tuple[int, int, int]:
+    """`(files, bytes, newest mtime_ns)` for a tree too large to list twice."""
+
+    files = 0
+    total = 0
+    newest = 0
+    if not path.is_dir():
+        return files, total, newest
+    for base, _directories, names in os.walk(path):
+        for name in names:
+            try:
+                info = (Path(base) / name).stat()
+            except OSError:
+                continue
+            files += 1
+            total += info.st_size
+            newest = max(newest, info.st_mtime_ns)
+    return files, total, newest
+
+
+def host_state() -> dict:
+    """Every surface the real-machine pass must leave exactly as it found it."""
+
+    return {
+        "machine environment": _environment_block(winreg.HKEY_LOCAL_MACHINE, MACHINE_ENVIRONMENT),
+        "user environment": _environment_block(winreg.HKEY_CURRENT_USER, "Environment"),
+        "trees": {str(path): _file_manifest(path) for path in WATCHED_TREES},
+        "data root": {"path": str(DATA_ROOT), "summary": _tree_summary(DATA_ROOT)},
+    }
+
+
+def isolation_problems(before: dict, after: dict) -> list[str]:
+    """Every difference between two host snapshots, as a report rather than an assertion."""
+
+    problems: list[str] = []
+    for block in ("machine environment", "user environment"):
+        old, new = before[block], after[block]
+        for name in sorted(set(old) | set(new)):
+            if old.get(name) != new.get(name):
+                problems.append(f"{block}: {name} changed")
+    for tree, old in before["trees"].items():
+        new = after["trees"].get(tree, {})
+        appeared = sorted(set(new) - set(old))
+        disappeared = sorted(set(old) - set(new))
+        changed = sorted(name for name in set(old) & set(new) if old[name] != new[name])
+        if appeared:
+            problems.append(f"{tree}: {len(appeared)} file(s) appeared, e.g. {appeared[:3]}")
+        if disappeared:
+            problems.append(f"{tree}: {len(disappeared)} file(s) disappeared, e.g. {disappeared[:3]}")
+        if changed:
+            problems.append(f"{tree}: {len(changed)} file(s) changed, e.g. {changed[:3]}")
+    if before["data root"] != after["data root"]:
+        problems.append(
+            f"{before['data root']['path']}: summary moved {before['data root']['summary']} "
+            f"-> {after['data root']['summary']}"
+        )
+    return problems
+
+
+def isolation_report(before: dict, after: dict) -> int:
+    """Compare the two snapshots, and prove the comparison is not vacuous on this machine's own data.
+
+    The run is *supposed* to find nothing, so a comparison that can never find anything would look
+    exactly like a clean machine. Three synthetic snapshots derived from `before` close that: a file
+    appearing, an environment value changing, and the data-root summary moving must each be reported.
+    """
+
+    problems = isolation_problems(before, after)
+
+    planted = copy.deepcopy(before)
+    tree = next(iter(planted["trees"]))
+    planted["trees"][tree]["planted-by-the-self-check.txt"] = (1, 1)
+    moved = copy.deepcopy(before)
+    block = moved["machine environment"] or moved["user environment"]
+    if block:
+        moved["machine environment"][next(iter(block))] = "<changed by the self-check>"
+    grown = copy.deepcopy(before)
+    files, total, newest = grown["data root"]["summary"]
+    grown["data root"]["summary"] = (files + 1, total, newest)
+
+    self_check = []
+    for label, snapshot in (("a planted file", planted), ("a changed value", moved), ("a moved summary", grown)):
+        if not isolation_problems(before, snapshot):
+            self_check.append(label)
+
+    environment_values = len(before["machine environment"]) + len(before["user environment"])
+    watched = sum(len(manifest) for manifest in before["trees"].values())
+    print("\nisolation audit (nothing outside a scratch root may change)")
+    print(
+        f"  compared: {environment_values} environment value(s), {watched} file(s) in "
+        f"{len(before['trees'])} watched tree(s), and a {before['data root']['summary'][0]}-file "
+        f"summary of {before['data root']['path']}"
+    )
+    for problem in problems:
+        print(f"  [FAIL] {problem}")
+    for label in self_check:
+        print(f"  [FAIL] the comparison does not report {label}")
+    if not problems and not self_check:
+        print("  [ok ] no tracked surface moved, and the comparison reports a planted change")
+    print(f"isolation: {'PASS' if not problems and not self_check else 'FAIL'} "
+          f"({len(problems)} difference(s))")
+    return len(problems) + len(self_check)
+
+
 if __name__ == "__main__":
     if not DATA_ROOT.is_dir():
         raise SystemExit(f"this check needs a real data root to look at: {DATA_ROOT} is missing")
     # Both halves always run: an early failure must not hide whether the closed loop still works.
-    raise SystemExit(main_run() | closed_loop())
+    # The snapshots bracket them, so the pass is inert on the host or it says so.
+    before = host_state()
+    raise SystemExit(main_run() | closed_loop() | isolation_report(before, host_state()))
