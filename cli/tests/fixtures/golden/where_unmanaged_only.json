@@ -34,6 +34,7 @@
   "found": false,
   "health": null,
   "instance_id": null,
+  "launcher": null,
   "management": null,
   "reason_code": "NOT_FOUND",
   "schema_version": 1,

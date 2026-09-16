@@ -111,8 +111,18 @@ def test_every_child_verb_survives_the_argv_rewrite_as_itself() -> None:
             f"{verb} was rewritten into {normalized[head]!r}; every verb in CHILD_VERBS must survive "
             "the shared pre-parse rule as itself"
         )
-        assert "--json" in normalized[:head], "AIROOT's own options are hoisted in front of the verb"
-        assert normalized[head + 1 :] == ["some-id", "--", "--flag"], (
+        # Draft §123: the hoisted options belong **after** the verb, not in front of it. They are the
+        # subparser's options, and the top-level parser does not know them; putting them first is what
+        # made `run --capability X` and `exec --env X -- cmd` fail with "invalid choice: 'X'". What has
+        # to hold is the property, not the position: AIROOT's options stay on AIROOT's side of the
+        # separator, and never leak into the payload's command line.
+        separator = normalized.index("--")
+        assert "--json" in normalized[head + 1 : separator], (
+            f"{verb}: AIROOT's own options must sit between the verb and the separator, where the "
+            f"parser that defines them can read them: {normalized}"
+        )
+        assert "--json" not in normalized[separator:], "AIROOT's options never enter the payload's argv"
+        assert normalized[head + 1 :] == ["--json", "some-id", "--", "--flag"], (
             "the identifier and everything after `--` must be left exactly as the caller wrote them"
         )
 

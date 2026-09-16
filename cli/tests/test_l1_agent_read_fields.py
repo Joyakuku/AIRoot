@@ -248,7 +248,7 @@ def test_the_documented_read_path_count_is_the_number_this_module_resolves() -> 
 
 
 def test_every_read_path_resolves_in_the_document_the_cli_prints(
-    capsys, root, registry, clock, cli_root: Path, data_root: Path, checksums: Path, tmp_path: Path
+    capsys, root, registry, clock, monkeypatch, cli_root: Path, data_root: Path, checksums: Path, tmp_path: Path
 ) -> None:
     """One root, every agent-facing invocation, every ``read`` path resolved structurally."""
 
@@ -359,7 +359,13 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     record("tool list", "tool", "list")
     record("tool status <instance-id>", "tool", "status", owned)
     record("tool verify <instance-id>", "tool", "verify", owned)
-    record("path verify", "path", "verify")
+    # A clean root has no findings, and this lane reads `findings[].severity`: an empty list would
+    # make the read vacuous (draft §99), so the exact violation the rule names is injected for the
+    # duration of this one call -- a store/version directory on the machine PATH. Injected, never
+    # written: tests may not touch the host PATH (conftest's session guard).
+    with monkeypatch.context() as patched:
+        patched.setattr("airoot.caps.effective.machine_path", lambda: [str(Path(root.path) / "store")])
+        record("path verify", "path", "verify")
     record("env activate <external-id> --shell <powershell|cmd>", "env", "activate", REFERENCE, "--shell", "powershell")
     # The session form is not a separate invocation entry; it is set up because `env deactivate`
     # needs a snapshot to pop.

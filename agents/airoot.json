@@ -22,14 +22,14 @@
     {
       "question": "where is this capability, and why that one",
       "command": ["where", "<capability>"],
-      "read": ["found", "executable", "management", "selection_reason", "reason_code", "evidence", "zone", "candidates[].machine_discoverable"],
+      "read": ["found", "executable", "launcher", "management", "selection_reason", "reason_code", "evidence", "zone", "candidates[].machine_discoverable"],
       "notes": "a candidate row carries `machine_discoverable` (= zone != W): false means healthy and usable but excluded from machine-level discovery, not a fault; Zone W answers only explicit --session/--project activation",
       "document_schema": "where-response"
     },
     {
       "question": "does a version-constrained capability exist",
       "command": ["where", "<capability>", "--version", "<constraint>"],
-      "read": ["found", "version", "selection_reason", "evidence"],
+      "read": ["found", "version", "selection_reason", "evidence", "launcher"],
       "document_schema": "where-response"
     },
     {
@@ -150,7 +150,7 @@
         "persisted",
         "reason_code"
       ],
-      "notes": "execution, not exposure: nothing persistent changes, so this lane needs no token of its own — a token comes from the explicit local signing step (`issue --provision`, then `issue`; ADR-0046). The child's status is reported in `exit_status`; AIROOT's own exit code is 0 or 2. `payload_digest` is the **registered** value (`payload_digest_source` says so) — `tool verify` is the verb that re-measures. `run` refuses only on facts (unknown, not owned, payload/entrypoint gone); `retired`/`broken` are reported, not refused",
+      "notes": "execution, not exposure: nothing persistent changes, so this lane needs no token of its own — a token comes from the explicit local signing step (`issue --provision`, then `issue`; ADR-0046). The child's status is reported in `exit_status`; AIROOT's own exit code is 0 or 2. `payload_digest` is the **registered** value (`payload_digest_source` says so) — `tool verify` is the verb that re-measures. `run` refuses only on facts (unknown, not owned, payload/entrypoint gone); `retired`/`broken` are reported, not refused. `--capability <id>` resolves the **active binding** instead of naming an instance — that is what a stable entry (`cli/exposure/bin/<capability>.cmd`, ADR-0050) calls, and `where`'s `launcher` field is the same path",
       "document_schema": null
     },
     {
@@ -229,7 +229,7 @@
     {
       "question": "is PATH still following the one-entry rule",
       "command": ["path", "verify"],
-      "read": ["entries", "findings[].severity", "violations", "launcher_present"],
+      "read": ["entries", "findings[].severity", "violations", "launcher_present", "launchers[].path", "launchers[].matches_current"],
       "notes": "read-only; writing machine PATH belongs to the P2 broker",
       "document_schema": null
     },

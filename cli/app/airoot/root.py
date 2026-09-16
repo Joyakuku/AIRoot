@@ -39,6 +39,13 @@ LAYOUT_DIRS = (
     ENV_DIR,
     EXPOSURE_DIR,
     f"{EXPOSURE_DIR}/bin",
+    # The frozen contract puts the one AIROOT PATH entry at `AIROOT\cli\exposure\bin`
+    # (AGENTS.md §5 item 8) while this layout created only `<root>\exposure\bin`: on a fresh
+    # root the sanctioned directory did not exist, so `path verify` reported `false` for a
+    # directory nobody could have made. Both are created now (ADR-0050); `exposure/bin` stays
+    # because the runtime binding/view records live under `exposure/`.
+    "cli",
+    "cli/exposure/bin",
     STATE_DIR,
     f"{STATE_DIR}/plans",
     f"{STATE_DIR}/approvals",

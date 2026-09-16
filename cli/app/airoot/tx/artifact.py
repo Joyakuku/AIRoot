@@ -176,6 +176,12 @@ class ArtifactRunner:
                 if not self._observe_active_binding(key, instance_id):
                     return self._rollback(tx, "EXPOSURE_VERIFY_FAILED", "the new binding is not observable")
                 if tx["state"] == "ACTIVE_BOUND":
+                    # ADR-0050: `EXPOSED` is the exposure write side, not only an observation.
+                    # The write happens *before* the journal advances, and it is idempotent, so
+                    # replaying this step after a crash changes no bytes.
+                    from ..caps.launcher import write_launcher
+
+                    write_launcher(self.root, str(plan["target"]["capability_id"]))
                     self.journal.advance(tx, "EXPOSED", "active binding observed through a fresh registry read")
 
             if tx["state"] == "EXPOSED":

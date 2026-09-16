@@ -43,14 +43,14 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件 |
 | "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
-| "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json` | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（退出码在 `exit_status`，`reason_code` 是 `SUCCESS`/`CHILD_PROCESS_FAILED`）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
+| "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json`，或按**当前绑定**跑 `airoot run --capability <id> -- <args> --json`（稳定入口用的就是后者） | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（退出码在 `exit_status`，`reason_code` 是 `SUCCESS`/`CHILD_PROCESS_FAILED`）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
 | "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json` | **对 reference 一律拒绝**：那不是 AIROOT 的东西 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
 | "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（需要本机签一次：见《批准》） |
-| "PATH 有没有被弄乱" | `airoot path verify --json` | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
+| "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致） | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
 | "某个文件在哪 / 它叫什么名字" | `airoot search <query> --json` | **`search` 不是 `where`**：前者定位文件，后者解析能力。要按名搜一个叫 `status` 的文件用 `airoot search --query status --json` |
 | "搜得太慢 / 想要它快点" | `airoot search refresh --json` 建一次索引（crawl 建的，**不是 USN 索引**），之后查询走索引 | 不声称它是 Everything 级性能；`freshness.state=current` 只表示"上次遍历是最近做的" |
 | "这个索引是什么状态 / 为什么报了 stale" | `airoot search status --json`、`airoot search explain <query> --json` | `stale` 只说明索引比 `--max-staleness-ms` 旧：refresh 或放宽约束，不要说它"坏了" |

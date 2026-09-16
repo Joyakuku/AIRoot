@@ -38,6 +38,7 @@
   "found": true,
   "health": "healthy",
   "instance_id": "fake-tool/fake-tool/1.0.0/win-x64",
+  "launcher": null,
   "management": "managed",
   "reason_code": "SUCCESS",
   "schema_version": 1,

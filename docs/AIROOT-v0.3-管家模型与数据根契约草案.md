@@ -10797,3 +10797,80 @@ issue D:\env\plan_rust-toolchain_1.83.0_5e63c3f68c3a.json --out D:\env\token-pro
    `AGENTS.md` 与两份参考文档里把"怎么拿到 token"写全。
 5. **`--mode human` 不会去读本机 SID**：调用方给什么就记什么，不给就拒。自动填一个 SID 会让
    "human"这个取值变成装饰。
+## 123. 稳定入口：一个静态 `.cmd`，权威仍在 registry（ADR-0050）
+
+**这一节把最小版本判据 #10 从"❌ 目录不存在"变成"✅ 真实存在且能转发"。** ADR-0050 推翻了 ADR-0025 的 D4
+（"P1 不写任何 launcher"），理由不是"我们改主意了"，而是 D4 把两件事合在一句话里：**让文件存在**在
+`policy_only` 下本来就不受保护，**把这一条放进 machine PATH** 才需要受保护状态——而后者 AIROOT 仍然不做。
+
+### 123.1 形状与写入点
+
+```text
+<root>\cli\exposure\bin\<capability_id>.cmd        # 一个能力一个文件，CRLF
+```
+
+内容里**没有版本、没有 instance id、没有 `store/` 路径**：它调用
+`airoot run --capability <id> -- %*`，由 CLI 在**调用时**从 registry 解析 active binding。写入点是事务的
+`EXPOSED` 步（两个 runner 共用 `caps/launcher.py:write_launcher`），在 journal 推进之前完成，所以写不出来
+就等于 `EXPOSED` 没有发生；重放幂等（内容相同不写字节）。
+
+**顺带修好了一个从没被对过的目录**：`LAYOUT_DIRS` 建的是 `<root>\exposure\bin`，而
+`pathexposure.sanctioned_entry` 按冻结契约算的是 `<root>\cli\exposure\bin`——在一个刚建好的 root 上，
+"sanctioned entry"**根本不存在**，而 `path verify` 的 `launcher_present` 恰好在问那个目录在不在。两个都建；
+`exposure/bin` 保留（runtime 的 binding/view 记录在 `exposure/` 下）。**这是本节第 1 个"读代码才发现"的缺陷。**
+
+### 123.2 跑一次才发现的两个缺陷（都在 argv 与转义层）
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `run --capability <id>` 报 `invalid choice: '<id>'`；`exec --env X -- cmd` 同样 | `_normalize_child_argv` 把"提升的选项"放在**动词之前**，而它们是**子解析器**的选项，顶层解析器不认识它们（选项的值被搬到了动词位置） | 改成 `[全局..., verb, *hoisted, *owned, *child]`。§120 的那条守卫原来断言的是"选项在动词之前"这个**实现细节**，现在断言的是**性质**：AIROOT 的选项在动词与分隔符之间，且永不进入 payload 的 argv |
+| 2 | launcher 跑起来报 `unrecognized arguments: --version` | 转发行是 `... run --capability <id> %*`，**没有 `--`**，于是调用方的旗标被 AIROOT 解析 | 转发行改成 `... run --capability <id> -- %*`。**一个叫 `cargo` 的稳定入口必须表现得像 `cargo`**——这句是实测出来的，不是设计出来的 |
+| 3 | `run --capability <id> -- --version` 解析成 `instance='--version'` | 位置参数 `instance` 是 `nargs="?"` 且另一个是 `REMAINDER`：`--` 之后的第一个 token 被喂给了可选位置参数 | `run` 只留一个 `REMAINDER`（`rest`），`cmd_run` 显式切分：`rest[0]` 是目标（除非它是 `--`），`--` 之后全是 payload 的 |
+
+**第 3 条是第 2 条逼出来的**：没有 `--` 就没法转发旗标，加了 `--` 才暴露 argparse 这个形状问题。
+
+### 123.3 `where` 与 `path verify`
+
+- `where` 新增 `launcher`（`string|null`）：只有 owned + machine 级 + 文件真的存在时才给路径。**schema 里是
+  「可选」属性**——加必填是破坏性变更（`AGENTS.md` §7 要新 schema id），而"可选"与"总是发"是两件事，后者
+  才是承诺，由 `test_l1_launcher.py` 钉住。
+- `path verify` 的 `launcher_present` **改了含义**：从"那个目录在不在"改成"**至少有一个稳定入口**"。旧读法
+  在一个空目录上报 `true`，那不是判据 #10 问的事。同一次加了三类漂移发现（仍是冻结码 `PATH_EXPOSURE_VIOLATION`）：
+  **binding 没有入口**、**入口与这个 build 会写的不一致**（手改、解释器或 checkout 搬家）、**入口没有 binding**
+  （retire 清了绑定没清文件）。判漂移的方法是**重新渲染再比字节**，不解析 `.cmd` 的一行。
+  `path verify` 还要在 registry 读不出来时**照常工作**：那种情况作为一条 info 说明，而不是把只读诊断变成失败。
+
+### 123.4 守卫与验红
+
+新文件 `cli/tests/test_l1_launcher.py`（16 条）。四个"把缺陷放回去"的实测：
+
+| 放回去的缺陷 | 被哪条守卫抓住 |
+|---|---|
+| 转发行去掉 `--` | `test_the_launcher_bytes_are_crlf_and_name_no_version`、`test_the_launcher_itself_forwards` |
+| 提升的选项放回动词之前 | `test_every_child_verb_survives_the_argv_rewrite_as_itself`（性质断言）、`test_run_with_a_capability_resolves_the_active_binding` |
+| `EXPOSED` 不再写入口 | `test_the_exposure_step_writes_the_stable_entry` |
+| `launcher_present` 退回"那个目录在不在" | `test_an_empty_launcher_directory_is_not_a_stable_entry` |
+
+**最强的一条是 `test_the_launcher_itself_forwards`**：它用 `cmd.exe` **真的执行**那个 `.cmd`，并要求子进程的
+输出回来。判据 #10 问的是"能转发"，所以测量也必须是"真的转发"——它也正是先报出缺陷 2 的那条。
+
+### 123.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1340 → 1357**（+17：新增 `cli/tests/test_l1_launcher.py`；既有测试里有若干条按新语义改判据，不新增计数） |
+| golden 语料 | **43 → 43**（`where_*.json` 七份各多一行 `launcher`，重新生成；`index.json` 同步） |
+| schema | **20 → 20**（`where-response` 新增**可选** `launcher`，不新增 id） |
+| `agents/airoot.json` | `where` 两条 lane 读 `launcher`；`path verify` lane 读 `launchers[].path`/`launchers[].matches_current`；read 路径 162 → 166 |
+| 新增 ADR | **ADR-0050** |
+| 新增模块 | `cli/app/airoot/caps/launcher.py`（`caps/` 26 → 27） |
+| 新增参数/动词 | `run --capability <id>`；`run` 的位置参数改成单个 `REMAINDER` |
+
+### 123.6 这一节没有做的事
+
+1. **没有写 machine PATH**（仍然是唯一没做的那一条，属使用方/可选 P9）。稳定入口只是"存在且能转发"。
+2. **没有把 launcher 变成二进制**（ADR-0050 的比较里写了为什么）。它同用户进程可改写，`path verify` **度量**
+   这件事而不是假装关掉了它。
+3. **`where` 的 `launcher` 不是"能不能用"的判据**：`usable` 仍然只讲那个 payload，入口在不在是另一件事
+   （由 `path verify` 报）。把两者混起来会让"入口丢了"看起来像"能力坏了"。
+4. **没有给 reference 建入口**：reference 的稳定入口是用户自己的环境（§14.2），AIROOT 不替它建。

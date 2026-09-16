@@ -63,6 +63,7 @@
   "found": true,
   "health": "healthy",
   "instance_id": "external/tools-fake-tool",
+  "launcher": null,
   "management": "external_reference",
   "reason_code": "CURRENT_SOURCE_DEGRADED",
   "schema_version": 1,

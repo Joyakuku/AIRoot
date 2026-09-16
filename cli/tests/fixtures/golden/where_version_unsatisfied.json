@@ -42,6 +42,7 @@
   "found": false,
   "health": null,
   "instance_id": null,
+  "launcher": null,
   "management": null,
   "reason_code": "VERSION_UNSATISFIED",
   "schema_version": 1,

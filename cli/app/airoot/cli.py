@@ -1372,11 +1372,39 @@ def cmd_run(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any],
     is machine-readable rather than a promise in prose.
     """
 
-    from .caps.runtime import resolve_run_target, run_once
+    from .caps.runtime import active_instance_for_capability, resolve_run_target, run_once
+
+    rest = list(args.rest)
+    target_text: str | None = None
+    if rest and rest[0] != "--":
+        target_text = rest.pop(0)
+    # The separator is optional (`run <id> --version` is not a thing the payload gets; `run <id> -- --version`
+    # is), and everything after it is the payload's own command line.
+    child_command = rest[rest.index("--") + 1 :] if "--" in rest else []
+
+    if args.capability and target_text:
+        raise AirootError(
+            "INVALID_INPUT",
+            "name either an instance or --capability, not both",
+            evidence=[
+                "the positional form names one instance; --capability <id> resolves the active binding",
+                "resolving an argument that was given twice would hide which one was meant",
+            ],
+        )
+    if not args.capability and not target_text:
+        raise AirootError(
+            "INVALID_INPUT",
+            "run needs an instance id or --capability <id>",
+            evidence=["`run --capability <id>` is what the stable entry calls (ADR-0050)"],
+        )
 
     registry = context.registry()
     try:
-        target = resolve_run_target(registry, context.path(), args.instance)
+        if args.capability:
+            resolved = active_instance_for_capability(registry, args.capability)
+        else:
+            resolved = str(target_text)
+        target = resolve_run_target(registry, context.path(), resolved)
     finally:
         registry.close()
 
@@ -1384,7 +1412,7 @@ def cmd_run(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any],
     # caller cannot parse its own tool's reply. Without it the child inherits this process's streams,
     # which is what an interactive caller wants. Same rule as `exec`, same reason.
     capture = bool(args.json)
-    document = run_once(target, list(args.child_command), capture=capture)
+    document = run_once(target, child_command, capture=capture)
     _emit(
         document,
         as_json=args.json,
@@ -1834,14 +1862,139 @@ def cmd_tool_verify(args: argparse.Namespace, context: Context) -> tuple[dict[st
     return document, exit_code_for(document["reason_code"])
 
 
+def _expected_launchers(context: Context) -> tuple[list[str], str | None]:
+    """Capabilities whose active machine-level binding should have a stable entry (ADR-0050).
+
+    Returns the capabilities plus a note when the question could not be asked at all. `path verify`
+    reads the PATH and the disk; it must keep working on a root whose registry is unavailable, so an
+    unreadable registry is reported as a note instead of turning a read-only diagnosis into a failure.
+    """
+
+    from .caps.lifecycle import is_owned
+
+    try:
+        registry = context.registry()
+    except AirootError as error:
+        return [], f"the registry is not readable ({error.reason_code}), so no stable entry is expected here"
+    try:
+        expected: list[str] = []
+        for row in registry.bindings(active_only=True):
+            if str(row["scope"]) != "machine":
+                continue
+            instance = registry.instance(str(row["instance_id"]))
+            if instance is None or not is_owned(instance):
+                continue
+            expected.append(str(instance["capability_id"]))
+        return sorted(set(expected)), None
+    except AirootError as error:  # pragma: no cover - a registry that answers partially
+        return [], f"the bindings could not be listed ({error.reason_code})"
+    finally:
+        registry.close()
+
+
+def _expected_launchers(context: Context) -> tuple[list[str], str | None]:
+    """Capabilities whose active machine-level binding should have a stable entry (ADR-0050).
+
+    Returns the capabilities plus a note when the question could not be asked at all. `path verify`
+    reads the PATH and the disk; it must keep working on a root whose registry is unavailable, so an
+    unreadable registry is reported as a note instead of turning a read-only diagnosis into a failure.
+    """
+
+    from .caps.lifecycle import is_owned
+
+    try:
+        registry = context.registry()
+    except AirootError as error:
+        return [], f"the registry is not readable ({error.reason_code}), so no stable entry is expected here"
+    try:
+        expected: list[str] = []
+        for row in registry.bindings(active_only=True):
+            if str(row["scope"]) != "machine":
+                continue
+            instance = registry.instance(str(row["instance_id"]))
+            if instance is None or not is_owned(instance):
+                continue
+            expected.append(str(instance["capability_id"]))
+        return sorted(set(expected)), None
+    except AirootError as error:  # pragma: no cover - a registry that answers partially
+        return [], f"the bindings could not be listed ({error.reason_code})"
+    finally:
+        registry.close()
+
+
+def _expected_launchers(context: Context) -> tuple[list[str], str | None]:
+    """Capabilities whose active machine-level binding should have a stable entry (ADR-0050).
+
+    Returns the capabilities plus a note when the question could not be asked at all. `path verify`
+    reads the PATH and the disk; it must keep working on a root whose registry is unavailable, so an
+    unreadable registry is reported as a note instead of turning a read-only diagnosis into a failure.
+    """
+
+    from .caps.lifecycle import is_owned
+
+    try:
+        registry = context.registry()
+    except AirootError as error:
+        return [], f"the registry is not readable ({error.reason_code}), so no stable entry is expected here"
+    try:
+        expected: list[str] = []
+        for row in registry.bindings(active_only=True):
+            if str(row["scope"]) != "machine":
+                continue
+            instance = registry.instance(str(row["instance_id"]))
+            if instance is None or not is_owned(instance):
+                continue
+            expected.append(str(instance["capability_id"]))
+        return sorted(set(expected)), None
+    except AirootError as error:  # pragma: no cover - a registry that answers partially
+        return [], f"the bindings could not be listed ({error.reason_code})"
+    finally:
+        registry.close()
+
+
+def _expected_launchers(context: Context) -> tuple[list[str], str | None]:
+    """Capabilities whose active machine-level binding should have a stable entry (ADR-0050).
+
+    Returns the capabilities plus a note when the question could not be asked at all. `path verify`
+    reads the PATH and the disk; it must keep working on a root whose registry is unavailable, so an
+    unreadable registry is reported as a note instead of turning a read-only diagnosis into a failure.
+    """
+
+    from .caps.lifecycle import is_owned
+
+    try:
+        registry = context.registry()
+    except AirootError as error:
+        return [], f"the registry is not readable ({error.reason_code}), so no stable entry is expected here"
+    try:
+        expected: list[str] = []
+        for row in registry.bindings(active_only=True):
+            if str(row["scope"]) != "machine":
+                continue
+            instance = registry.instance(str(row["instance_id"]))
+            if instance is None or not is_owned(instance):
+                continue
+            expected.append(str(instance["capability_id"]))
+        return sorted(set(expected)), None
+    except AirootError as error:  # pragma: no cover - a registry that answers partially
+        return [], f"the bindings could not be listed ({error.reason_code})"
+    finally:
+        registry.close()
+
+
 def cmd_path_verify(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """Check the frozen PATH-exposure invariant (规划 §8.1 rule 8). Never writes PATH."""
 
     from .caps.effective import machine_path, user_path
     from .caps.pathexposure import verify_path_exposure
 
+    expected_launchers, bindings_note = _expected_launchers(context)
     verification = verify_path_exposure(
-        context.path(), machine_entries=machine_path(), user_entries=user_path()
+        context.path(),
+        machine_entries=machine_path(),
+        user_entries=user_path(),
+        expected_launchers=expected_launchers,
+        bindings_note=bindings_note,
     )
     document = verification.to_document()
     _emit(
@@ -3218,8 +3371,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         parents=[common],
     )
-    run_parser.add_argument("instance", help="instance id (or capability id) of an owned payload")
-    run_parser.add_argument("child_command", nargs=argparse.REMAINDER)
+    run_parser.add_argument(
+        "--capability",
+        default=None,
+        help=(
+            "run whatever the **active binding** exposes for this capability; this is the "
+            "resolution a stable entry uses (ADR-0050)"
+        ),
+    )
+    # One REMAINDER rather than an optional positional plus a REMAINDER: with two positionals argparse
+    # hands the first token after `--` to the optional one, so `run --capability <id> -- --version`
+    # parsed as `instance='--version'` and the payload could not be given a single flag. The split is
+    # explicit below and follows the documented rule: after `--`, everything belongs to the payload.
+    run_parser.add_argument(
+        "rest",
+        nargs=argparse.REMAINDER,
+        help="`<instance-id> [-- args...]`; with --capability, only the payload's own arguments",
+    )
 
     search_parser = subparsers.add_parser(
         "search",
@@ -3551,7 +3719,12 @@ def _normalize_child_argv(arguments: list[str]) -> list[str]:
     # `run <id> -- --version` executed `exec <id> -- --version` and the caller got an
     # "unknown reference" for a managed instance. `test_l1_runtime.py` holds every member of
     # `CHILD_VERBS` to surviving this rewrite as itself.
-    return [*arguments[:index], *hoisted, verb, *owned, *child]
+    # The hoisted options belong **after** the verb, not before it: they are the subparser's options
+    # (`run --capability`, `exec --env`) and the top-level parser does not know them. Draft 123 found
+    # this by writing an option *before* the identifier for the first time: `run --capability <id>` and
+    # `exec --env X -- cmd` both came back as "invalid choice: 'X'", because the option's value had
+    # been moved into the verb position.
+    return [*arguments[:index], verb, *hoisted, *owned, *child]
 
 
 @functools.lru_cache(maxsize=1)

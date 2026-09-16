@@ -10,6 +10,7 @@
     "found": { "type": "boolean" },
     "capability_id": { "type": ["string", "null"] },
     "instance_id": { "type": ["string", "null"] },
+    "launcher": { "type": ["string", "null"], "description": "The stable entry (cli/exposure/bin/<capability>.cmd) for this capability, when an owned machine-level binding exposes it and the file exists; null otherwise (ADR-0050). Optional because making it required is a breaking change; this build always emits it." },
     "executable": { "type": ["string", "null"] },
     "version": { "type": ["string", "null"] },
     "scope": { "anyOf": [{ "$ref": "common.schema.json#/$defs/scope" }, { "type": "null" }] },

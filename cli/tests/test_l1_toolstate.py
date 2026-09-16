@@ -165,12 +165,17 @@ def test_a_clean_path_has_no_violation(tmp_path: Path) -> None:
 
 
 def test_the_single_sanctioned_entry_is_accepted(tmp_path: Path) -> None:
-    expected = sanctioned_entry(tmp_path)
-    expected.mkdir(parents=True)
+    from airoot.caps.launcher import write_launcher
 
-    verification = verify_path_exposure(tmp_path, machine_entries=[str(expected)], user_entries=[])
+    expected = sanctioned_entry(tmp_path)
+    written = write_launcher(tmp_path, "cargo")  # ADR-0050: presence means an *entry*, not a directory
+
+    verification = verify_path_exposure(
+        tmp_path, machine_entries=[str(expected)], user_entries=[], expected_launchers=["cargo"]
+    )
 
     assert verification.launcher_present is True
+    assert verification.launchers[0]["path"] == written.path
     assert verification.violations == 0
     assert verification.entries[0]["sanctioned"] is True
     assert all(finding.severity != "info" for finding in verification.findings)
@@ -209,6 +214,26 @@ def test_an_unsanctioned_airoot_directory_is_a_warning(tmp_path: Path) -> None:
 
     assert verification.violations == 1
     assert any("not the sanctioned entry" in finding.detail for finding in verification.findings)
+
+
+def test_an_empty_launcher_directory_is_not_a_stable_entry(tmp_path: Path) -> None:
+    """ADR-0050: `launcher_present` means "an entry exists", not "the directory exists".
+
+    The old reading reported `true` for a directory nobody had put anything in, so judgement 10 could be
+    satisfied by `mkdir`. This is the guard for the new reading, and it is the only case where the two
+    disagree: the tests next to it have both a directory and a file, or neither.
+    """
+
+    expected = sanctioned_entry(tmp_path)
+    expected.mkdir(parents=True)
+
+    verification = verify_path_exposure(
+        tmp_path, machine_entries=[], user_entries=[], expected_launchers=["cargo"]
+    )
+
+    assert verification.launcher_present is False, "an empty directory is not a stable entry"
+    assert verification.launchers == []
+    assert verification.violations == 1, "the binding has no entry; that is the drift this reports"
 
 
 def test_a_missing_launcher_directory_is_information_not_a_defect(tmp_path: Path) -> None:

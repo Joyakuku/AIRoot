@@ -2569,3 +2569,94 @@ agent lane**——一个 agent 读 `agents/airoot.json` 时看到 `approve`/`ins
 `cli/tests/fake_issuer.py` **保持原样**：它服务测试路径，核心的签发方是 `tx/issuer.py`。
 
 **状态：已裁决。** 实现与实测读数记在草案 §122。
+
+## ADR-0050 — **稳定入口是一个静态 `.cmd`，"写它"不需要受保护状态**（推翻 ADR-0025 的 D4）
+
+**被推翻的原文。** ADR-0025 的 **D4**（`docs/AIROOT-v0.3-实现决策记录.md`）写着：
+
+> ### D4 launcher（`exposure\bin`）：P1 不写任何文件，形状先定下
+> - **决定**：P1 继续不写 launcher（`EXPOSED` 的语义是"用一次全新的 registry 读取观察到新 binding"）；
+> - **为什么现在只写形状**：launcher 是"被 PATH 找到"的东西，写它的那一侧需要受保护状态。
+
+**D4 把两件事合在一句话里，而它们的前提不同。** 第一件是"**让那个文件存在**"：`exposure\bin` 位于
+**用户自己的数据根内**，写一个 `.cmd` 进去与写 `store` 里的 payload、写 `state` 里的快照是同一类动作，
+在本项目的 `security_mode=policy_only` + `enforcement=same_user_can_bypass` 自我描述下**本来就不受保护**
+——同一个用户身份的任何进程都能写。第二件是"**把这一条放进 machine PATH**"：那要动 HKLM，是受保护状态，
+**AIROOT 今天仍然不写它，`path verify` 至今只读**。D4 的结论对第二件事是对的，对第一件事是把
+"没法保护"误读成"不能做"。**"这条路径被 PATH 找到"需要受保护状态；"这个文件存在"不需要。**
+
+**最小版本的定义直接要求第一件事。** `docs/AIROOT-最小版本-v1.md` 的判据 #10：**通过不依赖 machine PATH
+改动的稳定入口也可调用它**——观察方式是"`cli\exposure\bin\<entry>.cmd` 真实存在且能转发；
+`path verify` 的 `launcher_present=true`"，而它记下的今日状态是"❌ 目录不存在（`launcher_present: false`）"。
+一份说自己"做到哪里算做完"的文档把这一条写成必须项，就不能再用 D4 的读法把它划到受保护状态里去。
+
+**规划 §1482 那句话仍然成立，而且它约束这个决定**："v1 不使用一个独立、可被 launcher 单独修改的
+`current` 文件作为 active 真相……`exposure` 中的 launcher 是静态受保护代码；它读取 registry 的 active
+binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
+
+### 具体决定
+
+1. **形状：一个能力一个文件，`<root>\cli\exposure\bin\<capability_id>.cmd`。** 不是每个版本一个、不是每个
+   instance 一个。文件名就是被冻结的能力名（`policy/capabilities.json` 里那些），并且必须是**安全的文件名**
+   （不得含路径分隔符或 `..`）；不符合就拒绝写，而不是清洗成一个"差不多"的名字。
+2. **行尾必须是 CRLF。** `cmd.exe` 对 `rem` 行的处理见 `AGENTS.md` 的"运行环境注意"：LF 会让它把 `rem`
+   行切碎成命令。这条不是风格，是能不能跑的问题，所以写入的是**字节**而不是文本。
+3. **权威仍然只有 registry。** launcher 里**没有**版本号、**没有** instance id、**没有**任何指向
+   `store/` 的路径。它调用 CLI，由 CLI 在**调用时**从 registry 解析 active binding。因此**换版本不需要重写
+   launcher**：新旧版本的 launcher 内容**逐字节相同**，这一点是可测的承诺（见草案 §123 的守卫）。
+4. **写它的地方是事务的 `EXPOSED` 步**，在两个 runner（`tx/simulate.py`、`tx/artifact.py`）里由**同一个函数**
+   完成，且在 journal 推进到 `EXPOSED` **之前**。这样"launcher 写不出来"就等于"`EXPOSED` 没有发生"，
+   走既有的回滚路径；崩溃恢复重放该步是幂等的（内容相同就不重写字节）。**规划 §2088 禁止"不产生半个
+   launcher"**，把写入放进状态机内部而不是 `cmd_install` 的末尾，是这条禁令的实现方式。
+5. **只有 owned + machine 级绑定才有 launcher。** reference 的稳定入口是用户自己的环境（§14.2：AIROOT 不拥有
+   它，也不替它建入口）；session/project 绑定属于 W/P 区，**永远不进 machine PATH**（§5 第 8 条），所以也不写。
+6. **launcher 调用的动词是 `airoot run --capability <id> [-- args...]`。** 不新造"稳定入口"动词：`run` 已经是
+   "跑一次 AIROOT 装的那个东西"，`--capability` 只改变**选哪一个**——从"按 instance id 指名"变成"按当前
+   active binding 解析"。`run` 的既有拒绝全部保留：能力没有 active binding → `NOT_FOUND`(1)；解析到的是
+   reference → `OWNERSHIP_REQUIRED`(7) 并指向 `exec`；同时给了位置参数和 `--capability` →
+   `INVALID_INPUT`(8)（歧义不猜）。
+7. **launcher 的内容是**：`@echo off`、一段 `rem` 说明（谁写的、为哪个能力、这个文件**不随版本变化**）、
+   一行绝对路径的调用（python 解释器、`cli\app` 进 `PYTHONPATH`、`--root`、`run --capability`、**一个 `--` 分隔符**）、
+   `%*` 原样转发、`exit /b %ERRORLEVEL%`。**`--` 不是装饰**：没有它，调用方自己的旗标（`cargo --version`）
+   会被 AIROOT 解析而不是交给 payload——这是实现时实测到的那句 `unrecognized arguments: --version`，
+   一个叫 `cargo` 的稳定入口必须表现得像 `cargo`。**没有别的**：不解析 JSON、不查 PATH、不猜目录、不注入环境变量
+   ——最后一条是 `run` 自己的边界（ADR-0047）。
+8. **`where` 报 `launcher`（`string|null`），`path verify` 报 `launcher_present` 与漂移。** `launcher` 在
+   schema 里是**可选**属性而不是必填：把必填加进 `where-response` 是破坏性变更，按 `AGENTS.md` §7 要新
+   schema id，而这一版不值得为一个字段改契约身份。**它总是被写出来**，由测试钉住（"可选"与"总是发"是两件
+   事，后者才是给调用方的承诺）。`path verify` 新增"active binding 没有对应 launcher"的漂移发现（仍是
+   冻结码 `PATH_EXPOSURE_VIOLATION`），并把 `launcher_present` 的含义从"那个目录在不在"改成
+   "**至少有一个稳定入口存在**"——判据 #10 要的是后者。
+
+### 这是不是新权力／新边界？
+
+**不是。** 它不写 PATH、不写注册表、不写 ACL、不提权、不引入任何持久化环境变量；它写的是一个**文本文件**，
+位置在用户自己的 root 内，内容是绝对的、可逐字节复现的。**它也不假装是保护**：那个 `.cmd` 同用户进程可以
+随意改写，所以它不是信任边界——所以 `path verify` 必须**度量**它（存在性 + 漂移），而不是假设它。
+"launcher 是受保护代码"这句话在**今天这个模式下是假的**，本节把它写成假的而不是留给人猜。
+
+### 被否决的路线
+
+1. **写一个 `.exe` shim。** 要真编译一个 PE：引入编译器依赖（与 ADR-0001 的语言路线和"唯一第三方依赖是
+   `jsonschema`"冲突），而且一个**没有签名**的 `.exe` 坐在将要进 PATH 的目录里，比一个明摆着是文本的
+   `.cmd` 更容易被当成"受保护的东西"。**形状要诚实于它的强度**：`.cmd` 一眼看出可改写，`.exe` 不会。
+2. **`current` 文件 + launcher 读它。** 直接违反规划 §1482，并且制造**第二个权威**：registry 说一套、
+   文件说一套时谁赢？本项目对"权威 vs 派生"的规则（AGENTS.md §5 第 4 条）要求派生物可重建、且永不反过来
+   裁决权威——为省一次 registry 读取而引入一个会漂移的真相，代价比收益大。
+3. **按版本重写 launcher（把版本或 store 路径烧进文件）。** 那样 launcher 就不"静态"了，换版本变成一次
+   可能中途失败的文件写；而且它把"哪个版本在用"复制到了两处，第二处必然是错的。
+4. **在 `cmd_install` 的末尾写 launcher。** 事务会在 `FINALIZED` 之后返回，那时写入失败就没有回滚点，
+   结果是"binding 是 active 的、入口不存在"——正是规划 §2088 禁止的"半个 launcher"，也正是把 EXPOSED
+   定义成一个状态而不是一句描述的理由。
+
+### 后果
+
+- `EXPOSED` 从"只观察"变成"**观察 + 写入口**"，与 §5 第 6 条的事务顺序**不冲突**：`ACTIVE_BOUND` 仍然是
+  唯一能改 active binding 的提交点，launcher 只是那个 binding 的**派生产物**。
+- `path verify` 的 `launcher_present` 变了含义（目录 → 入口），旧读法是错的：它当时能报 `true` 只是因为
+  一个空目录存在。**这是一次语义修正，不是放宽**。
+- `references/field-values.md` 的 `stable_launcher` 行从"指向 shim"变成"指向那个 `.cmd`"，`EXPOSURE_NOT_IMPLEMENTED`
+  那条 evidence 的措辞必须跟着改（它原来的话"P1 writes no launchers"从本节起是假话）。
+- 需要新增一个模块（`caps/launcher.py`）与一条 CLI 参数（`run --capability`），**没有新 schema、没有新码**。
+
+**状态：已裁决（B —— 写静态 `.cmd`，权威留在 registry）。** 实现与实测记录见草案 **§123**。

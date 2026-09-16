@@ -313,7 +313,13 @@ CAPABILITY_QUERIES: dict[str, list[str]] = {
 #: answers `CAPABILITY_NOT_DECLARED` for a name that is not frozen); `source resolve` resolves a
 #: download recipe rather than acting on a capability, and `sources.json` registers `rust-toolchain`
 #: ahead of its freeze by ADR-0001, with its own verification note (draft §59).
-CAPABILITY_EXEMPT = frozenset({"capability check", "source resolve"})
+#:
+#: `run --capability <id>` (ADR-0050) joins them for a different reason: it **resolves an existing
+#: binding** rather than deciding whether a name may become one, so the frozen boundary was already
+#: applied by `plan`/`install` -- refusing at execution would let the ledger accept a payload that
+#: the verb then declines to start. It is not a query either (it really runs something when a
+#: binding exists); an unfrozen id answers `NOT_FOUND`, which `test_l1_launcher.py` measures.
+CAPABILITY_EXEMPT = frozenset({"capability check", "source resolve", "run"})
 
 UNFROZEN = "totally-not-a-frozen-capability"
 

@@ -167,6 +167,142 @@ def resolve_run_target(registry: Any, root: Path, target: str) -> RunTarget:
     )
 
 
+def active_instance_for_capability(registry: Any, capability_id: str) -> str:
+    """The instance id the **active binding** names for a capability.
+
+    This exists because the obvious route is a guess: ``find_target`` falls back to the first instance
+    row whose ``capability_id`` matches (``caps/lifecycle.py``), which picks a version nobody chose. A
+    stable entry (ADR-0050) has to resolve what is *bound*, or the file that exists to hide the version
+    would be the thing that guesses it.
+
+    Several active bindings for one capability (machine vs session vs project keys) would make the
+    answer ambiguous. That is refused with the choices rather than resolved by ordering.
+    """
+
+    rows = registry.active_bindings_for_capability(capability_id)
+    if not rows:
+        raise AirootError(
+            "NOT_FOUND",
+            f"no active binding exposes {capability_id}",
+            evidence=[
+                *[
+                    f"active binding {row['binding_key']} -> {row['instance_id']}"
+                    for row in registry.bindings(active_only=True)
+                ],
+                "a stable entry resolves the active binding; nothing is bound for this capability",
+            ],
+        )
+    if len(rows) > 1:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"{len(rows)} active bindings expose {capability_id}; name the instance instead",
+            evidence=[f"{row['binding_key']} -> {row['instance_id']}" for row in rows],
+        )
+    return str(rows[0]["instance_id"])
+
+
+def active_instance_for_capability(registry: Any, capability_id: str) -> str:
+    """The instance id the **active binding** names for a capability.
+
+    This exists because the obvious route is a guess: ``find_target`` falls back to the first instance
+    row whose ``capability_id`` matches (``caps/lifecycle.py``), which picks a version nobody chose. A
+    stable entry (ADR-0050) has to resolve what is *bound*, or the file that exists to hide the version
+    would be the thing that guesses it.
+
+    Several active bindings for one capability (machine vs session vs project keys) would make the
+    answer ambiguous. That is refused with the choices rather than resolved by ordering.
+    """
+
+    rows = registry.active_bindings_for_capability(capability_id)
+    if not rows:
+        raise AirootError(
+            "NOT_FOUND",
+            f"no active binding exposes {capability_id}",
+            evidence=[
+                *[
+                    f"active binding {row['binding_key']} -> {row['instance_id']}"
+                    for row in registry.bindings(active_only=True)
+                ],
+                "a stable entry resolves the active binding; nothing is bound for this capability",
+            ],
+        )
+    if len(rows) > 1:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"{len(rows)} active bindings expose {capability_id}; name the instance instead",
+            evidence=[f"{row['binding_key']} -> {row['instance_id']}" for row in rows],
+        )
+    return str(rows[0]["instance_id"])
+
+
+def active_instance_for_capability(registry: Any, capability_id: str) -> str:
+    """The instance id the **active binding** names for a capability.
+
+    This exists because the obvious route is a guess: ``find_target`` falls back to the first instance
+    row whose ``capability_id`` matches (``caps/lifecycle.py``), which picks a version nobody chose. A
+    stable entry (ADR-0050) has to resolve what is *bound*, or the file that exists to hide the version
+    would be the thing that guesses it.
+
+    Several active bindings for one capability (machine vs session vs project keys) would make the
+    answer ambiguous. That is refused with the choices rather than resolved by ordering.
+    """
+
+    rows = registry.active_bindings_for_capability(capability_id)
+    if not rows:
+        raise AirootError(
+            "NOT_FOUND",
+            f"no active binding exposes {capability_id}",
+            evidence=[
+                *[
+                    f"active binding {row['binding_key']} -> {row['instance_id']}"
+                    for row in registry.bindings(active_only=True)
+                ],
+                "a stable entry resolves the active binding; nothing is bound for this capability",
+            ],
+        )
+    if len(rows) > 1:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"{len(rows)} active bindings expose {capability_id}; name the instance instead",
+            evidence=[f"{row['binding_key']} -> {row['instance_id']}" for row in rows],
+        )
+    return str(rows[0]["instance_id"])
+
+
+def active_instance_for_capability(registry: Any, capability_id: str) -> str:
+    """The instance id the **active binding** names for a capability.
+
+    This exists because the obvious route is a guess: ``find_target`` falls back to the first instance
+    row whose ``capability_id`` matches (``caps/lifecycle.py``), which picks a version nobody chose. A
+    stable entry (ADR-0050) has to resolve what is *bound*, or the file that exists to hide the version
+    would be the thing that guesses it.
+
+    Several active bindings for one capability (machine vs session vs project keys) would make the
+    answer ambiguous. That is refused with the choices rather than resolved by ordering.
+    """
+
+    rows = registry.active_bindings_for_capability(capability_id)
+    if not rows:
+        raise AirootError(
+            "NOT_FOUND",
+            f"no active binding exposes {capability_id}",
+            evidence=[
+                *[
+                    f"active binding {row['binding_key']} -> {row['instance_id']}"
+                    for row in registry.bindings(active_only=True)
+                ],
+                "a stable entry resolves the active binding; nothing is bound for this capability",
+            ],
+        )
+    if len(rows) > 1:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"{len(rows)} active bindings expose {capability_id}; name the instance instead",
+            evidence=[f"{row['binding_key']} -> {row['instance_id']}" for row in rows],
+        )
+    return str(rows[0]["instance_id"])
+
+
 def run_once(target: RunTarget, arguments: list[str], *, capture: bool) -> dict[str, Any]:
     """Start the payload once and report its status and output **as they came back**.
 
@@ -218,4 +354,11 @@ def _bounded(text: str) -> str:
     return "...[truncated]...\n" + text[-OUTPUT_LIMIT:]
 
 
-__all__ = ["MAIN_ENTRYPOINT_INDEX", "OUTPUT_LIMIT", "RunTarget", "resolve_run_target", "run_once"]
+__all__ = [
+    "MAIN_ENTRYPOINT_INDEX",
+    "OUTPUT_LIMIT",
+    "RunTarget",
+    "active_instance_for_capability",
+    "resolve_run_target",
+    "run_once",
+]
