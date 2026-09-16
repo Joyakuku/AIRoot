@@ -285,6 +285,11 @@
 |---|---|
 | `broker-request.schema.json` | P2 未实现：没有任何代码写出或读入它，方案在 `docs/broker/`。它的 `operation`/`integrity` 现在还只是设计 |
 | `broker-response.schema.json` | 同上；`status`/`security_mode`/`enforcement` 里的 `acl_and_broker` 这一版不会出现 |
-| `managed-tool-instance.schema.json` | 这个文件里**没有枚举字段**（全是字符串/数组/摘要），没有"取值"可解释 |
+| `managed-tool-instance.schema.json` | 这个文件**自己**没有枚举字段（全是字符串/数组/摘要），但它**能携带** 10 套词汇，全部来自 `common`（`platform`/`architecture`/`lifecycle_status`/…），在那里记录。§105 量过：它的可达词汇里**没有一条**是没人记录的，所以这里不重复一遍（这条原先只写"没有枚举字段"，那句话对这个**文档**是假的） |
 | `root-marker.schema.json` | 同上：没有枚举字段。它是 AIROOT 自己的根标记文件，不是给 agent 读的输出 |
 | `error-response.schema.json` | 同上：没有枚举字段。`status` 是 `const: "failed"`；`reason_code` 的**取值表是** `docs/AIROOT-v0.3-诊断码与ReasonCode表.md`（权威，速查在 `references/reason-codes.md`）——那份表本来就是它的取值表；`details` 的键是**数据**，按码而不同（§101 的 `NOT_IMPLEMENTED` 是第一个写它的），逐键说明归发出它的那条命令 |
+
+这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105）：**任何一个已发布
+schema 能携带的词汇**（跟 `$ref` 走），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`
+（`test_l1_field_values.py`）里被**点名**——今天被点名的四条全部来自 `broker-*`：
+`operation`、`client.integrity`、`status`、`enforcement`。少一条、多一条都会红。

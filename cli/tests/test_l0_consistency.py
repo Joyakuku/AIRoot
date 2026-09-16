@@ -1024,6 +1024,53 @@ def test_the_enum_walk_descends_every_keyword_that_can_hold_a_subschema() -> Non
     }, found
 
 
+def test_the_enum_walk_follows_a_ref_only_when_asked_and_terminates_on_a_cycle() -> None:
+    """§105: one walk, two questions — and the ref-following one has to stop.
+
+    Without a resolver the walk reports what the file declares **itself**, which is the question the
+    fixture-coverage rule asks (only a document's own vocabulary is one its producer controls).
+    With one it reports what the document can **carry**, keeping the *referencing* path, resolving a
+    local `#/$defs/...` against the document the ref appears in — so a local ref *inside* a
+    referenced file still works — and stopping at a cycle rather than recursing forever. Both
+    directions and all three properties are asserted here because the coverage rule now depends on
+    them: a walk that followed refs by definition would change what §97's rule demands.
+    """
+
+    shared = {
+        "$defs": {
+            "health": {"enum": ["healthy", "broken"]},
+            "loop": {"$ref": "#/$defs/loop"},
+        }
+    }
+    schema = {
+        "$defs": {"local": {"enum": ["one"]}},
+        "properties": {
+            "health": {"$ref": "shared.schema.json#/$defs/health"},
+            "direct": {"$ref": "#/$defs/local"},
+            "looping": {"$ref": "shared.schema.json#/$defs/loop"},
+        },
+    }
+
+    # Own text only: the three refs contribute nothing, and `$defs.local` is reached directly.
+    assert enums_by_path(schema) == {"local": ["one"]}
+
+    documents = {"shared": shared}
+
+    def resolve(ref: str, document: dict) -> tuple[dict, dict] | None:
+        file_part, _, fragment = ref.partition("#")
+        root = document if not file_part else documents[file_part.replace(".schema.json", "")]
+        node: Any = root
+        for raw in [part for part in fragment.split("/") if part]:
+            node = node[raw]
+        return node, root
+
+    assert enums_by_path(schema, resolve=resolve) == {
+        "local": ["one"],
+        "health": ["healthy", "broken"],
+        "direct": ["one"],
+    }
+
+
 def test_a_schema_permitted_null_is_never_demanded_from_the_corpus() -> None:
     """§97: the walker must spell a JSON `null` the way the field table does, and not ask for it.
 
@@ -2085,7 +2132,20 @@ def test_the_documented_test_count_is_the_same_everywhere(request: pytest.Fixtur
     """
 
     def totals(path: Path) -> list[int]:
-        return [int(value) for value in re.findall(r"(\d{3})\s*项", path.read_text(encoding="utf-8"))]
+        """The numbers a document states as its **test** total.
+
+        The digit width used to do the distinguishing (`\\d{3}`), which silently stopped working the
+        moment the audit-check count reached three digits: "含 100 项常驻跨工件一致性检查" was read as a
+        second test total and this guard reddened on a document that was right (§105). Context does
+        the job instead — the audit count is stated right after a test total, and it is guarded on
+        its own by `_audit_check_count`.
+        """
+
+        text = path.read_text(encoding="utf-8")
+        return [
+            int(match.group(1))
+            for match in re.finditer(r"(\d{3,4})\s*项(?!\s*常驻跨工件)", text)
+        ]
 
     current = set(totals(AGENTS))
     assert len(current) == 1, f"AGENTS.md states more than one current test total: {sorted(current)}"

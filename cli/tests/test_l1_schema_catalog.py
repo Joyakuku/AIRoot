@@ -133,6 +133,51 @@ def test_every_schema_pins_the_version_its_documents_carry() -> None:
     )
 
 
+def _refs_in(node: object) -> list[str]:
+    """Every `$ref` string anywhere in a schema document."""
+
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "$ref" and isinstance(value, str):
+                found.append(value)
+            else:
+                found += _refs_in(value)
+    elif isinstance(node, list):
+        for item in node:
+            found += _refs_in(item)
+    return found
+
+
+def test_every_ref_a_published_schema_writes_resolves_inside_the_set() -> None:
+    """§105: a `$ref` that resolves to nothing contributes nothing, and nothing would say so.
+
+    The shared enum walk answers refs through `schema_ref_resolver`, which is deliberately **total**
+    (an unresolvable ref returns None and that branch simply contributes nothing) because "which
+    references cannot be answered" is a measurement, not a crash. This is where an unresolvable one
+    gets caught instead: the coverage rule for the value table now depends on following refs, so a
+    ref that quietly answers nothing would silently shrink what it checks.
+    """
+
+    import schema_walk
+
+    resolver = schema_walk.schema_ref_resolver(SCHEMA_DIR)
+    problems: list[str] = []
+    resolved = 0
+    for name, document in sorted(schemas().items()):
+        for ref in _refs_in(document):
+            resolved += 1
+            if resolver(ref, document) is None:
+                problems.append("%s: %s" % (name, ref))
+
+    assert resolved >= 20, f"only {resolved} refs found; the scan is not reaching them"
+    assert problems == [], "refs that resolve to nothing:\n" + "\n".join(problems)
+
+    # Non-vacuity: the resolver has to be able to say no, or this guard could never go red.
+    assert resolver("#/$defs/not_there", {"$defs": {}}) is None
+    assert resolver("no-such-file.schema.json#/$defs/x", {}) is None
+
+
 def test_every_record_object_rejects_unknown_properties() -> None:
     """Rule 3: unknown properties are rejected at every security boundary.
 

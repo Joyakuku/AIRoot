@@ -32,10 +32,9 @@ APP = REPO / "cli" / "app" / "airoot"
 
 DAGGER = "\u2020"
 
-#: schema -> written outside its own section, with the reason. `common` is the shared vocabulary
-#: file: `$defs.externalReference` is the same three fields the `registry-projection` section
-#: documents where an agent actually meets them.
-SHARED_SCHEMAS = {"common"}
+#: Answers a `$ref` from the published set, so the coverage guard can ask what a document can
+#: **carry** rather than only what its own text declares (§105).
+RESOLVER = schema_walk.schema_ref_resolver(SCHEMA_DIR)
 
 #: Values whose token could not be evidence even if it appeared: a JSON empty value is written as
 #: `None`, not as a string literal, so a literal scan can say nothing about it either way.
@@ -230,15 +229,20 @@ def spell(value: object) -> str:
     return "null" if value is None else str(value)
 
 
-def enum_value_sets(name: str) -> set[frozenset[str]]:
-    """Every enum this schema file contains, wherever it sits.
+def vocabulary_with_paths(name: str) -> dict[str, list[str]]:
+    """Every vocabulary the schema **can carry**, `$ref` followed, keyed by the referencing path.
 
-    One definition since §104: this used to be a second walker next to `test_l0_consistency`'s, and
-    the other one could not see `$defs`/`additionalProperties`/`anyOf`, so the two disagreed about
-    "every enum" — this one was the complete one, and the shared walk keeps it that way.
+    The question here is the document's, not the file's (§105): a reader of `where-response` may meet
+    `common`'s five health values, so `where-response.health` reports them. The path is kept because
+    an undocumented vocabulary has to be *named* to be exempted, and a value-set alone cannot say
+    which field it came from.
+
+    The fixture-coverage guard deliberately does **not** follow refs: only a document's own
+    vocabulary is one its producer controls, and demanding a fixture for an inherited shared
+    vocabulary is the false-dagger pile §97 refused. Same walk, two questions.
     """
 
-    return schema_walk.enum_value_sets(schema_document(name))
+    return schema_walk.enums_by_path(schema_document(name), resolve=RESOLVER)
 
 
 def schema_files() -> list[str]:
@@ -461,18 +465,57 @@ def test_every_daggered_value_is_named_in_the_daggers_note() -> None:
 # --------------------------------------------------------------------------------------------
 
 
-def test_every_enum_of_an_in_scope_schema_is_documented() -> None:
-    """`common` is shared: its enums are documented where an agent meets them, so it is checked
-    against the whole document; every other schema has to carry its own rows."""
+#: Vocabularies a published schema **can carry** that this table deliberately does not document, as
+#: `(schema, path)` pairs. They all come from the two schemas P2 has not built — no code writes or
+#: reads them, so a row would explain a value no reader can be handed yet. Measured, not assumed
+#: (§105): the reachable walk finds exactly these four, and the guard holds the set **both ways**, so
+#: a fifth cannot appear silently and a stale entry cannot linger.
+UNDOCUMENTED_BY_DESIGN = {
+    ("broker-request", "operation"),
+    ("broker-request", "client.integrity"),
+    ("broker-response", "status"),
+    ("broker-response", "enforcement"),
+}
 
+
+def test_every_vocabulary_a_published_schema_can_carry_is_documented_or_named() -> None:
+    """§105: the coverage rule now asks the **document's** question, not the file's.
+
+    It used to walk each in-scope schema's *own* text and compare against the whole table, which
+    made the answer depend on which list a schema was in: a vocabulary reachable only through
+    `$ref` (`where-response` inherits `health` from `common`) was covered **because `common` happened
+    to be in scope**, and nothing said so. Measured: following `$ref` takes `where-response` from 1
+    to 7 vocabularies, `plan` from 4 to 10, `managed-tool-instance` from 0 to 10 — and every one of
+    them is documented, so the stronger rule holds today and no longer depends on the lists.
+
+    Both directions are asserted: an undocumented vocabulary must be named in
+    `UNDOCUMENTED_BY_DESIGN`, and every name there must still be an undocumented vocabulary — a
+    stale exemption is how a deliberate hole becomes an accidental one.
+    """
+
+    assert schema_files(), "no published schemas; this guard is about nothing"
     everywhere = {frozenset(row.values) for row in ROWS}
-    problems = []
-    for name, rows in BY_SCHEMA.items():
-        documented = everywhere if name in SHARED_SCHEMAS else {frozenset(row.values) for row in rows}
-        for values in enum_value_sets(name):
-            if values not in documented:
-                problems.append("%s: %s has no row" % (name, sorted(values)))
-    assert not problems, "a schema enum has no documented row:\n" + "\n".join(problems)
+    assert everywhere, "the table parsed no rows; the comparison below would be vacuous"
+
+    found_undocumented: set[tuple[str, str]] = set()
+    examined = 0
+    for name in schema_files():
+        reachable = vocabulary_with_paths(name)
+        examined += len(reachable)
+        for path, values in reachable.items():
+            if frozenset(values) not in everywhere:
+                found_undocumented.add((name, path))
+
+    assert examined >= 60, "only %d vocabularies were walked; the reachable walk is not reaching" % examined
+
+    unnamed = sorted(found_undocumented - UNDOCUMENTED_BY_DESIGN)
+    stale = sorted(UNDOCUMENTED_BY_DESIGN - found_undocumented)
+    assert unnamed == [], "undocumented vocabularies nobody named:\n" + "\n".join(
+        "%s.%s" % pair for pair in unnamed
+    )
+    assert stale == [], "named as undocumented, but the table documents them now:\n" + "\n".join(
+        "%s.%s" % pair for pair in stale
+    )
 
 
 def test_the_documented_and_exempt_schemas_cover_every_schema_exactly_once() -> None:
