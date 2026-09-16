@@ -47,6 +47,7 @@ DRAFT = REPO / "docs" / "AIROOT-v0.3-管家模型与数据根契约草案.md"
 PROTOCOL = REPO / "docs" / "AIROOT-搜索能力与工具集成协议方案.md"
 REVIEW = REPO / "docs" / "AIROOT-v0.3-规范审查报告.md"
 DECISION_LOG = REPO / "docs" / "AIROOT-v0.3-实现决策记录.md"
+MINIMUM = REPO / "docs" / "AIROOT-最小版本-v1.md"
 GOLDEN = REPO / "cli" / "tests" / "fixtures" / "golden"
 
 
@@ -1594,6 +1595,10 @@ SUBSTRING_CHECKS_ARE_FINE = frozenset(
         "REVIEW_STATUS_HEADING in text",
         "following in text",
         "heading in text",
+        # The minimum version's two evidence sources (§130): a file name is a whole literal phrase,
+        # and the question is "does this section name the script?", not "is this vocabulary token
+        # documented?". A longer file name cannot make a shorter one look present by accident.
+        "source not in body",
     }
 )
 
@@ -4385,4 +4390,244 @@ def test_the_core_refuses_a_declared_absent_verb_the_way_the_register_describes_
     ):
         reported = _declared_absent_problems({**DECLARED_ABSENT, **mutation}, document)
         assert any(expected in item for item in reported), (mutation, reported)
+
+
+# --- Guard group 36: the minimum version's result table and the prose under it (draft §130) ------
+#
+# §129 closed the last judgement and updated two of the three places that said so: the `#14` row and
+# the parenthetical in §4. The paragraph under the result table went on reading "16 条里 14 条完整、
+# 2 条一半（#11、#14）" — one document contradicting itself a few lines apart, and the same shape as
+# §119 (a decision changed the conclusion, and the surfaces repeating it kept the old story). It
+# survived because nothing compared the two: the table was read by people, the sentence by nobody.
+#
+# What this guard enforces is a derivation, not a copy. §5's `结束时` column is the measurement — one
+# row per judgement — and the prose is a summary *of* it, so the totals in that sentence, the ids it
+# names as unfinished, and §4's "all hold" claim are all computed from those rows. A copy would have
+# been the cheaper fix and the wrong one: §84 lost a round to a hard-coded literal, §85 to a
+# derivation that still contained a number it had worked out itself.
+
+#: A markdown table row. Only the shape is parsed here — every number this guard compares comes from
+#: the rows themselves, never from this module.
+_TABLE_ROW = re.compile(r"^\|(.+)\|\s*$", re.M)
+
+#: The all-hold shape. §4 spells it with `现在` and §5 without: the two sections are checked
+#: separately, and a pattern that could not tell them apart could only ever check one of them.
+_ALL_HOLD = re.compile(r"(\d+)\s*条判据(现在)?全部成立")
+
+#: The partial shape, for when some row is not ✅: "**14 条成立、2 条未证成**（#11、#14）".
+_PARTIAL_HOLD = re.compile(r"\*\*(\d+)\s*条成立、(\d+)\s*条未证成\*\*（((?:#\d+、?)+)）")
+
+#: The two evidence sources. Both claim sections have to name both, because the claim they support is
+#: split: the closed loop runs on the real machine, fault injection does not and must not
+#: (AGENTS.md §8). Naming one and implying the other is exactly the blur that rule exists to stop.
+_TWO_SOURCES = ("real_machine_acceptance.py", "test_l2_recovery_drivers.py")
+
+
+def _document_sections(text: str) -> dict[str, str]:
+    """`## N. title` sections by title, so a guard reads the part it is about."""
+
+    sections: dict[str, str] = {}
+    for chunk in re.split(r"(?m)^## ", text)[1:]:
+        title, _, body = chunk.partition("\n")
+        sections[title.strip()] = body
+    return sections
+
+
+def _section(sections: dict[str, str], prefix: str) -> str:
+    return next((body for title, body in sections.items() if title.startswith(prefix)), "")
+
+
+def _table_rows(body: str) -> list[list[str]]:
+    return [[cell.strip() for cell in match.group(1).split("|")] for match in _TABLE_ROW.finditer(body)]
+
+
+def _minimum_version_problems(text: str) -> list[str]:
+    """Every disagreement between the two judgement tables and the prose that summarises them.
+
+    Returns problems rather than asserting, so every failure mode is exercisable on text that is not
+    the real document — the mutation test below does exactly that.
+    """
+
+    sections = _document_sections(text)
+    definition = _section(sections, "1. ")
+    criteria = _section(sections, "2. ")
+    allowed = _section(sections, "4. ")
+    result = _section(sections, "5. ")
+    if not (definition and criteria and allowed and result):
+        return [f"sections this guard reads are missing: {sorted(sections)}"]
+
+    problems: list[str] = []
+    start = [row for row in _table_rows(criteria) if row and row[0].isdigit()]
+    finish = [row for row in _table_rows(result) if row and row[0].isdigit()]
+    if not start or not finish:
+        return [f"a judgement table has no rows: §2={len(start)} §5={len(finish)}"]
+
+    ids = [int(row[0]) for row in start]
+    finished = [int(row[0]) for row in finish]
+    if len(start[0]) != 5 or len(finish[0]) != 4:
+        problems.append(f"the tables changed shape: §2 rows have {len(start[0])} cells, §5's {len(finish[0])}")
+    if ids != list(range(1, len(ids) + 1)):
+        problems.append(f"§2's judgement numbers are not 1..N in order: {ids}")
+    if finished != ids:
+        problems.append(f"§5 lists {finished}, §2 lists {ids}")
+
+    stated = re.search(r"拆成\s*(\d+)\s*条", definition)
+    if stated is None:
+        problems.append("§1 no longer says how many judgements the table has")
+    elif int(stated.group(1)) != len(ids):
+        problems.append(f"§1 says {stated.group(1)} judgements, the table has {len(ids)}")
+
+    # The measurement. ✅ in the `结束时` column means the judgement holds; anything else is a
+    # judgement that is only partly evidenced, and it has to be *named* rather than rounded off.
+    held = [int(row[0]) for row in finish if len(row) > 2 and "✅" in row[2]]
+    unfinished = [number for number in finished if number not in held]
+    without_evidence = [row[0] for row in finish if len(row) < 4 or not row[3]]
+    if without_evidence:
+        problems.append(f"§5 rows with no evidence cell: {without_evidence}")
+
+    if unfinished:
+        summary = _PARTIAL_HOLD.search(result)
+        if summary is None:
+            problems.append(
+                f"§5 has {len(unfinished)} judgement(s) that do not hold {unfinished} and no "
+                '"N 条成立、M 条未证成（#…）" summary saying so'
+            )
+        else:
+            ok, half = int(summary.group(1)), int(summary.group(2))
+            named = [int(value) for value in re.findall(r"\d+", summary.group(3))]
+            if (ok, half) != (len(held), len(unfinished)):
+                problems.append(
+                    f"§5's summary says {ok} hold and {half} do not; the table says "
+                    f"{len(held)} and {len(unfinished)}"
+                )
+            if sorted(named) != sorted(unfinished):
+                problems.append(f"§5's summary names {sorted(named)}, the table says {sorted(unfinished)}")
+    else:
+        summary = _ALL_HOLD.search(result)
+        if summary is None:
+            problems.append(f"every one of §5's {len(ids)} judgements is ✅ and its summary does not say so")
+        elif int(summary.group(1)) != len(ids):
+            problems.append(f"§5's summary says {summary.group(1)} all hold; the table has {len(ids)}")
+
+    # §4 states what may be said, so it is the same fact from the other side: claiming that every
+    # judgement holds while one does not is the §8 honesty rule broken from the "we did it" end.
+    claim = _ALL_HOLD.search(allowed)
+    if claim is not None:
+        if int(claim.group(1)) != len(ids):
+            problems.append(f"§4 says {claim.group(1)} judgements, the table has {len(ids)}")
+        if unfinished:
+            problems.append(f"§4 claims every judgement holds while {unfinished} do not")
+        unnamed = [number for number in unfinished if f"#{number}" not in allowed]
+        if unnamed:
+            problems.append(f"§4 does not name the judgements that do not hold: {unnamed}")
+    else:
+        unnamed = [number for number in unfinished if f"#{number}" not in allowed]
+        if unnamed:
+            problems.append(f"§4 no longer states which judgements hold and which do not: {unnamed}")
+
+    for label, body in (("§4", allowed), ("§5", result)):
+        missing = [source for source in _TWO_SOURCES if source not in body]
+        if missing:
+            problems.append(f"{label} does not name the evidence source(s) {missing}")
+
+    return problems
+
+
+#: Where the entry document states the minimum version's judgement count, and how many times it must:
+#: the delegation sentence and the repo map row, then the §8 pointer. Context is required because the
+#: bare number means nothing on its own, and the copy that matters is the one an agent quotes back.
+_ENTRY_JUDGEMENT_COUNT = (
+    ("the delegation sentence and the repo map", r"(\d+)\s*条逐条验收判据", 2),
+    ("the pointer in §8", r"最小版本的\s*(\d+)\s*条判据", 1),
+)
+
+
+def _entry_judgement_count_problems(entry: str, total: int) -> list[str]:
+    """`AGENTS.md`'s copies of the judgement count — a reading of the same table (draft §130)."""
+
+    problems: list[str] = []
+    for label, pattern, least in _ENTRY_JUDGEMENT_COUNT:
+        found = [int(value) for value in re.findall(pattern, entry)]
+        if len(found) < least:
+            problems.append(
+                f"AGENTS.md states the judgement count {len(found)} time(s) in {label}; "
+                "that part of this guard is about nothing"
+            )
+        elif set(found) != {total}:
+            problems.append(f"AGENTS.md says {sorted(set(found))} judgements in {label}; the table has {total}")
+    return problems
+
+
+def test_the_minimum_versions_result_table_and_its_summary_agree() -> None:
+    """§5's summary is a *reading* of its table, in both directions (draft §130)."""
+
+    text = MINIMUM.read_text(encoding="utf-8")
+    problems = _minimum_version_problems(text)
+    assert problems == [], "; ".join(problems)
+
+    sections = _document_sections(text)
+    result = _section(sections, "5. ")
+    allowed = _section(sections, "4. ")
+    hold = _ALL_HOLD.search(result)
+    claim = _ALL_HOLD.search(allowed)
+    assert hold is not None and not hold.group(2), (
+        f"the §5 summary shape this test mutates is gone: {hold and hold.group(0)!r}"
+    )
+    assert claim is not None and claim.group(2), (
+        f"the §4 claim shape this test mutates is gone: {claim and claim.group(0)!r}"
+    )
+
+    # Everything the mutations use is derived from the table, including which judgement is loosened:
+    # a hard-coded `#7` (or `16`) would silently mutate nothing the day that row's mark changes, which
+    # is the trap §85 and §86 each paid a round for.
+    totals = [row for row in _table_rows(result) if row and row[0].isdigit()]
+    number = next(row[0] for row in totals if "✅" in row[2])
+    row_line = next(line for line in result.splitlines() if line.startswith(f"| {number} |") and "✅" in line)
+    loosened = text.replace(row_line, row_line.replace("✅", "⚠️"))
+    assert loosened != text, "the row mutation was not applied"
+
+    # 1. The defect §130 measured, in the document's own words: the summary keeping the count it had
+    #    before two rows moved. `14 条完整、2 条一半（#11、#14）` is the verbatim text at `607cfd9`.
+    stale = text.replace(hold.group(0), "14 条完整、2 条一半（#11、#14）")
+    assert stale != text, "the stale wording was not applied; this mutation is now about nothing"
+    assert _minimum_version_problems(stale), "a summary that disagrees with the table must be reported"
+
+    # 2. A row stops holding: §5 has to say so and §4 has to stop claiming that all of them hold.
+    reported = _minimum_version_problems(loosened)
+    assert any(number in item for item in reported), (number, reported)
+    assert any("§4" in item for item in reported), reported
+
+    # 3. A row disappears: the two tables stop describing the same set.
+    dropped = text.replace(row_line + "\n", "", 1)
+    assert dropped != text, "the row deletion was not applied"
+    assert any("§5 lists" in item for item in _minimum_version_problems(dropped)), _minimum_version_problems(
+        dropped
+    )
+
+    # 4. §1's own count is part of the claim, so it is derived too.
+    miscounted = text.replace(f"拆成 {len(totals)} 条", f"拆成 {len(totals) - 1} 条")
+    assert miscounted != text, "the §1 mutation was not applied"
+    assert any("§1 says" in item for item in _minimum_version_problems(miscounted))
+
+    # 5. Positive control for the *other* branch: a consistent partial result must pass, so the
+    #    unfinished branch is not one that reddens on everything.
+    partial = loosened.replace(
+        hold.group(0), f"**{len(totals) - 1} 条成立、1 条未证成**（#{number}）"
+    )
+    partial = partial.replace(claim.group(0), f"{len(totals)} 条判据里 #{number} 仍未证成")
+    assert partial != loosened, "the partial summary was not applied"
+    assert _minimum_version_problems(partial) == [], "; ".join(_minimum_version_problems(partial))
+
+    # The same count is stated three times in the entry document, and those are readings of the same
+    # table. Deriving them closes one more place the number could drift — the four inside the document
+    # are checked above, and these are the copies an agent actually quotes back to a user.
+    entry = AGENTS.read_text(encoding="utf-8")
+    assert _entry_judgement_count_problems(entry, len(totals)) == [], "; ".join(
+        _entry_judgement_count_problems(entry, len(totals))
+    )
+    lowered = entry.replace(f"{len(totals)} 条逐条验收判据", f"{len(totals) - 1} 条逐条验收判据")
+    assert lowered != entry, "the entry mutation was not applied"
+    assert _entry_judgement_count_problems(lowered, len(totals)), (
+        "an entry document stating a count the table does not have must be reported"
+    )
 
