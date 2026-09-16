@@ -2613,8 +2613,16 @@ def _invocation_windows(line: str) -> list[str]:
     return windows
 
 
-def _documented_option_problems() -> list[str]:
-    """Resolve every documented invocation against the real parser; report options it rejects."""
+def _option_problems(
+    documents: list[tuple[str, list[str]]], meta_commands: list[str]
+) -> list[str]:
+    """Resolve documented invocations against the real parser; report options it rejects.
+
+    The parser is the authority and is read directly; the **documents** are parameters so this check can
+    be exercised against a line that names an option the CLI does not accept. Draft §98 found that it
+    could not: the guard had no mutation at all, so its silence on the real files proved nothing — and
+    its own docstring named the drift (`--max-staleness-ms` renamed) it was unable to demonstrate.
+    """
 
     parser = build_parser()
     top = [
@@ -2654,20 +2662,29 @@ def _documented_option_problems() -> list[str]:
         return key, unknown
 
     problems: list[str] = []
-    for path in AGENT_OPERATIONAL_DOCS:
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for name, lines in documents:
+        for number, line in enumerate(lines, 1):
             for window in _invocation_windows(line):
                 key, unknown = resolve(window)
-                problems += [f"{path.name}:{number}: airoot {key} ... {flag}" for flag in unknown]
+                problems += [f"{name}:{number}: airoot {key} ... {flag}" for flag in unknown]
 
-    meta = json.loads(AGENT_META.read_text(encoding="utf-8"))
-    for entry in meta["invocation"]:
-        key, unknown = resolve(" ".join(entry["command"]))
+    for command in meta_commands:
+        key, unknown = resolve(command)
         problems += [f"agents/airoot.json: airoot {key} ... {flag}" for flag in unknown]
 
-    # A guard that matches nothing is a guard that proves nothing.
-    assert len(AGENT_OPERATIONAL_DOCS) >= 3
     return problems
+
+
+def _documented_option_problems() -> list[str]:
+    """The real inputs for `_option_problems`: the agent-facing documents and the lane commands."""
+
+    documents = [
+        (path.name, path.read_text(encoding="utf-8").splitlines()) for path in AGENT_OPERATIONAL_DOCS
+    ]
+    meta = json.loads(AGENT_META.read_text(encoding="utf-8"))
+    # A guard that matches nothing is a guard that proves nothing.
+    assert len(documents) >= 3
+    return _option_problems(documents, [" ".join(entry["command"]) for entry in meta["invocation"]])
 
 
 def test_every_option_the_docs_tell_an_agent_to_use_exists() -> None:
@@ -2675,6 +2692,39 @@ def test_every_option_the_docs_tell_an_agent_to_use_exists() -> None:
 
     problems = _documented_option_problems()
     assert problems == [], "documents name options the CLI does not accept:\n" + "\n".join(problems)
+
+
+def test_the_option_check_reports_each_way_it_can_fail() -> None:
+    """§98: the check above had **no** mutation, so its silence on the real files proved nothing.
+
+    Three ways a documented option goes wrong, each on a synthetic document: a flag the verb never
+    declared, a flag belonging to a *different* verb (the rename that moves an option rather than
+    deleting it), and the same fault arriving through the machine-readable lane list.
+    """
+
+    assert _option_problems([("fake.md", ["airoot search java --teleport"])], []) == [
+        "fake.md:1: airoot search ... --teleport"
+    ], "an option the verb does not accept has to be reported, with its file and line"
+
+    # The foreign-option case: `--class` belongs to `inventory`, and a rename that moved an option
+    # rather than deleting it must still be caught. (`--root` is *not* a foreign flag here — every
+    # subparser inherits it from the common parent, which this mutation taught me by coming back clean;
+    # that is the difference between "the flag exists" and "the flag means what this command thinks".)
+    renamed = _option_problems([("fake.md", ["airoot search java --class external_reference"])], [])
+    assert renamed == ["fake.md:1: airoot search ... --class"], renamed
+
+    assert _option_problems([("fake.md", ["airoot search java --json"])], []) == [], (
+        "a real option must not be reported"
+    )
+    # The machine-readable path takes the lane's own tokens, which carry no `airoot` prefix — the
+    # document path strips it in `_invocation_windows`. Getting that wrong is how this mutation first
+    # came back clean, which is the second thing it taught: nothing had ever fed this path by hand.
+    assert _option_problems([], ["tool list --teleport"]) == [
+        "agents/airoot.json: airoot tool list ... --teleport"
+    ], "a lane command with an unknown option has to be reported"
+
+    # And the real files are still the clean case, through the same helper.
+    assert _documented_option_problems() == []
 
 
 def test_the_invocation_slicer_handles_the_three_ambiguities() -> None:
