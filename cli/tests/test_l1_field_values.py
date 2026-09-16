@@ -548,15 +548,17 @@ def test_every_daggered_value_is_named_in_the_daggers_note() -> None:
 
 
 #: Vocabularies a published schema **can carry** that this table deliberately does not document, as
-#: `(schema, path)` pairs. They all come from the two schemas P2 has not built — no code writes or
-#: reads them, so a row would explain a value no reader can be handed yet. Measured, not assumed
-#: (§105): the reachable walk finds exactly these four, and the guard holds the set **both ways**, so
-#: a fifth cannot appear silently and a stale entry cannot linger.
+#: `(schema, path)` pairs. One entry left, and it is a *reader's* vocabulary: §108 gave
+#: `broker-response` a reader (`broker/protocol.py` `parse_response`) but no writer — nothing in this
+#: build constructs that document — so a "who writes it in this version" row would have nothing to
+#: point at. The other three left the set in the same stage, each for a measured reason:
+#: `broker-response.enforcement` became a `$ref` to the shared definition (the `common` row documents
+#: it), and `broker-request`'s `operation` and `client.integrity` got real rows because the client
+#: codec and the identity probe now write them. Measured, not assumed (§105): the reachable walk
+#: finds exactly this one, and the guard holds the set **both ways**, so a second cannot appear
+#: silently and a stale entry cannot linger.
 UNDOCUMENTED_BY_DESIGN = {
-    ("broker-request", "operation"),
-    ("broker-request", "client.integrity"),
     ("broker-response", "status"),
-    ("broker-response", "enforcement"),
 }
 
 
@@ -664,11 +666,17 @@ def test_the_in_scope_schemas_are_the_ones_an_agent_reads() -> None:
         # (`managed_tool`) and `error-response.status` (`failed`) had nowhere to be documented.
         "managed-tool-instance",
         "error-response",
+        # §108: P2's client codec became the first thing that constructs a `broker-request`, which
+        # moves it out of the exempt table and into a section of its own. It is the one document in
+        # this table that is **sent rather than printed** — so "who writes it" is "who can put a
+        # value in it", and that is `broker/protocol.py` plus `caps/identity.py`.
+        "broker-request",
     }
-    # `managed-tool-instance` and `error-response` left this list in §106 (they have const rows now);
-    # what is left is the unbuilt `broker-*` and the marker file, whose vocabularies are either named
-    # in `UNDOCUMENTED_BY_DESIGN` or are version pins.
-    assert set(EXEMPT) == {"broker-request", "broker-response", "root-marker"}
+    # `managed-tool-instance` and `error-response` left this list in §106 (they have const rows now),
+    # and `broker-request` left it in §108 (it has a constructor now); what is left is the document
+    # this build only ever **reads** and the marker file, whose vocabularies are either named in
+    # `UNDOCUMENTED_BY_DESIGN` or are version pins.
+    assert set(EXEMPT) == {"broker-response", "root-marker"}
     assert len(ROWS) >= 50, "the table lost rows: %d" % len(ROWS)
 
 

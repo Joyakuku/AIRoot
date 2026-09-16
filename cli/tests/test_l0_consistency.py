@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
+import pathlib
 from pathlib import Path
 from typing import Any
 
@@ -2445,21 +2448,35 @@ def _endings(data: bytes) -> tuple[int, int, int]:
 
 
 def _walked_text_files() -> dict[str, bytes]:
-    """Every readable text file in the tree, keyed by its repo-relative posix path."""
+    """Every readable text file in the tree, keyed by its repo-relative posix path.
+
+    Built with a **pruning** walk (``os.walk`` with ``dirs[:]`` rewritten), not ``REPO.rglob("*")``
+    plus a filter. ``rglob`` has to *descend* into a directory before its entries can be filtered, so
+    a skipped directory that cannot be listed still breaks the walk — the skip set was right and the
+    walk was reading **wider** than it, which is the same shape §104–§106 kept finding in the readers.
+    Measured (§109): a nested tree left under ``cli/tests/.tmp/`` (a copy of the checkout placed inside
+    its own source, ~40 levels deep) made this guard fail with ``FileNotFoundError`` on a
+    6000-character path — a guard about byte contracts going red for a reason that has nothing to do
+    with bytes. ``_WALK_SKIP`` is applied at the directory level now, so nothing inside ever gets
+    stat'ed.
+    """
 
     files: dict[str, bytes] = {}
-    for path in sorted(REPO.rglob("*")):
-        if not path.is_file() or path.suffix.lower() in _BINARY_SUFFIXES:
-            continue
-        relative = path.relative_to(REPO)
-        if any(part in _WALK_SKIP for part in relative.parts):
-            continue
-        data = path.read_bytes()
-        try:
-            data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        files[relative.as_posix()] = data
+    for base, directories, names in os.walk(REPO):
+        directories[:] = sorted(name for name in directories if name not in _WALK_SKIP)
+        for name in sorted(names):
+            path = pathlib.Path(base) / name
+            if path.suffix.lower() in _BINARY_SUFFIXES:
+                continue
+            relative = path.relative_to(REPO)
+            if any(part in _WALK_SKIP for part in relative.parts):
+                continue
+            data = path.read_bytes()
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            files[relative.as_posix()] = data
     return files
 
 
@@ -2552,6 +2569,42 @@ def test_the_bytes_on_disk_are_the_ones_the_contracts_claim() -> None:
     )
     assert "carries []" in problems(attributes=attributes.replace("* -text", "")), (
         "deleting the directive must be reported"
+    )
+
+
+def test_the_walk_never_enters_a_directory_it_declares_it_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """§109: a skip set applied *after* descending is not a skip set — the walk still has to enter.
+
+    Measured, not imagined. A nested tree left under `cli/tests/.tmp/` (a copy of the checkout placed
+    inside its own source, tens of levels deep) made the guard above fail with `FileNotFoundError` on a
+    path of a few thousand characters, because `REPO.rglob("*")` must enter each directory before its
+    entries can be filtered. `_WALK_SKIP` already named `.tmp`; the walk was reading wider than it.
+
+    Reproducing that failure needs a path of the depth an accidental recursion produces, which is not
+    something a test should have to build. The refusal is injected instead — the same seam idea as
+    `caps/identity.py`'s unreadable token: listing anything under a skipped directory raises, and the
+    walk must not care **because it never asks**. `refused` is what makes this red-able in the
+    *pruning* direction as well: an `os.walk` that descended and merely ignored the error would still
+    have called `scandir` on `.tmp`, and a `filter-after-rglob` walk fails outright.
+    """
+
+    real_scandir = os.scandir
+    refused: list[str] = []
+
+    def refusing_scandir(path: Any = ".", *args: Any, **kwargs: Any) -> Any:
+        if ".tmp" in pathlib.PurePath(str(path)).parts:
+            refused.append(str(path))
+            raise FileNotFoundError(3, "a skipped directory is not listable", str(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", refusing_scandir)
+    walked = _walked_text_files()
+    monkeypatch.undo()
+
+    assert walked, "the walk returned nothing, so this guard is about nothing"
+    assert refused == [], "the walk listed a directory it declares it skips: %s" % refused[:3]
+    assert not [name for name in walked if ".tmp" in pathlib.PurePath(name).parts], (
+        "the walk read a file out of a directory it declares it skips"
     )
 
 

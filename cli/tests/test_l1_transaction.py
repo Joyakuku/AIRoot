@@ -717,9 +717,9 @@ def test_concurrent_commits_keep_a_single_active_binding(registry: Registry, clo
             runner = SimulationRunner(own, clock=FakeClock(start="2024-01-01T00:00:00Z"))
             for _attempt in range(20):
                 try:
-                    runner.commit(plan, token)
+                    result = runner.commit(plan, token)
                     with lock:
-                        outcomes.append("committed")
+                        outcomes.append(str(result["state"]))
                     return
                 except AirootError as error:
                     if error.reason_code == "STALE_GENERATION":
@@ -742,27 +742,150 @@ def test_concurrent_commits_keep_a_single_active_binding(registry: Registry, clo
         thread.join(timeout=30)
 
     assert not errors, errors
-    assert sorted(outcomes) == ["committed", "committed"]
+    # T-010 (verification plan:206): the DB lock guarantees **one** commit; the other re-reads the
+    # generation and retries, or exits. The loser may therefore legitimately end `ROLLED_BACK`, and
+    # this worker used to record a bare "committed" whatever came back — which is why draft §91 saw
+    # "both workers committed" beside an empty bindings table and could not pin the cause down. The
+    # interleavings themselves are pinned deterministically by
+    # `test_a_rollback_leaves_a_binding_another_transaction_committed_alone` and
+    # `test_a_rollback_restores_its_displaced_predecessor_when_another_key_moved_the_generation`;
+    # what is asserted here is what must hold in *every* interleaving.
+    assert sorted(outcomes) in (["FINALIZED", "FINALIZED"], ["FINALIZED", "ROLLED_BACK"]), (
+        f"one commit wins and the other retries or exits, nothing else: {outcomes}"
+    )
 
-    # §91: read the result through a **freshly opened** registry, as the boundary test above does after
-    # an interruption. The workers wrote through their own connections, and this once flaked: both
-    # reported `committed` while the fixture's connection read zero active bindings (1 failure in ~4
-    # full-suite runs, green in isolation). The cause was not pinned down — a snapshot held by the
-    # fixture's handle is one candidate — so the assertion no longer depends on that handle's state.
+    # Read the result through a **freshly opened** registry, as the boundary test above does after
+    # an interruption: the workers wrote through their own connections.
     reopened = Registry.open(root.path, clock=clock)
     try:
         active = reopened.bindings(active_only=True)
         assert len(active) == 1, "exactly one active binding per key, no matter the interleaving"
         # The generation is a monotonic commit counter, not a transaction counter: a
         # retried attempt may have bumped it once before succeeding on the retry.
-        finalized = [tx for tx in reopened.transactions() if tx["state"] == "FINALIZED"]
-        assert len(finalized) == 2
+        finalized = {
+            str(tx["instance_id"]) for tx in reopened.transactions() if tx["state"] == "FINALIZED"
+        }
+        assert finalized, "at least one of the two commits must have finalised"
+        assert str(active[0]["instance_id"]) in finalized, (
+            "the surviving binding must belong to a transaction that actually committed: a rollback "
+            "may only undo its own activation (draft §109)"
+        )
         assert reopened.generation >= len(finalized)
         assert active[0]["generation"] <= reopened.generation
         assert reopened.instance(active[0]["instance_id"]) is not None
     finally:
         reopened.close()
     assert registry.integrity_problems() == []
+
+
+def test_a_rollback_leaves_a_binding_another_transaction_committed_alone(
+    registry: Registry, clock, root
+) -> None:
+    """The deterministic form of the T-010 race: a rollback undoes **its own** activation only.
+
+    Interruption stays a test-side hook (`FaultInjector`); no production seam was added for it.
+    The window it opens is real and narrow — the thread race above measured 2 red runs out of 180
+    isolated invocations before this was fixed, always `assert 0 == 1` — and the state machine used
+    to answer it by clearing the whole key: the loser's rollback took away the winner's binding and
+    left a `FINALIZED` transaction with no active binding at all (draft §109).
+    """
+
+    from conftest import FaultInjector
+
+    fake_issuer.install_keyring(root.path)
+    loser_plan = create_plan(registry, version="70.0.0", clock=clock, ttl_minutes=600)
+    loser_token = fake_issuer.issue(loser_plan, clock=clock, ttl_minutes=600)
+    winner_plan = create_plan(registry, version="70.1.0", clock=clock, ttl_minutes=600)
+    winner_token = fake_issuer.issue(winner_plan, clock=clock, ttl_minutes=600)
+
+    # The loser reaches the one commit point — where the active binding changes — and stops there.
+    stopped = SimulationRunner(
+        registry, clock=clock, injector=FaultInjector(stop_after="ACTIVE_BOUND")
+    ).commit(loser_plan, loser_token)
+    assert stopped["state"] == "ACTIVE_BOUND"
+    assert len(registry.bindings(active_only=True)) == 1
+
+    # The winner commits the same binding key while the loser sits interrupted.
+    winner = SimulationRunner(registry, clock=clock).commit(winner_plan, winner_token)
+    assert winner["state"] == "FINALIZED"
+
+    # The loser's recovery reports its own failure — and leaves the winner's binding alone.
+    recovered = repair(
+        registry,
+        stopped["transaction_id"],
+        clock=clock,
+        keyring={fake_issuer.KEY_ID: fake_issuer.TEST_SECRET},
+    )
+    assert recovered["state"] == "ROLLED_BACK"
+
+    active = registry.bindings(active_only=True)
+    assert len(active) == 1, "the loser's rollback must not clear the winner's binding"
+    assert active[0]["instance_id"] == winner_plan["target"]["instance_id"]
+    # The loser's payload stays as evidence, marked broken.
+    assert registry.instance(loser_plan["target"]["instance_id"])["health"] == "broken"
+    assert registry.integrity_problems() == []
+
+
+def test_a_rollback_restores_its_displaced_predecessor_when_another_key_moved_the_generation(
+    registry: Registry, clock, root
+) -> None:
+    """`generation_before` is registry-wide, so it cannot name this key's displaced row (draft §109).
+
+    The revert used to restore `(key, tx["generation_before"])`. `journal.create` records that as
+    the **registry-wide** generation, so once a second capability had been bound in between, no row
+    of this key carried it, the restore matched nothing, and the key silently lost its active
+    binding. The displaced row is this key's own newest generation below ours.
+    """
+
+    first_plan, first_token = build(registry, clock, root, version="80.0.0")
+    assert SimulationRunner(registry, clock=clock).commit(first_plan, first_token)["state"] == "FINALIZED"
+
+    # A different capability, on a different binding key: it only moves the registry-wide generation.
+    other_plan = create_plan(registry, capability_id="build", version="81.0.0", clock=clock, ttl_minutes=600)
+    other_token = fake_issuer.issue(other_plan, clock=clock, ttl_minutes=600)
+    assert SimulationRunner(registry, clock=clock).commit(other_plan, other_token)["state"] == "FINALIZED"
+    assert first_plan["target"]["binding_key"] != other_plan["target"]["binding_key"]
+
+    # Now a commit for the *first* key that fails after the commit point: tampering with the stored
+    # payload makes post-bind verification fail, which is a real rollback (not a pre-bind failure).
+    third_plan, third_token = build(registry, clock, root, version="82.0.0")
+    store_dir = Path(root.path) / "store" / third_plan["target"]["instance_id"]
+    failed = SimulationRunner(
+        registry, clock=clock, injector=Tamper(at_state="ACTIVE_BOUND", store_dir=store_dir)
+    ).commit(third_plan, third_token)
+    assert failed["state"] == "ROLLED_BACK" and failed["outcome"] == "VERIFY_FAILED"
+
+    active = {str(row["binding_key"]): row for row in registry.bindings(active_only=True)}
+    assert set(active) == {first_plan["target"]["binding_key"], other_plan["target"]["binding_key"]}, (
+        f"both keys must still have exactly one active binding, found {sorted(active)}"
+    )
+    assert active[first_plan["target"]["binding_key"]]["instance_id"] == first_plan["target"]["instance_id"]
+    assert active[other_plan["target"]["binding_key"]]["instance_id"] == other_plan["target"]["instance_id"]
+    assert registry.integrity_problems() == []
+
+
+def test_a_rollback_restores_the_one_binding_it_displaced(registry: Registry, clock, root) -> None:
+    """The ordinary path: one key, no other transaction, the predecessor comes back (draft §109)."""
+
+    first_plan, first_token = build(registry, clock, root, version="83.0.0")
+    SimulationRunner(registry, clock=clock).commit(first_plan, first_token)
+    displaced = registry.bindings(active_only=True)[0]
+    predecessor_generation = int(displaced["generation"])
+
+    second_plan, second_token = build(registry, clock, root, version="84.0.0")
+    store_dir = Path(root.path) / "store" / second_plan["target"]["instance_id"]
+    failed = SimulationRunner(
+        registry, clock=clock, injector=Tamper(at_state="ACTIVE_BOUND", store_dir=store_dir)
+    ).commit(second_plan, second_token)
+    assert failed["state"] == "ROLLED_BACK" and failed["outcome"] == "VERIFY_FAILED"
+
+    active = registry.bindings(active_only=True)
+    assert len(active) == 1
+    assert active[0]["instance_id"] == displaced["instance_id"]
+    assert int(active[0]["generation"]) == predecessor_generation, "the exact displaced row comes back"
+    assert (Path(root.path) / "store" / second_plan["target"]["instance_id"]).is_dir(), "payload kept"
+    assert registry.integrity_problems() == []
+
 
 
 # --------------------------------------------------------------------------- #

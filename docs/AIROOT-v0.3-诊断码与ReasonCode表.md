@@ -37,8 +37,12 @@
 - **`OK` 不存在**。文档 §15.6 的成功码写作 `OK`，但它只有 2 个字符，无法满足所有
   Schema 的 `reason_code` 模式 `^[A-Z][A-Z0-9_]{2,63}$`；P1 发射 `SUCCESS`（ADR-0003）。
 - `CURRENT_PROCESS_ENV_OLD` 的退出码是 **0**：结果可用，只是当前 shell 还没刷新。
-- `PRIVILEGE_REQUIRED` / `ACL_MISMATCH`（5）在 P1 不会被发射——P1 没有 ACL 与 broker；
-  保留映射以便 P2 直接使用。
+- `ACL_MISMATCH`（5）在 P1 不会被发射——P1 没有 ACL 与 broker；保留映射以便 P2 直接使用。
+  但**不要把这半句推广到同族的另一个码**：`PRIVILEGE_REQUIRED`（5）**会**发射
+  （`env persist --scope machine` 等需要机器级写入的路径），本文曾把这两个码并作一句"在 P1 不会被
+  发射"，那句话已经过期。**"哪些码这一版发不出来"的权威是 `references/reason-codes.md` 的
+  《这一版发不出来的码》**，那张表由 `cli/tests/test_l1_reason_codes.py` 双向钉死；本文不重复它
+  ——重复过的这一句就是它出错的方式（§108）。
 - `SEARCH_RESULT_STALE`（2）与其余 `SEARCH_*` 码由搜索协议面（契约草案 §31）与 crawl 建的索引
   （§32）发射：`SEARCH_FALLBACK_USED` = 回答来自实时遍历；`SEARCH_RESULT_STALE` = 索引比调用方要的
   `max_staleness_ms` 更旧；`SEARCH_INDEX_DEGRADED` = 索引损坏或只覆盖了一部分 root；

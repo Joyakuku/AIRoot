@@ -37,6 +37,7 @@ SCHEMA_FOR_FIXTURE = {
     "managed_tool_instance": "managed-tool-instance",
     "reference_plan": "reference-plan",
     "error_not_implemented": "error-response",
+    "broker_request_commit_plan": "broker-request",
     "search_response": "search-response",
     "search_timeout_response": "search-response",
     "search_truncated_index_response": "search-response",

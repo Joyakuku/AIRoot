@@ -58,8 +58,8 @@ User compatibility mode 可以运行无 elevated Broker 的同用户模拟，但
   "protocol_version": 1,
   "request_id": "req/install/jq-001",
   "operation": "commit_plan",
-  "plan": "state/plans/plan-jq-001.json",
-  "approval": "state/approvals/approval-jq-001.json",
+  "plan_ref": "state/plans/plan-jq-001.json",
+  "approval_ref": "state/approvals/approval-jq-001.json",
   "client": {
     "sid": "S-1-5-21-1000",
     "pid": 1234,
@@ -68,6 +68,11 @@ User compatibility mode 可以运行无 elevated Broker 的同用户模拟，但
   }
 }
 ```
+
+**字段名的权威是 schema，不是这份示例**（ADR-0003）：这份示例曾用 `plan` / `approval` 两个键，
+而 `cli/schema/broker-request.schema.json` 要求 `plan_ref` / `approval_ref` 且
+`additionalProperties: false`——照示例发出去的请求会被已发布的契约拒掉。此处已照 schema 改正；
+示例与 schema 再冲突时，仍然以 schema 为准（§108）。
 
 Broker 不信任路径字段的字符串形式。它打开 plan 和 approval 后重新 canonicalize 内容，拒绝 reparse point、越出 root、UNC 路径和 schema 版本不兼容；`plan_hash` 必须由 Broker 重新计算。
 

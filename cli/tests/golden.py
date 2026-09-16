@@ -21,6 +21,7 @@ from airoot.caps.discovery import discover_data_root
 from airoot.caps.exposure import ExposureTarget, build_reference_plan, request_from_entry
 from airoot.caps.inventory import inventory
 from airoot.caps.where import WhereQuery, where
+from airoot.broker.protocol import build_request
 from airoot.cli import DECLARED_ABSENT, _declared_absent_error
 from airoot.clock import FakeClock
 from airoot.exits import REASON_EXIT, exit_code_for
@@ -639,6 +640,30 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
             " ".join(_absent_path), _absent_category, _absent_unlock
         ).to_envelope(),
         "exit_code": exit_code_for("NOT_IMPLEMENTED"),
+    }
+
+    # ---- the wire document the client builds (draft §108) ------------------ #
+    # `broker-request` is the one document this build constructs and validates that is **sent, not
+    # printed** (the client half of P2's IPC; there is no broker in this build to answer it). It still
+    # belongs here: the acceptance corpus is the byte-for-byte face a port must reproduce, and a Rust
+    # client that spells the envelope differently would be incompatible before it ever connected. The
+    # `client` block is synthetic on purpose — a fixture in a public repository must not carry this
+    # machine's SID, and the codec takes the block as an argument precisely so the request is testable
+    # without probing anything.
+    documents["broker_request_commit_plan"] = {
+        "document": build_request(
+            operation="commit_plan",
+            request_id="req/plan/0001",
+            plan_ref="state/plans/plan-0001.json",
+            approval_ref="state/approvals/approval-0001.json",
+            client={
+                "sid": "S-1-5-21-1000",
+                "pid": 1234,
+                "integrity": "medium",
+                "application_id": "airoot-cli",
+            },
+        ),
+        "exit_code": 0,
     }
 
     # ---- the reason-code table itself ------------------------------------- #

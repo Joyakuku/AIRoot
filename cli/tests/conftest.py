@@ -27,7 +27,13 @@ if str(APP_DIR) not in sys.path:
 from airoot import root as root_module  # noqa: E402
 from airoot.clock import FakeClock  # noqa: E402
 
-TESTS_TMP = TESTS_DIR / ".tmp"
+#: Where every test-created root lives. Overridable through ``AIROOT_TEST_TMP`` since §108: the
+#: session fixture below **deletes this whole directory** when the session ends, so two runs sharing
+#: it do not merely get untidy — each one deletes the other's roots mid-run, and the failure lands in
+#: the *other* run (which is how parallel agents working in one checkout would break each other).
+#: Point a parallel run at a subdirectory (``cli/tests/.tmp/<name>``) and it stays inside the ignored
+#: path, so nothing it leaves behind can be committed by accident.
+TESTS_TMP = Path(os.environ.get("AIROOT_TEST_TMP") or (TESTS_DIR / ".tmp"))
 
 _MACHINE_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 

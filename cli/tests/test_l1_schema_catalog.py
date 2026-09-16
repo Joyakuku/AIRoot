@@ -196,3 +196,99 @@ def test_every_record_object_rejects_unknown_properties() -> None:
 
     assert examined >= 50, f"only {examined} record objects were examined; the walk is not reaching them"
     assert problems == [], "these objects accept unknown properties:\n" + "\n".join(problems)
+
+
+#: The two fields that state a document's security posture. ADR-0002 created them as **one contract**:
+#: the compatibility-mode answer carries `policy_only` with `same_user_can_bypass`, and the protected one
+#: carries the protected pair — "the same fields switch to `protected_machine` and the contract does not
+#: change". That sentence is only true while every document that declares them draws them from the same
+#: definition in `common.$defs`. A hand copy is a second copy, and by P2 one had already drifted:
+#: `broker-response.schema.json` said `acl_and_broker` while the shared definition — the value this build
+#: prints from `cli.py`, `ext/envelope.py` and `caps/doctor.py` — says `acl_enforced`. Nothing caught it
+#: because no code read that document, so the field was never filled in anger (draft §108).
+#:
+#: Deliberately *narrow*. The wider rule that suggested itself — "a property name declared in more than
+#: one schema must carry one value-set wherever one of the declarations is shared" — was measured against
+#: all twenty schemas first and flagged five fields, four of them legitimate (`management`, `scope`,
+#: `source`, `target_scope` each name a different concept in a different document). A check that goes red
+#: for a legitimate reason is noise, so this guard covers the pair that really is one protocol-wide fact.
+SECURITY_POSTURE_FIELDS = ("security_mode", "enforcement")
+
+#: Document field name -> the `common.$defs` entry it must draw from. The two spellings differ
+#: (`security_mode` is `securityMode` in the fragment), which is part of how a hand copy happens.
+SHARED_POSTURE_DEFS = {"security_mode": "securityMode", "enforcement": "enforcement"}
+
+
+def _declared_values(node: dict, document: dict, resolver) -> tuple[str, ...] | None:
+    """The values a property declaration allows — inline, or through the `$ref` it uses — or None."""
+
+    import schema_walk
+
+    if isinstance(node.get("enum"), list):
+        return tuple(schema_walk.spell(value) for value in node["enum"])
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        target = resolver(ref, document)
+        if target is not None:
+            return _declared_values(target[0], target[1], resolver)
+    return None
+
+
+def _security_posture_declarations() -> list[tuple[str, str, tuple[str, ...] | None]]:
+    """Every `security_mode` / `enforcement` declaration, with the values it allows."""
+
+    import schema_walk
+
+    resolver = schema_walk.schema_ref_resolver(SCHEMA_DIR)
+    found: list[tuple[str, str, tuple[str, ...] | None]] = []
+    for name, document in sorted(schemas().items()):
+        if name == FRAGMENT_FILE:
+            continue
+        for _, node in _records(document):
+            for field in SECURITY_POSTURE_FIELDS:
+                child = (node.get("properties") or {}).get(field)
+                if isinstance(child, dict):
+                    found.append((name, field, _declared_values(child, document, resolver)))
+    return found
+
+
+def test_the_security_posture_fields_are_one_vocabulary_wherever_they_are_declared() -> None:
+    """ADR-0002's "the contract does not change" needs the fields to have one definition, not two."""
+
+    import schema_walk
+
+    shared = {
+        field: tuple(
+            schema_walk.spell(value)
+            for value in schemas()[FRAGMENT_FILE]["$defs"][SHARED_POSTURE_DEFS[field]]["enum"]
+        )
+        for field in SECURITY_POSTURE_FIELDS
+    }
+
+    declarations = _security_posture_declarations()
+    assert len(declarations) >= 6, (
+        "only %d security-posture declarations found; the walk is not reaching them" % len(declarations)
+    )
+
+    problems: list[str] = []
+    declared: dict[str, set[str]] = {}
+    for name, field, values in declarations:
+        declared.setdefault(name, set()).add(field)
+        if values is None:
+            problems.append("%s.%s declares the field without a resolvable vocabulary" % (name, field))
+        elif set(values) != set(shared[field]):
+            problems.append(
+                "%s.%s allows %s, but common.$defs.%s is %s"
+                % (name, field, sorted(values), field, sorted(shared[field]))
+            )
+
+    # Both fields or neither: a document that states the mode without the enforcement (or the reverse)
+    # leaves a reader unable to tell "the rules are enforced" from "the rules are a convention".
+    partial = {
+        name: sorted(set(SECURITY_POSTURE_FIELDS) - fields)
+        for name, fields in declared.items()
+        if fields != set(SECURITY_POSTURE_FIELDS)
+    }
+    assert partial == {}, "these schemas declare only half of the security posture: %s" % partial
+
+    assert problems == [], "security-posture fields with a local vocabulary:\n" + "\n".join(problems)

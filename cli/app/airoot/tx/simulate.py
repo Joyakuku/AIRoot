@@ -30,6 +30,7 @@ from ..schema_io import validate_document, validate_self
 from ..registry.entities import Binding, Instance, binding_key, managed_tool_payload
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
+from .rollback import revert_own_activation
 from .states import HAPPY_PATH, is_terminal
 
 SIMULATION_BACKEND = "fake_fixture"
@@ -527,20 +528,17 @@ class SimulationRunner:
         *,
         evidence: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Switch the active binding back; keep the new payload as evidence."""
+        """Switch the active binding back; keep the new payload as evidence.
+
+        "Back" means **this transaction's own activation**, never the key as a whole: a concurrent
+        transaction that committed after us owns the key now and must survive our rollback. The
+        rules live in one place, `tx/rollback.py`, shared with `artifact.py` (draft §109).
+        """
 
         instance_id = str(tx["instance_id"])
-        previous_generation = tx.get("generation_before")
 
         def _revert(connection: Any) -> None:
-            key = self._binding_key_of(instance_id)
-            if key is not None:
-                self.registry.clear_active_binding(connection, key)
-                if previous_generation is not None:
-                    connection.execute(
-                        "UPDATE bindings SET active = 1 WHERE binding_key = ? AND generation = ?",
-                        (key, int(previous_generation)),
-                    )
+            revert_own_activation(self.registry, connection, instance_id=instance_id)
             self.registry.set_instance_status(
                 connection, instance_id, health="broken", lifecycle_status="broken"
             )
@@ -561,12 +559,6 @@ class SimulationRunner:
         self.journal.advance(tx, "ROLLED_BACK", "active binding switched back; new payload retained as evidence")
         tx["outcome"] = code
         return tx
-
-    def _binding_key_of(self, instance_id: str) -> str | None:
-        for row in self.registry.bindings():
-            if row["instance_id"] == instance_id:
-                return str(row["binding_key"])
-        return None
 
     # -------------------------------------------------------------- reporting #
 

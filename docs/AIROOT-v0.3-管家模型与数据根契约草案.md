@@ -9201,3 +9201,198 @@ AGENTS.md states more than one current test total: [100, 871]
 5. 写判据（类别一致性 + 两类非空 + 两个解析器口径一致），并用"把 `root-marker` 写成 `unbuilt`"验红；
 6. 顺手缓存 `_produced_schemas`（新判据让它被问三次）；
 7. 回写计数；写 ADR-0033 与本记录；跑全量 + 旧切片 + 真机验收；提交。
+
+## 108. P2 第一阶段：线路面的客户端一半（ADR-0034）
+
+**这一阶段换了一个方向**：§31–§107 做的是「读」与「守」（协议面、取值表、一致性判据），
+P2 的第一阶段开始做「写」——但只写**最不需要权限的那一半**。
+
+### 108.1 动手前量到的四件事实
+
+1. **两个 `broker-*` schema 没有任何使用者**。它们是 ADR-0026 记下的「五个没有写者」中的两个：
+   没有代码构造或校验它们，36 个 golden fixture 里**一条 broker 文档都没有**。一份没有读者的契约，
+   它的缺陷**不会有人碰到**——这正是第 3 条能一直活着的原因。
+2. **客户端那一半不需要提权**。一个进程永远可以打开**自己**的 token，所以"给这两个 schema 一个
+   使用者"今天就能做完、今天就能测完，而且**不碰宿主机**。
+3. **两个已发布 schema 对 protected 模式的 `enforcement` 互相矛盾**：`broker-response` 写
+   `acl_and_broker`，而 `common.$defs.enforcement`——以及 `$ref` 它的另外三份 schema、以及本 build
+   到处打印的值（`cli.py`、`ext/envelope.py`、`caps/doctor.py`）——写 `acl_enforced`。全树实测：
+   `acl_and_broker` **只出现在那一行 schema 里**，没有任何文档、fixture 或代码含它。
+4. **设计文档自己的示例信封过不了自己的 schema**：`docs/broker/` 用 `plan` / `approval` 两个键，
+   而 `broker-request` 要求 `plan_ref` / `approval_ref` 且 `additionalProperties: false`。
+
+### 108.2 交付
+
+| 件 | 内容 | 它**不**是什么 |
+|---|---|---|
+| `caps/identity.py` | 只读本进程 token 得出 `sid` / `pid` / `integrity` / `elevated`（`ctypes` 读 `TOKEN_USER` / `TOKEN_INTEGRITY_LEVEL` / `TOKEN_ELEVATION`），**失败即数据、绝不抛异常**；`is_complete()` 只回答"schema 要的四个字段能不能填满" | **不**判断"我够不够格"——那是 broker 的事；**不**读别人的 token |
+| `broker/protocol.py` | `build_request` 造 `broker-request`（先 `validate_document` 再 `validate_self`）；`parse_response` 校验 `broker-response` 并**只在 `status=ok` 时返回**；`broker_unavailable()` 报 `NOT_IMPLEMENTED`(1) | **不是**传输、**不是**服务器、**不是**信任边界；没有 named pipe，没有对客户端 token 的校验，没有新动词 |
+| `fixtures/golden/broker_request_commit_plan.json` | 第 37 份语料 | 它不是打印出来的文档，是**发出去**的文档；`client` 块是合成的（public 仓库不放本机 SID） |
+
+**连带处置四处**（都属于「改一处必须改三处」）：原地修 `broker-response` 的两行（手抄枚举 → `$ref`
+共享定义，依据 ADR-0003 的转录缺陷先例）；加一条 posture 判据；schema README 记下 `gc_apply` 的已知
+不对称；改两处过期或自相矛盾的散文（设计文档的示例键名、诊断码表里那半句"`PRIVILEGE_REQUIRED` 在 P1
+不会被发射"）。
+
+### 108.3 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 保留 `broker-response.enforcement` 的手抄枚举（原状） | 红 | ✅ 红：`broker-response.enforcement allows ['acl_and_broker', ...], but common.$defs.enforcement is ['acl_enforced', ...]` |
+| 声明 `security_mode` 而不声明 `enforcement` | 红 | ✅ 红（成对判据） |
+| 把 `broker-request` 留在豁免表里（原状） | 红 | ✅ 红：`the table says 'unbuilt', the build measures None` |
+| 把 `('broker-response','enforcement')` 留在 `UNDOCUMENTED_BY_DESIGN` 里（原状） | 红 | ✅ 红：`named as undocumented, but the table documents them now` |
+| 真实状态 | 绿 | ✅ 绿 |
+
+**更宽的那条规则被量过并否决**：先写成"同一个字段名在多份 schema 里出现就必须同值"，跑一遍全树——
+它红了 **5** 处，其中 **4** 处是正当的（`management` / `scope` / `source` / `target_scope` 在不同文档里
+是不同的概念）。**会因为正当理由变红的检查是噪音**，所以最后落地的判据只覆盖真正是同一件协议事实的
+那一对（`security_mode` / `enforcement`）。
+
+### 108.4 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **873 → 939**（+66：49 条线路面 + 16 条身份探针 + 1 条 posture 判据） |
+| 审计检查（`test_l0_consistency.py`） | **101 → 101**（不变：三个新模块的判据都住在 `test_l1_*`） |
+| schema | **20 → 20**（改的是 `broker-response` 的两行**写法**，不是成员含义） |
+| golden 语料 | **36 → 37** |
+| `caps` 模块 | **24 → 25** |
+| 新增模块 / 测试文件 | `caps/identity.py`、`broker/__init__.py`、`broker/protocol.py` / `test_l1_identity.py`、`test_l1_broker_protocol.py` |
+| 新增 ADR | **ADR-0034** |
+| 取值表 | `broker-request` 离开豁免表并拿到两行；`UNDOCUMENTED_BY_DESIGN` 四条 → 一条 |
+
+### 108.5 如实记录的边界
+
+1. **它不证明信任边界**：没有 broker、没有 pipe、没有任何一处校验**别人**的 token，`client` 块仍然
+   只是**自述**。这一阶段只把两个 schema 从"没有使用者"变成"有使用者"，**不改变 P2 的退出条件**。
+2. **失败路径是模拟出来的**：`OpenProcessToken` 在一台健康的机器上无法真的失败，所以两条失败路径用
+   模块里的两个可替换接缝模拟（失败即数据的形状被测到，**真实的拒绝没被测到**）。
+3. **非提权读数没有观测过**：本次会话是 `high` / `elevated=True`，`elevated=False` 只作为类型与一致性
+   性质被断言；`low` / `system` 两级由合成 SID 覆盖。
+4. **`requested_at` 不被检查**：schema 写 `format: date-time`，而 `schema_io` 没配 format checker
+   （规范里 `format` 默认只是注解）。本层**不**手写时间戳正则——那是全树决定，不是这一层的。
+5. **读者不是写者**（顺带钉住的语义）：取值表的"构造者"只看 `cli/app/` 里有没有函数把文档造出来。
+   所以 `broker-response` 有了 `parse_response` 之后**仍属 `unbuilt`**；下一阶段把 loopback harness
+   放在 `cli/tests/` 时，它同样不会让任何 schema 变成"已构造"——测试替身不是产品文档的写者。
+6. **没有出命令面**：`broker_unavailable()` 是库函数，CLI 里**没有**新增动词。`airoot broker ...`
+   这样的动词要么不出，要么按 ADR-0027 登记成"已声明缺席"——这一阶段选了前者。
+7. **两个 ctypes 缺陷是施工时发现的**，值得记下来（它们不是本项目的契约问题，是 API 的真实形状）：
+   未标注 `argtypes` 的参数被当作 C `int`，于是 `(HANDLE)-1` 这个伪句柄让 `OpenProcessToken` 从
+   ctypes 内部抛 `OverflowError`——是**崩溃**而不是它本来的访问错误；`GetTokenInformation` 把
+   `SID_AND_ATTRIBUTES.Sid` 填成**指向调用方自己缓冲区内部**的指针，缓冲区释放后再解引用会读到已释放
+   的堆内存（复现：`ConvertSidToStringSidW` 稳定返回 `ERROR_INVALID_SID`）。
+8. **侦察简报没有提交**：`_p2_brief.md` 是工作产物，它的决策与"不能证明什么"已并入 ADR-0034 与本节；
+   留在仓库根会变成一份没人守着的文档。
+
+### 108.6 实施顺序
+
+1. 先量 §P2 的现状（有没有使用者、要不要提权、契约之间有没有打架、示例过不过自己的 schema）；
+2. 冻结客户端接口（`probe_identity` / `build_request` / `parse_response` / `broker_unavailable`），
+   两条工作流并行：身份探针与线路面；
+3. 把契约缺陷当成**同一阶段的事**办：修 `broker-response` 的两行 + 加 posture 判据（先验红）；
+4. 让两个 schema 各自有使用者，并因此触发**必然的连带**：`broker-request` 离开豁免表、取值表加两行、
+   `UNDOCUMENTED_BY_DESIGN` 缩到一条、`broker-request` 拿到一份逐字节语料；
+5. 记下 `gc_apply` 的不对称（拒在心里、写在 README，**不改 schema**）；
+6. 改两处过期散文；回写计数；写 ADR-0034 与本记录；跑全量 + 旧切片 + 真机验收；提交。
+
+## 109. 一次真实的回滚缺陷：回滚只能撤销自己那一次激活（ADR-0035）
+
+**这一节不是从"下一步该做什么"来的，是从一次排查偶发红灯来的**——而它翻出来的东西比排查本身重要。
+
+### 109.1 怎么发现的（以及为什么它现在才被发现）
+
+把 §107 之后那次全量跑里的两条偶发红灯查到底，结论分成两半：
+
+| 红灯 | 结论 |
+|---|---|
+| `test_cli_search.py` 的两条（`test_managed_only_...`、`test_rebuild_is_the_protocol_spelling_of_a_full_refresh`） | **测试卫生问题**：`data_root` 夹具用一个**固定路径**（会话临时目录下的 `cli-search-data-root`），而 `test_rebuild_...` 会往里写一个**固定文件名**的脚本；另一条用例读的是**绝对**的 crawl 计数（`matched == 2`）。于是"上个会话留下的文件"或"用例顺序不同"就会让它红——**会因为正当理由变红的检查的反面：无缘无故变红的检查** |
+| `test_l1_transaction.py::test_concurrent_commits_keep_a_single_active_binding` | **真实的产品缺陷**（见下），而且它**单跑也会红**：隔离临时目录后只跑这一个用例，60 次里红 1 次 |
+
+**它一直绿的原因**是时序：那条守卫只有在 A 的回滚恰好落在 B 提交之后才红，而窗口很窄——**一条靠时序
+才绿的守卫，对这个性质来说不是守卫**。确定性复现之后就一目了然了。
+
+**第三个发现是排查过程自己带出来的**。为了在"干净副本"上验红，一趟并行工作把 checkout 复制到了
+**它自己内部**（目标是 `cli/tests/.tmp/` 下的一个目录），于是副本里又有一份 `.tmp`、再一份……
+直到路径长度把文件系统顶住。后果不是那份副本，而是它让
+`test_the_bytes_on_disk_are_the_ones_the_contracts_claim` 以一个 `FileNotFoundError` 报错，
+路径长达数千字符——**一条关于"字节契约"的判据，因为一个和字节毫无关系的原因变红**。
+读那条判据的遍历才发现：跳过集合里**早已有** `.tmp`，但遍历用的是 `REPO.rglob("*")` **再**过滤，
+也就是说它必须先**进入**它声明要跳过的目录。**同一个形状又出现了——读者比它守的那件事读得更宽。**
+
+### 109.2 缺陷本身
+
+让提交 A 在 `ACTIVE_BOUND` / `EXPOSED` 之间被打断，让提交 B（同 key、不同版本）完整提交，再 `repair` A：
+
+```text
+A=ROLLED_BACK   B=FINALIZED   活动绑定数=0
+```
+
+**A 的回滚把 B 已经提交的绑定一起拿掉了。** 三行代码里两个缺陷，而这三行在**两个 runner 里各写了一遍**：
+
+1. `registry.clear_active_binding(key)` 停用该 key 的**每一行**活动绑定，不只是本事务装上的那一行；
+2. 重新激活用的是 `tx["generation_before"]`，而那是 `journal.create` 记下的**注册表全局** generation
+   （`journal.py:134`），不是这把 key 上一行的 generation——中间只要别的 key 提交过一次，
+   `(key, generation_before)` 就指不到任何一行，**回滚静默地什么都没恢复**。
+
+### 109.3 裁定与实现
+
+回滚的语义被写成**一个**共享实现 `tx/rollback.py`（`revert_own_activation`），两个 runner 都调它：
+活动行不是本事务的 → **不碰**；没有活动行 → **不碰**；是本事务的 → **只**停用自己那一行，再激活该 key
+中 generation 严格小于本行且最大的那一行（没有就诚实地保持"无活动绑定"）。`generation_before` 保留原意
+（journal、`repair`、`cli.py` 都在读），只是**不再**用来辨认被顶掉的那一行。
+
+### 109.4 守卫与验红
+
+| 变异 | 预期 | 结果 |
+|---|---|---|
+| 把 `revert_own_activation` 换回 `clear_active_binding`（原状） | 红 | ✅ 红：**恰好一个活动绑定、且是 B 的**这条断言失败（`0 != 1`） |
+| 用 `generation_before` 而不是"本行之下最大的那一行" | 红 | ✅ 红（两个 key 的交错用例：回滚后该 key 没有活动绑定） |
+| 活动行属于别人时仍然动手 | 红 | ✅ 红（赢家的绑定消失） |
+| 把树遍历换回 `rglob` + 过滤（原状） | 红 | ✅ 红（实测跑过一遍变异：那条判据 `1 failed`；改回剪枝后绿） |
+| 真实状态 | 绿 | ✅ 绿 |
+
+新增的是**确定性**用例（驱动那个交错，不靠时序）：A 被打断 → B 完整提交 → `repair` A；
+外加一条两个 key 的交错，专门覆盖第 2 个缺陷；再加一条普通路径，证明"没有别人插手时前任照旧被恢复"。
+打断只发生在**测试一侧**的接缝上，产品代码里没有为测试开的门。
+
+树遍历那条判据的验红方式值得记一句：**复现原来那次失败需要一个"意外递归"那么深的路径**，而测试不该
+去造那种东西。所以改为**注入拒绝**（与 `caps/identity.py` 处理"token 读不到"是同一个接缝思路）：
+凡是列 `.tmp` 下的东西就抛错，遍历必须**因为从不开口问**而无所谓。断言里那句
+`refused == []` 才是"没有进入"的判据——一个"进去了但把错误吞掉"的 `os.walk` 仍然会去 `scandir`，
+它会红。
+
+### 109.5 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **939 → 945**（+6：三条确定性回滚用例 + 两条搜索夹具卫生用例 + 一条"不进被跳过的目录"判据） |
+| 审计检查（`test_l0_consistency.py`） | **101 → 102**（新增的是这一条树遍历判据，它住在这个模块里） |
+| 产品代码 | `tx/simulate.py`、`tx/artifact.py` 的重复回滚各删一份，改调 `tx/rollback.py`（新文件） |
+| 判据自身的读取面 | `test_l0_consistency.py` 的树遍历改为**进入前剪枝**（`os.walk` + `dirs[:]`），不再读它声明跳过的目录 |
+| schema / 对外输出 / 退出码 / 语料 | **一处没动** |
+| 新增 ADR | **ADR-0035** |
+
+**两个阶段在同一次提交里落地**，理由是一条关于判据本身的事实：计数判据量的是**工作树**，
+所以"两个阶段并行完成后分别提交"做不到自洽——先提交的那个，它的 AGENTS.md 计数已经包含了后一个阶段
+的文件。要么把文件搬来搬去，要么承认一轮可以有两个阶段。这里选后者，并在两个阶段的记录里都说清楚。
+
+### 109.6 如实记录的边界
+
+1. **规则 3 有一个已知弱处**：它重新激活的是"本行之下最大的那一行"，不一定是"本事务开始时活动的那一行"
+   ——一个在提交前被**故意**停用的前任会被回滚重新激活。要记下确切的那一行需要
+   `transaction.schema.json` 里今天没有的字段，那是契约变更，不是缺陷修复，所以**不做**，写在这里。
+2. **那条已有的并发守卫仍然存在**，但它不再是这个性质的证明；证明在三条确定性用例里。
+3. **测试卫生那两条改的是夹具，不是产品**：它们与 §108 的计数判据无关，却是"偶发红灯"的另一半来源——
+   不修掉它们，下一轮的偶发红灯还会被当成"时序问题"。
+4. **8 次连续全绿**是这一阶段的验收口径（而不是"跑一次绿"）：偶发问题的修复必须用"不偶发"来证明。
+
+### 109.7 实施顺序
+
+1. 先分类：两条是测试卫生、一条是产品缺陷——**不要**把产品缺陷和夹具问题一起"重跑几次就好了"；
+2. 隔离复现（自己的临时目录、只跑一个用例、60 次）拿到概率，再写出确定性复现；
+3. 顺着确定性复现读代码，找到两个缺陷与"同一段被写了两遍"这件事；
+4. 冻结语义（三条规则），抽成一个共享实现，两个 runner 都改调它；
+5. 加确定性用例（交错 / 两个 key / 普通路径），并用"换回旧实现"验红；
+6. 修搜索夹具的卫生问题；
+7. 回写计数；写 ADR-0035 与本记录；跑 8 次全量；与 §108 同一次提交。

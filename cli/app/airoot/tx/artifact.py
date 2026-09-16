@@ -27,6 +27,7 @@ from ..schema_io import validate_document, validate_self
 from ..registry.entities import Binding, Instance, binding_key, managed_tool_payload
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
+from .rollback import revert_own_activation
 from .simulate import PROPAGATING_CODES, _evidence_objects
 from .states import is_terminal
 
@@ -336,18 +337,17 @@ class ArtifactRunner:
     def _rollback(
         self, tx: dict[str, Any], code: str, message: str, *, evidence: list[str] | None = None
     ) -> dict[str, Any]:
+        """Switch the active binding back; keep the new payload as evidence.
+
+        The revert is the shared `tx/rollback.py` rule, not a copy of it: a rollback undoes its own
+        activation and leaves a binding that a concurrent transaction committed after us alone
+        (draft §109). This runner used to carry its own copy of the same three buggy lines.
+        """
+
         instance_id = str(tx["instance_id"])
-        previous_generation = tx.get("generation_before")
 
         def _revert(connection: Any) -> None:
-            key = self._binding_key_of(instance_id)
-            if key is not None:
-                self.registry.clear_active_binding(connection, key)
-                if previous_generation is not None:
-                    connection.execute(
-                        "UPDATE bindings SET active = 1 WHERE binding_key = ? AND generation = ?",
-                        (key, int(previous_generation)),
-                    )
+            revert_own_activation(self.registry, connection, instance_id=instance_id)
             self.registry.set_instance_status(
                 connection, instance_id, health="broken", lifecycle_status="broken"
             )
@@ -368,12 +368,6 @@ class ArtifactRunner:
         self.journal.advance(tx, "ROLLED_BACK", "active binding switched back; new payload retained as evidence")
         tx["outcome"] = code
         return tx
-
-    def _binding_key_of(self, instance_id: str) -> str | None:
-        for row in self.registry.bindings():
-            if row["instance_id"] == instance_id:
-                return str(row["binding_key"])
-        return None
 
 
 def create_artifact_plan(

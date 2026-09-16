@@ -12,7 +12,10 @@ the CLI can get wrong:
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -29,14 +32,33 @@ def cli_root(registry) -> Path:
 
 
 @pytest.fixture
-def data_root(tests_tmp: Path) -> Path:
-    """A data root with one adopted object and one loose file."""
+def data_root(tests_tmp: Path) -> Iterator[Path]:
+    """A data root with one adopted object and one loose file — **private to this test**.
 
-    path = tests_tmp / "cli-search-data-root"
+    The answers in this module are *absolute* counts over this tree (`matched == 2`,
+    `records + 1`), so the tree must be reachable by this test and by nothing else. A fixed
+    name under the session-wide ``tests_tmp`` (what this used to be) made both counts
+    depend on things no test controls:
+
+    * **definition order** — `test_rebuild_...` writes an extra ``.exe`` into the shared
+      tree, so any test that reads an absolute count *after* it sees one match too many;
+    * **what a previous run left behind** — the session fixture deletes ``tests_tmp`` with
+      ``ignore_errors=True``, so a teardown that cannot remove a file (Windows keeps a handle
+      open) silently leaves the tree for the next run, whose ``test_rebuild_...`` then finds
+      that its "new" file already exists and its `records + 1` never happens.
+
+    A fresh ``mkdtemp`` per test removes both: no other test and no other run can name this
+    directory. Same shape as ``conftest.root_dir``, and it is removed on teardown. (draft §109)
+    """
+
+    path = Path(tempfile.mkdtemp(prefix="cli-search-data-root-", dir=tests_tmp))
     (path / "java" / "bin").mkdir(parents=True, exist_ok=True)
     (path / "java" / "bin" / "java.exe").write_bytes(b"MZ-placeholder\n")
     (path / "loose.exe").write_bytes(b"MZ-placeholder\n")
-    return path
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture
@@ -122,8 +144,7 @@ def test_without_a_data_root_search_refuses_instead_of_scanning_everything(capsy
 def test_an_explicit_search_root_wins_over_the_data_roots(
     capsys, cli_root: Path, registered: Path, tests_tmp: Path
 ) -> None:
-    other = tests_tmp / "cli-search-other-root"
-    other.mkdir(parents=True, exist_ok=True)
+    other = Path(tempfile.mkdtemp(prefix="cli-search-other-root-", dir=tests_tmp))
     (other / "java.exe").write_bytes(b"MZ")
 
     code, document = search(capsys, cli_root, "java", "--search-root", str(other))
@@ -165,6 +186,33 @@ def test_managed_only_hides_unmanaged_matches_and_says_so(capsys, cli_root: Path
     assert managed["data"]["stats"]["matched"] == 1
     assert all(item["management"] != "unmanaged" for item in managed["data"]["results"])
     assert any("hidden by the caller's filter" in warning for warning in managed["warnings"])
+
+
+def test_hygiene_one_test_may_write_into_its_own_data_root(registered: Path) -> None:
+    """The first half of the pair below: leave a file behind on purpose (draft §109)."""
+
+    (registered / "leftover-from-the-previous-test.exe").write_bytes(b"MZ")
+
+
+def test_hygiene_the_next_test_starts_from_a_clean_data_root(
+    capsys, cli_root: Path, registered: Path
+) -> None:
+    """Every count in this module is absolute, so the data root must belong to one test only.
+
+    Run right after the test above, which wrote an extra ``.exe`` into *its* data root. While
+    ``data_root`` handed out one fixed directory for the whole session, that file was still
+    here: this is exactly how `test_managed_only_...` went red (`assert 3 == 2`) whenever
+    `test_rebuild_...` ran first, or whenever a previous run's teardown failed to delete the
+    tree. The property is "no state survives from the previous test", not the fixture's shape.
+    """
+
+    assert not (registered / "leftover-from-the-previous-test.exe").exists(), (
+        "the data root is shared between tests again: absolute crawl counts now depend on "
+        "definition order and on what an earlier run left behind"
+    )
+    code, document = search(capsys, cli_root, "exe", "--ext", ".exe")
+    assert code == 2
+    assert document["data"]["stats"]["matched"] == 2, "only this test's java.exe and loose.exe"
 
 
 def test_paging_through_the_cli_is_bound_to_the_query(capsys, cli_root: Path, registered: Path) -> None:

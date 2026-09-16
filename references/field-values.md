@@ -136,6 +136,29 @@
 | `approval_mode` | `human`† / `policy`† | 这次批准是人给的还是策略自动给的。**这一版没有生产签发方**（ADR-0024 已由 ADR-0025 的 D1 裁决为"维持现状，等 P2 的受保护 broker"），所以 `approve`/`install`/`env persist`/`tool gc --apply`/`uninstall` 在真机上走到 `--token-file` 都会 `PROVENANCE_FAILED`(7)；唯一能签出 token 的是 `cli/tests/fake_issuer.py`，它签的是 `human`。**两个值都打 †，因为这一版没有任何代码构造出一份 token**（§93：`tx/approval.py` 只**接受与校验**它——原先这一栏把它记成写者，与同一行左边那句"没有生产签发方"自相矛盾） | （没有写者） |
 | `signature.algorithm` | `ed25519`† / `test_hmac_sha256`† | 签名算法。`test_hmac_sha256` **只允许出现在测试与模拟路径**；核心只做校验，`airoot approve` 永不凭空造批准。**两个值都打 †**：`tx/approval.py` 里的那两次出现是校验器**接受**的两个常量（`PRODUCTION_ALGORITHM` / `TEST_ALGORITHM`），不是往 token 里写的值——一份 token 里的算法长得像 `"algorithm": "..."`，而这个 build 里没有那样一处（§93） | （没有写者） |
 
+## `broker-request.schema.json`
+
+**这一版第一次有了写者**（§108）：`broker/protocol.py` 的 `build_request` 造这份文档，返回前过
+`validate_self`。它与其他每一份都不同——**它是发出去的，不是打印出来的**：这个 build 没有 broker 应答它，
+`broker_unavailable()` 就是这件事的诚实回答（`NOT_IMPLEMENTED`(1)，ADR-0025 的 D1 维持现状）。所以下表问的
+"谁写出"是"谁能把值放进这份文档里"，而不是"哪条命令会把它打印出来"。
+
+| 字段 | 取值 | 含义 | 本版谁写出 |
+|---|---|---|---|
+| `operation` | `commit_plan` / `recover_transaction` / `probe_root` / `gc_apply` | 请 broker 做哪一件事。四个值**都是声明**，四个都没有真的执行过：没有 broker，`build_request` 只造文档、`broker_unavailable()` 拒绝发送。设计文档只给了 `commit_plan` 的算法（`docs/broker/` 的 17 步提交）；`probe_root` 在设计里只以一个词出现；`gc_apply` 与 `recover_transaction` 的**名字在设计文档里根本不存在**，是本层照进程内同名动作定的（§108 实测） | `broker/protocol.py` |
+| `client.integrity` | `low` / `medium` / `high` / `system` | 调用进程的完整性级别：token 的 integrity SID 按 RID 阈值映射到这四个词。它是**自述**——`broker.md` 要求 broker 自己校验客户端进程 token，所以这一格是"我是谁"的声明，不是"我够格"的证明（读别人 token 的那一半不存在，见本节末尾） | `caps/identity.py` |
+
+这一节的两行各自的**边界**，一并写清楚，免得被读成更强的话：
+
+- `client.sid` / `client.pid` 没有自己的词汇（一个是 SID 的 pattern，一个是整数），所以没有行；
+  但**它们同样只是自述**，来源与 `integrity` 一样是 `caps/identity.py`。
+- `requested_at` / `plan_ref` / `approval_ref` / `transaction_id` 是 pattern 或自由字符串，没有枚举。
+- **`gc_apply` 那一格还有一个 schema 没写的要求**：`broker-request` 的两个 `allOf` 分支只覆盖
+  `commit_plan` 与 `recover_transaction`，所以一个既无 `plan_ref` 也无 `approval_ref` 的 `gc_apply`
+  **是 schema 合法的**；本层仍然拒绝它（`INVALID_INPUT`(8)），因为进程内同名动作
+  `caps/lifecycle.py` 的 `apply_gc_plan` 要 plan hash 与 approval token。这条不对称记在
+  `docs/schema/README.md` 的已知缺口里（§108）。
+
 ## `desired-manifest.schema.json`
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
@@ -309,14 +332,14 @@
 
 | schema | 类别 | 为什么不列 |
 |---|---|---|
-| `broker-request.schema.json` | `unbuilt` | P2 未实现：这一版**没有任何函数构造**它，方案在 `docs/broker/`。它的 `operation` 与 `client.integrity` 现在还只是设计，两条都在 `UNDOCUMENTED_BY_DESIGN` 里被点名 |
-| `broker-response.schema.json` | `unbuilt` | 同上：没有构造者。它的 `status` 与 `enforcement` 被点名（`security_mode` 在 `common` 那一节有行） |
+| `broker-response.schema.json` | `unbuilt` | 这一版**没有构造者**——但 §108 起它**有读者**了（`broker/protocol.py` 的 `parse_response` 会校验它、按 `status` 决定是否抛错）。所以这一行的意思精确到："没有人把这份文档**造出来**"；`parse_response` 不是写者。它的 `status` 是这张表唯一还点名豁免的词汇（`enforcement` / `security_mode` 已改为引用 `common` 的定义，那一节有行） |
 | `root-marker.schema.json` | `no-own-vocabulary` | **这一版会写出它**——根标记文件是十三个被构造的 schema 之一（`state/root.json`）。它被列在这里是因为**它自己没有词汇**：`schema_version` 与 `protocol_version` 两个字段都是**版本钉**（见本节末尾）。**原先这里写的是"同上"**（即按两个 `broker-*` 那样归到"P2 未实现"），那句话是**错的**，§107 量出来后改的 |
 
 这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105/§106）：**任何一个已发布
 schema 能携带的词汇**（跟 `$ref`、含唯一取值的 `const`），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`
-（`test_l1_field_values.py`）里被**点名**。今天被点名的四条全部来自 `broker-*`：
-`operation`、`client.integrity`、`status`、`enforcement`。少一条、多一条都会红。
+（`test_l1_field_values.py`）里被**点名**。今天被点名的只剩一条：`broker-response.status`——
+**`broker-request` 在 §108 离开了这张表**（它有了写者 `broker/protocol.py`，两个词汇各得一行），
+`broker-response.enforcement` 也在同一节被 `$ref` 到共享定义而不需要单独豁免。少一条、多一条都会红。
 
 **一套词汇"不在表里"只有三种合法理由**，而且这三种各有判据：
 
@@ -329,3 +352,9 @@ schema 能携带的词汇**（跟 `$ref`、含唯一取值的 `const`），要�
 "为什么不在表里"这件事的**声明**在文档里，**度量**在 `test_l1_field_values.py` 的
 `_measured_exempt_class` 里（"这一版有没有构造者" + "它自己有没有词汇"），两者必须一致——
 所以"给它编一个理由"这件事现在是做不到的。
+
+**"构造者"这个词是字面意思**（§108 量出来的一个后果）：这份表与它的守卫都只看 `cli/app/` 里的函数
+有没有把一份文档**造出来**。一个**读者**不算写者——所以 `broker-response` 有了 `parse_response` 之后
+仍然留在 `unbuilt` 那一类；而 P2 第二阶段如果把进程内 loopback harness 放在 `cli/tests/`（它该放在那里），
+那份 harness 也**不会**让任何 schema 变成"已构造"：测试替身不是产品文档的写者。这不是漏洞，是这条判据
+本来的意思（"谁写出"问的是核心）。

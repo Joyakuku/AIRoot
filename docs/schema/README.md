@@ -41,17 +41,18 @@ them has a golden fixture**, and guard group 32 holds those two sets to exact eq
 directions (a printed document with no fixture has no acceptance face; a fixture for a document
 nothing prints is a wish).
 
-The other ten are not printed by this build. Five of them are **used elsewhere**: four are validated on
-the way *in*, or written to disk rather than printed (`approval-token`, `extension-manifest`,
-`root-marker`, `search-request`), and `common` is the fragment the others `$ref`. That is a fact about
-this slice, not a defect list: the schema set is the contract, and printing is one way to exercise it.
+The other ten are not printed by this build. **Seven** of them are **used elsewhere**: `approval-token`,
+`extension-manifest`, `root-marker` and `search-request` are validated on the way *in*, or written to
+disk rather than printed; `broker-request` and `broker-response` are validated by P2's protocol layer
+(`cli/app/airoot/broker/protocol.py`, draft §108) — the first is *built* there and self-validated
+before it would be sent, the second is only ever *parsed*, because this build has no broker to answer
+it; and `common` is the fragment the others `$ref`. That is a fact about this slice, not a defect list:
+the schema set is the contract, and printing is one way to exercise it.
 
-The remaining **five have no writer at all in this build** — nothing validates them and nothing `$ref`s
+The remaining **three have no writer at all in this build** — nothing validates them and nothing `$ref`s
 them — and each says why, because "published ahead of implementation" and "describes a document that
 does not exist" look identical from the outside:
 
-- `broker-request.schema.json` — P2's protected local IPC; the design lives in `docs/broker/`
-- `broker-response.schema.json` — same boundary, same reason
 - `desired-manifest.schema.json` — the **manifest boundary**: provenance plus the memory policies that skip confirmation. It is **not** `state/desired.json`: that file carries the same field names but omits `source` and `policies.auto_approve`, and filling them would invent provenance and pre-empt the memory channel (ADR-0026)
 - `gc-plan.schema.json` — a **batch** collection plan (`items`/`blocked_items`/`requires_approval`). This slice's collection plan is a `plan` (one payload per plan, `operation=gc_apply`), and the `operation: "gc_plan"` document `tool gc --plan` prints is a report envelope, not this schema
 - `runtime-instance.schema.json` — runtime instances arrive with P5
@@ -68,9 +69,20 @@ Compatibility rules:
 4. `plan_hash` is calculated from the canonical plan with `plan_hash` omitted, using the `jcs-rfc8785-compatible` canonicalization label. The fake slice uses deterministic sorted JSON as a test substitute and records that fact in its test report.
 5. `test_hmac_sha256` is permitted only in the fake slice. Production approval tokens must use `ed25519` or an equivalent protected signing mechanism.
 
+**One known asymmetry, deliberately left in the schema** (draft §108): the two `allOf` branches of
+`broker-request.schema.json` cover `commit_plan` and `recover_transaction` only, so a `gc_apply` request
+carrying neither `plan_ref` nor `approval_ref` is schema-valid — while the in-process operation it
+stands for (`caps/lifecycle.py` `apply_gc_plan`) requires a plan hash and an approval token. The
+protocol layer therefore refuses that request with `INVALID_INPUT` (8) and keeps the extra requirement
+in a documented table of its own, which makes it **stricter than the published schema, not different
+from it**: every request it builds still validates. Adding the branch would turn an optional pair into a
+required one (rule 2 asks for a new schema id) for an operation `docs/broker/` does not define yet;
+when a second `gc_apply` consumer exists, that is the moment to spend the new id.
+
 Corrections and minor additions made while implementing P1 (see
-`../AIROOT-v0.3-实现决策记录.md`, ADR-0002/ADR-0003). The set grew from 18 to **20** files — 19 in the
-ADR-0004 work, and the failure document's contract in §102 — and `schema_version` stays 1:
+`../AIROOT-v0.3-实现决策记录.md`, ADR-0002/ADR-0003, and ADR-0034 for the P2 repair below). The set grew
+from 18 to **20** files — 19 in the ADR-0004 work, and the failure document's contract in §102 — and
+`schema_version` stays 1:
 
 | Change | Kind | Why |
 |---|---|---|
@@ -83,6 +95,7 @@ ADR-0004 work, and the failure document's contract in §102 — and `schema_vers
 | `registry-projection.schema.json`: optional `instances[].collected_at` | optional addition (rule 2) | `gc --apply` removes a payload but keeps the instance row, because `bindings.instance_id` references it and the binding history is exactly what `retired` exists to preserve. Without this field a consumer cannot tell a deliberate collection from a payload that vanished (`PAYLOAD_MISSING`). The `lifecycle` enum is deliberately **not** extended. |
 | `where-response.schema.json`: optional `candidates[].machine_discoverable` | optional addition (rule 2) | ADR-0022 makes `where` refuse to machine-discover a Zone W binding, and the machine-level slots are where that refusal happens. Without this field the response would show a healthy row with `usable: true` that is silently passed over — a reader could not tell a deliberate exclusion from a bug. `zone` is not projected on candidate rows, so the reason had nowhere to live; the top-level `zone` describes only the *selected* candidate. |
 | `error-response.schema.json` added (20th file) | new boundary | The document every failure prints had **no contract at all**: `AirootError.to_envelope` was its only writer, no published schema described it, and it was therefore the one outward document `validate_self` could not check — while AGENTS.md §7 says the core self-validates before printing any outward JSON (draft §102 measured this; §101 had just added `details` to a shape nothing pinned). One schema suffices here, unlike the 29 lane reports §100 measured, because all 96 reason codes produce the same keys. `evidence` is an array of strings, the form `doctor-response` already uses for a diagnostic's evidence; the structured `{kind, detail}` object in `common.$defs.evidence` belongs to documents that report findings. |
+| `broker-response.schema.json`: `security_mode` and `enforcement` now `$ref` `common.$defs.securityMode` / `$defs.enforcement` instead of restating them inline | defect correction | The two fields were hand copies of a shared definition, and one of the copies had drifted: the response schema allowed `acl_and_broker` where the definition — and the three schemas that `$ref` it, and the value this build prints from `cli.py`, `ext/envelope.py` and `caps/doctor.py` — say `acl_enforced`. No document, fixture or code path in the tree ever contained `acl_and_broker`, so the spelling was unreachable as well as contradictory. It survived because nothing read that schema until P2's protocol layer did; the fields are exactly the pair ADR-0002 created as **one** contract, so the fix is to keep one definition rather than to teach each reader two spellings. No existing member changed meaning and no fixture was invalidated (ADR-0003's precedent for repairing a transcription defect in place); a guard now holds every `security_mode`/`enforcement` declaration in the set equal to the shared values, and to each other. |
 
 The validation runners are:
 

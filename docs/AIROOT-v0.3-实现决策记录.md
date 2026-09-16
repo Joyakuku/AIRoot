@@ -1715,3 +1715,137 @@ reason_code: DATA_ROOT_MISSING        # 退出码 6
 12. v1 进入核心的 capability 清单本身。（**D9**：取 `cap-2`，七个能力；清单里只有 `build` 有来源条目，
     其余六个只有 reference/import 一条路——这不是缺陷，是事实）
 
+---
+
+## ADR-0034：P2 从客户端那一半开始——线路面先行，受保护状态仍等语言切换
+
+**背景**：P2 是「Windows Protected State」，规划把它的第一件事定成 ADR-0001 的语言切换（用 AIROOT
+自己的 plan/approval/fetch/verify/digest 规范取 Rust 工具链）。动手前先量了一次现状，量出四件事：
+
+1. `broker-request` / `broker-response` 是 ADR-0026 记下的「五个没有任何写者」中的两个：**没有任何代码
+   构造或校验它们**，golden 语料里一条 broker 文档都没有（当时 36 个 fixture 实测）。一份**没有任何
+   读者**的契约，它的缺陷没人会碰到——这正是第 3 条能一直存活的原因；
+2. 客户端那一半**不需要提权**：一个进程永远可以打开**自己**的 token。所以"给这两个 schema 一个使用者"
+   可以今天做完、今天测完，而且不碰宿主机；
+3. 两个已发布 schema 对 protected 模式的 `enforcement` **互相矛盾**：`broker-response` 写的是
+   `acl_and_broker`，而 `common.$defs.enforcement`——以及 `$ref` 它的另外三份 schema、以及本 build 到处
+   打印的值（`cli.py`、`ext/envelope.py`、`caps/doctor.py`）——写的是 `acl_enforced`。全树实测：
+   `acl_and_broker` **只出现在那一行 schema 里**，没有任何文档、fixture 或代码含它；
+4. 设计文档自己的示例信封过不了自己的 schema：`docs/broker/` 用 `plan` / `approval` 两个键，而
+   `broker-request` 要求 `plan_ref` / `approval_ref` 且 `additionalProperties: false`。
+
+**决策**：P2 的第一阶段只做**线路面的客户端一半**，交付三样东西：
+
+- `caps/identity.py`：只读本进程 token 得出 `sid` / `pid` / `integrity` / `elevated`
+  （`ctypes` 读 `TOKEN_USER` / `TOKEN_INTEGRITY_LEVEL` / `TOKEN_ELEVATION`），**失败即数据、绝不抛异常**；
+  它**只回答"我是谁"**，不判断"我够不够格"——那是 broker 的事；
+- `broker/protocol.py`：`build_request` 造一份 `broker-request`，返回前先 `validate_document` 再
+  `validate_self`；`parse_response` 校验 `broker-response`，**只在 `status=ok` 时返回**；
+  `broker_unavailable()` 是"这一版没有 broker"的诚实回答（`NOT_IMPLEMENTED`(1)，**ADR-0025 的 D1**）；
+- 它**不含**：任何传输（named pipe 不存在）、任何服务器、任何对**别人** token 的校验、任何新动词。
+  「broker 不信任客户端」这件事本身**没有被证明**——这一阶段只把两个 schema 从"没有使用者"变成
+  "有使用者"，仅此而已。
+
+**附带一个必然结果**：`broker-request` 因此成为**发出去而不是打印出来**的文档，而"自校验的集合 ⟺ 语料
+的集合"是守卫第三十二组的等式，所以给它一个写者就等于要求它有一份**逐字节验收面**：
+`fixtures/golden/broker_request_commit_plan.json`（`client` 块是合成的——public 仓库里不放本机 SID）。
+
+**代码放在哪（对 §E3 的精确化）**：`docs/broker/` 只给了进程名 `airoot-elevated`，没说仓库位置。这里的
+区分按**信任方向**：**客户端**那一半本来就属于那个"不被信任、用户可写"的包，所以它住
+`cli/app/airoot/broker/`；**服务器**那一半是受保护二进制，**不能**住这里，位置留到 ADR-0001 的语言切换。
+
+**四条连带处置**（都属于「改一处必须改三处」）：
+
+1. **原地修 schema**：`broker-response` 的 `security_mode` / `enforcement` 改为 `$ref` `common` 的定义。
+   依据是 **ADR-0003 的先例**——这是一处**转录缺陷**（手抄一份共享定义，抄错了一个成员），不改变任何
+   既有成员的含义、不使任何 fixture 失效、没有写者会因此受影响（本来就没有写者）。判据不是"看起来
+   像"：`acl_and_broker` 在全树实测为零；
+2. **加一条守卫**（`test_l1_schema_catalog.py`）：凡声明 `security_mode` / `enforcement` 的 schema，取值
+   必须等于共享定义，且两个字段必须**成对**出现。**更宽的规则被量过并否决**："同一个字段名出现在多份
+   schema 里就必须同值"会红五处，其中四处是**正当的**（`management` / `scope` / `source` /
+   `target_scope` 在不同文档里是不同的概念）——会因为正当理由变红的检查是噪音；
+3. **schema README 记下已知不对称**：`gc_apply` 在 schema 的 `allOf` 里没有任何条件要求，所以"既无
+   `plan_ref` 也无 `approval_ref` 的 `gc_apply`"是**合法**的，而进程内同名动作（`caps/lifecycle.py` 的
+   `apply_gc_plan`）两样都要。本层**拒绝**它（`INVALID_INPUT`(8)），于是它比已发布契约**更严，而不是
+   不同**（它造的每份文档仍然合法）。给 `gc_apply` 补 `allOf` 分支等于把可选变必填，按 README 规则 2
+   要**新 schema id**；等第二个消费方出现再花这个 id；
+4. **改两处过期或自相矛盾的散文**：`docs/broker/` 的示例键名照 schema 改正，并写明"字段名的权威是
+   schema"；诊断码表里"`PRIVILEGE_REQUIRED` / `ACL_MISMATCH` 在 P1 不会被发射"这**半句**是错的
+   （`env persist --scope machine` 正在发射前者），改为只对 `ACL_MISMATCH` 成立，并把"哪些码发不出来"
+   的权威指回 `references/reason-codes.md`——重复一份已被守卫钉死的事实，就是它出错的方式。
+
+**取值表随之发生的三件事**（`references/field-values.md`，由 `test_l1_field_values.py` 双向钉死）：
+`broker-request` 因为**第一次有了构造者**而离开豁免表、拿到自己的两行；`broker-response.enforcement`
+因为改成 `$ref` 而不再需要豁免（`common` 那一节有行）；`UNDOCUMENTED_BY_DESIGN` 只剩
+`broker-response.status` 一条。**顺带钉住一个语义**：这份表的"构造者"是字面意思，**一个读者不算写者**
+——所以 `broker-response` 有了 `parse_response` 之后仍属 `unbuilt`；下一阶段把进程内 loopback harness
+放进 `cli/tests/`（它该在那里）时，那份 harness **也不会**让任何 schema 变成"已构造"，因为测试替身不是
+产品文档的写者。
+
+**`parse_response` 的失败语义**（三种，都是判据）：响应过不了 `broker-response` → `INVALID_INPUT`(8)
+（**收到的文档对我们来说是非法输入**），证据是 schema 的报错；`status != "ok"` 且带**已注册**的
+`reason_code` → **抛那个码**，把对方的裁决与退出码原样带回来；`status != "ok"` 但码缺失/未注册、或
+**退出码为 0**（`SUCCESS`、`POLICY_ONLY_MODE`）→ `INVALID_INPUT`(8)。最后一条是刻意的：把一个"被拒绝"
+折成退出码 0，正是 ADR-0027 记下的那个缺陷。另外响应里的 `evidence` 是**对象**（`common.$defs.evidence`），
+而错误信封的 `evidence` 是**字符串**，所以渲染时必须转换——照抄现成的错误信封当 broker 响应会校验不过。
+
+**记下一个不修的洞**：`requested_at` 在 schema 里是 `format: date-time`，而 `schema_io` 没有配 format
+checker，所以它**不被检查**（JSON Schema 规范里 `format` 默认只是注解）。本层不手写时间戳正则——那会把
+schema 的权威挪进代码；这是**全树**决定（要不要给 `schema_io` 加 format checker），不是这一层的。
+
+**这一阶段明确不能证明什么**（对着设计自己的话逐条列，见 `_p2_brief.md` 的 F 段）：ACL 强制性、IPC 与
+named pipe impersonation、**对客户端 token 的校验**、UAC 取消不破坏旧 generation、审批链（ADR-0025 的
+D1 仍无生产签发方）、受保护启动与 `recovery_required`、machine PATH / launcher / machine 级环境变量，
+以及最要紧的一条——**broker 不信任客户端**。
+
+---
+
+## ADR-0035：回滚只撤销自己那一次激活，并发提交的赢家不受影响
+
+**背景**：一次排查"测试偶发红灯"的例行工作，把一个**真实的产品缺陷**翻了出来。
+`test_concurrent_commits_keep_a_single_active_binding` 单跑 60 次红 1 次（隔离临时目录、只跑这一个
+用例实测）。确定性复现后机制很清楚：让提交 A 在 `ACTIVE_BOUND` / `EXPOSED` 之间被打断，让提交 B
+（同 key、不同版本）完整提交，再 `repair` A——结果是 **A=ROLLED_BACK、B=FINALIZED、活动绑定数为 0**：
+**A 的回滚把 B 已经提交的绑定一起拿掉了。**
+
+三行代码里有两个缺陷，而这两行在**两个 runner 里各写了一遍**（`tx/simulate.py` 与 `tx/artifact.py`），
+互相之间从来没有对照读过：
+
+1. **回滚停用是"整把 key"级的**：`registry.clear_active_binding(key)` 停用该 key 的**每一行**活动绑定，
+   不只是本事务装上的那一行；
+2. **恢复用的是错的 generation**：`tx["generation_before"]` 是 `journal.create` 记下的**注册表全局**
+   generation（`journal.py:134`），不是这把 key 上一行的 generation。只要中间有别的 key 提交过一次，
+   `(key, generation_before)` 就**指不到任何一行**，回滚会**静默地什么都没恢复**。
+
+两处都不是"边界情况"：第 1 条摧毁另一个合法提交的结果，第 2 条让回滚悄悄失效——而它们的形状都是
+"**同一个事实在两处各写一遍**"（ADR-0025 教义 1 早就点过这一类）。
+
+**决策**（回滚的语义，写成一个共享实现 `tx/rollback.py`，两个 runner 都调它）：
+
+1. 该 key **没有**活动行 → 这里没有属于本事务的东西可撤（`retire` / `uninstall` 才是那个状态的主人）；
+2. 活动行属于**别的实例** → 那是**在我们之后**合法提交的事务；本事务如实报告自己的失败，
+   **不碰赢家的绑定**；
+3. 活动行**是本事务的** → **只**停用**本事务自己那一行**，再重新激活该 key 中 **generation 严格小于
+   本行且最大**的那一行（即被本事务顶掉的那一次绑定）；如果不存在，那么"这个 key 没有活动绑定"
+   就是诚实的结果，因为本事务之前本来就没有。
+
+`generation_before` **保留原意**（journal、`repair` 报错与 `cli.py` 都在读它），只是**不再**被用来
+辨认"被顶掉的那一行"——那一行从 `bindings` 表本身推出来。
+
+**依据**：§5.6 的冻结规则本来就写着"**回滚只切 binding**"，§5.5 写着"同一 binding key **只有一个**
+active implementation"。验证方案 T-010（`:206`）说 DB 锁"guarantee ONE commit, the other retries or
+exits"——**输家回滚是允许的，赢家的绑定被摧毁不是**。所以这不是新语义，是既有契约没被实现。
+
+**后果与如实记录的边界**：
+
+- **规则 3 有一个已知的弱处，明写在这里而不是装作没有**：它重新激活的是"本行之下最大的那一行"，
+  而**不一定**是"本事务开始时处于活动的那一行"。因此一个在本事务提交前被**故意**停用的前任
+  （例如 `retire` 过）会被回滚重新激活。要记下**确切**被顶掉的那一行，需要 `transaction.schema.json`
+  里有一个今天没有的字段——那是**契约变更，不是缺陷修复**，所以不做；
+- **那条已有的并发守卫不是这个性质的证明**：它单跑 60 次才红 1 次，也就是说它一直**靠时序**才绿。
+  修完之后另加**确定性**用例（驱动那个交错：A 在 `ACTIVE_BOUND` 被打断 → B 完整提交 → `repair` A，
+  断言恰好一个活动绑定且是 B 的；再一条两个 key 的交错，专门覆盖第 2 个缺陷）；
+- **同一批工作里还有两处测试卫生问题**（`cli/tests/test_cli_search.py` 的固定路径数据根被跨用例复用、
+  遗留文件让绝对计数失效）。它们**不是产品缺陷**，是"会因为正当理由变红的检查"的反面——
+  会**无缘无故**变红的检查。一并修掉，并说明它们是偶发红灯的另一半来源。
+

@@ -1,4 +1,5 @@
 {
+  "broker_request_commit_plan": 0,
   "discover_report": 0,
   "doctor_broken_missing_payload": 3,
   "doctor_degraded_stale_projection": 2,
