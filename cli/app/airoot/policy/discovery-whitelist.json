@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "wl-4",
-  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason. wl-4 (draft §82, decision D9): the `media_probe` entry went with the capability when `cap-2` unfroze it — the load-time check refuses a whitelist entry whose capability is not frozen, which is the check doing its job.",
+  "revision": "wl-5",
+  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason. wl-4 (draft §82, decision D9): the `media_probe` entry went with the capability when `cap-2` unfroze it — the load-time check refuses a whitelist entry whose capability is not frozen, which is the check doing its job. wl-5 (draft §121, ADR-0048): `rust-toolchain` gained the recognition half it deliberately lacked in §117 — the ledger has to be able to describe what an installer wrote into the user's directories, and `rustc.exe`'s own PE version resource is what makes that recognisable. The predicate requires **both** the name and the product string on purpose: the shims in `.cargo\\bin` carry no version resource at all (measured), so a name-only rule would register three references whose every fact is unreadable.",
   "scan": {
     "max_depth": 4,
     "max_relative_depth": 2,
@@ -80,6 +80,16 @@
         { "type": "pe_static", "field": "is_pe", "equals": true }
       ],
       "entrypoints": ["cmake.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "rust-toolchain",
+      "kind": "tool",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["rustc.exe"] },
+        { "type": "pe_static", "field": "product_name", "contains": "Rust Compiler" }
+      ],
+      "entrypoints": ["rustc.exe"],
       "version_source": "pe_static:file_version"
     }
   ],

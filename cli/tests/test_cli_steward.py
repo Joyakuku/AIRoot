@@ -80,7 +80,7 @@ def test_data_root_add_registers_without_touching_files(capsys, cli_root: Path, 
     assert code == 0
     assert document["data_root"]["path"] == str(data_root)
     assert document["data_root"]["role"] == "runtime"
-    assert document["data_root"]["whitelist_revision"] == "wl-4"
+    assert document["data_root"]["whitelist_revision"] == "wl-5"
     assert document["files_touched"] == 0
     assert digest_text((data_root / "keep.txt").read_text(encoding="utf-8")) == before
 

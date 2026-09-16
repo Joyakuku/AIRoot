@@ -95,7 +95,7 @@ def test_a_data_root_below_max_path_is_scanned(tmp_path: Path) -> None:
 
 def test_bundled_whitelist_loads_and_is_evidence_based() -> None:
     rules = load_whitelist()
-    assert rules.revision == "wl-4"
+    assert rules.revision == "wl-5"
     assert {entry.capability_id for entry in rules.entries} >= {"python", "node", "java", "git", "archive"}
     for entry in rules.entries:
         has_static = any(item.get("type") == "pe_static" for item in entry.evidence_all + entry.evidence_any)
@@ -206,7 +206,7 @@ def test_matching_object_becomes_a_reference_candidate(data_root: Path) -> None:
     place_python_pe(data_root / "python")
 
     report = discover_data_root(path=data_root, data_root_id="dr-env")
-    assert report.whitelist_revision == "wl-4"
+    assert report.whitelist_revision == "wl-5"
     candidate = next(item for item in report.candidates if item.directory_name == "python")
     assert candidate.management == "external_reference"
     assert candidate.capability_id == "python"
@@ -723,10 +723,44 @@ def test_the_shipped_whitelist_uses_only_evaluable_vocabulary() -> None:
     """The load above is the assertion: `load_whitelist` now refuses anything it cannot evaluate."""
 
     rules = load_whitelist()
-    assert rules.revision == "wl-4"
+    assert rules.revision == "wl-5"
     for entry in rules.entries:
         for predicate in entry.evidence_all + entry.evidence_any:
             assert predicate["type"] in PREDICATE_TYPES
+
+
+def test_rust_toolchain_needs_both_of_its_predicates_and_the_shim_case_is_why() -> None:
+    """§121 / ADR-0048: the installer's products need the recognition half, and both halves matter.
+
+    Measured on the real machine: the toolchain's `rustc.exe` carries
+    `product_name="Rust Compiler"` and `file_version="1.98.1.0"`, while the three 12.7 MB
+    **shims** in `.cargo\\bin` carry **no version resource at all**. So the entry requires the
+    executable name *and* the product string, and this test holds both directions: without the
+    product predicate the shims would be registered as toolchain references whose every fact is
+    unreadable, and without the name predicate any Rust binary would match.
+    """
+
+    rules = load_whitelist()
+    entry = next((item for item in rules.entries if item.capability_id == "rust-toolchain"), None)
+    assert entry is not None, "the recognition half for rust-toolchain is gone"
+    assert entry.kind == "tool"
+    assert entry.entrypoints == ("rustc.exe",)
+    assert entry.version_source == "pe_static:file_version", (
+        "the version has to come from the file's own resource, not from a directory name"
+    )
+    assert [item["type"] for item in entry.evidence_all] == ["executable_name", "pe_static"]
+
+    from airoot.caps.probe_pe import PeMetadata
+
+    named = PeMetadata(path="rustc.exe", is_pe=True, product_name="Rust Compiler", file_version="1.98.1.0")
+    shim = PeMetadata(path="rustc.exe", is_pe=True)  # the shim: right name, no version resource
+    other = PeMetadata(path="python.exe", is_pe=True, product_name="Python")
+
+    assert match_entry(entry, executable_name="rustc.exe", metadata=named, executable=Path("rustc.exe"))
+    assert not match_entry(entry, executable_name="rustc.exe", metadata=shim, executable=Path("rustc.exe")), (
+        "a name-only match would register three references that carry no readable fact"
+    )
+    assert not match_entry(entry, executable_name="python.exe", metadata=other, executable=Path("python.exe"))
 
 
 def test_every_declared_predicate_type_is_actually_implemented(data_root: Path) -> None:

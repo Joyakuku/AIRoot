@@ -10492,4 +10492,193 @@ airoot run rust-toolchain --json -- --version
    `--help`），所以这条规则的实测面就是这三个；将来加动词选项时，`_airoot_option_arity()` 会自动带上它
    （它从 parser 推导），但**没有测试**专门断言"新选项一定被 hoist"——那是推导规则的固有性质，不是判据。
 
+## 121. 把"安装器装的东西"登记进账本（ADR-0048）
+
+最小版本的定义最后一段要求：**账本要能表述"AIROOT 装的安装器，又装了别的东西"**，而且"那批产物可以被
+登记为 reference"。§118 之后本机正好有这个真实例子——AIROOT 装的是 `rustup-init.exe`，它把 rustc/cargo/
+rustup 写进了 `%USERPROFILE%\.cargo` 与 `.rustup`。本节是去把它登记进账本，**而第一次尝试当场失败了**。
+
+### 121.1 第一步（失败）：声明两个数据根，`discover` 什么都不认，`adopt` 拒绝
+
+| 步 | 命令 | 结果 |
+|---|---|---|
+| 声明 | `data-root add <home>\.rustup --id dr-rustup --role tool` | `SUCCESS`，`files_touched=0`，0.13 s |
+| 声明 | `data-root add <home>\.cargo --id dr-cargo --role tool` | 同上（**没有把用户主目录整个声明成数据根**：两个目录各自一个根，role 按它们实际是什么选 `tool`） |
+| 扫描 | `discover` | `dr-cargo`：扫 4 个对象 / 1 个可执行文件；`dr-rustup`：扫 5 个对象 / 6 个可执行文件。**候选全是 `unmanaged`** |
+| 为什么不认 | 每个候选的 `notes` | **`no whitelist entry matched (N executable(s) inspected)`**——逐条如此（`bin` 1 个、`toolchains` **6** 个） |
+| 排除名单 | — | **一条都没命中**：挡下它们的不是缓存/GUI 名单，是**没有任何谓词认识它们** |
+| 登记 | `adopt <home>\.cargo\bin --mode reference --capability rust-toolchain` | **`CAPABILITY_NOT_DECLARED`(9)** |
+
+那条拒绝的证据是本次最重要的读数，它把原因说得比散文清楚：
+
+```text
+no whitelist entry matched (1 executable(s) inspected)
+freeze the capability and add a whitelist entry first
+```
+
+**缺的不是能力名**（`rust-toolchain` 已在 `cap-3` 里冻结），**缺的是 §15.4 成长路径的第二步：白名单
+证据谓词**。§117.5-3 当初刻意没给它写谓词，理由是"它是从可信来源装进来的，不需要在用户目录里被认出来"
+——那条理由没错，它只是**没预见到"要登记安装器写出来的东西"这个局面**。
+
+**先量再写谓词**（这一步决定的谓词形状）：
+
+| 可执行文件 | PE 静态事实 |
+|---|---|
+| `.rustup\toolchains\stable-…\bin\rustc.exe`（110 592 B） | `product_name="Rust Compiler"`、`file_description="rustc"`、**`file_version="1.98.1.0"`** |
+| 同目录 `cargo.exe`（31 435 776 B）、`rustdoc.exe` | **一个版本资源都没有** |
+| `.cargo\bin` 下三个 12 721 664 B 的 rustup shim（`cargo.exe`/`rustc.exe`/`rustup.exe`） | **一个版本资源都没有** |
+
+### 121.2 裁决与落地：`wl-4` → `wl-5`（ADR-0048）
+
+给**已冻结**的 `rust-toolchain` 加上识别谓词，两条缺一不可：
+
+```json
+{"type": "executable_name", "any_of": ["rustc.exe"]},
+{"type": "pe_static", "field": "product_name", "contains": "Rust Compiler"}
+```
+
+落地之后的 `discover`（同一条命令，同一个根）：
+
+| 对象 | `wl-4` | `wl-5` |
+|---|---|---|
+| `.cargo\bin` | `unmanaged`（1 个可执行文件不匹配） | **仍然 `unmanaged`**——三个 shim **没有版本资源**，PE 那半不成立 |
+| `.rustup\downloads` / `tmp` / `update-hashes` | `unmanaged` | 仍然 `unmanaged`（它们是下载暂存与元数据，不是能力对象） |
+| `.rustup\toolchains` | `unmanaged`（6 个可执行文件不匹配） | **`external_reference` / `rust-toolchain` / `1.98.1.0`**，入口点 `stable-x86_64-pc-windows-msvc/bin/rustc.exe` |
+
+**这条不对称是本节最该记住的一点**：谓词认的是**真的编译器**，不是"名字像 Rust 的东西"。`.cargo\bin`
+留在 `unmanaged` 里被如实报告，而不是被凑成一条版本读不出来、证据只证明文件名的引用。
+
+### 121.3 六条断言（逐条读数）
+
+**① `uninstall` 对 reference 一律拒绝**
+
+```text
+uninstall external/dr-rustup/toolchains --dry-run  → exit 7, OWNERSHIP_REQUIRED
+  absolute path: C:\Users\ProfileName\.rustup\toolchains
+  AIROOT only records it; removing the files is your call
+  suggestion: airoot forget external/dr-rustup/toolchains   # drops the record, keeps the files
+```
+
+**② `forget` 之后两个目录一个字节都没少**（这是管家模型的结构性不变量，实测）：
+
+```text
+forget external/dr-rustup/toolchains → files_touched=0, source_unchanged=true
+.before: .cargo 17 files / 178 160 640 B；.rustup 154 files / 603 950 873 B
+         rustc.exe sha256 ca9988af88b1463f6857fdfe909299fee50a63260b3e5f7dbcb5b4d3318b27bc
+.after : 一模一样（逐字节比较为 True），之后重新登记
+```
+
+**③ `doctor` 与"注册前后"的对比**
+
+| 状态 | `doctor` | `doctor --include-unmanaged` |
+|---|---|---|
+| 登记后 | exit 0 / `healthy` / 3 条（全部 `info`） | 7 条：`UNMANAGED_OBJECT_PRESENT` ×4（`bin`、`downloads`、`tmp`、`update-hashes`）+ `POLICY_ONLY_MODE` + `WHITELIST_REVISION_STALE` ×2 |
+| `forget` 之后 | 同上 | 同上——**数量不变**，因为消失的那一类正是被登记的那个对象 |
+
+**"哪一类消失了、哪一类还在"要看得更细一点**：`UNMANAGED_OBJECT_PRESENT` 里有 `toolchains` 的那一条
+在**登记后不再出现**（它就是"登记之后不再是 unmanaged"的那个对象），而 `bin`/`downloads`/`tmp`/
+`update-hashes` 一直在——前者是"谓词认不出来"，后三个是"它们本来就不是能力对象"。同一件事在
+`discover --record` 上有一个更干净的数字：**登记前记录 5 条观测，登记后 4 条**。
+
+**④ `where rust-toolchain`：新登记的引用被选中，而优先级一个字没改**
+
+```text
+selection_reason = STEWARD_REFERENCE_HEALTHY
+source=path   management=external_reference   health=healthy   usable=true
+executable = C:\Users\ProfileName\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe
+version    = 1.98.1.0
+evidence   = capability=rust-toolchain version=* scope=*
+             selection precedence=steward (revision=sp-1, source=file)
+             observed at … (external_reference) active_version=1.98.1.0
+```
+
+**这就是 ADR-0048 决策二说的那件事的实测**：优先级规则（steward-first，`sp-1`）一个字节没动，但结果从
+**store 里的安装器**换成了**真的 `rustc.exe`**。对 agent 来说这是变好了——`where rust-toolchain` 现在
+指的是能编译的那个东西，而不是安装它的那个安装器。
+
+**⑤ `where cargo` 给出诚实的回答：没有这个能力的实现**
+
+```text
+exit 1, reason_code=NOT_FOUND, found=false, candidates=[]
+evidence: capability=cargo version=* scope=*
+          selection precedence=steward (revision=sp-1, source=file)
+          no satisfying active binding and no external reference
+```
+
+`cargo` **不是**冻结能力（`capability list` 里没有它），所以这条查询根本不看文件系统——**它没有去猜
+`.cargo\bin\cargo.exe` 在哪**。这正是本项目反复写在文档里的那条禁令（§118 也写过：要让 AIROOT 管它，
+走 `discover`/`adopt`，不是让 `where` 去猜）。
+
+**⑥ 成本与有界性（实测，不是估计）**
+
+| 命令 | 耗时 | 有界证据 |
+|---|---|---|
+| `discover`（`.cargo` + `.rustup`，604 MB / 154 文件） | **0.13–0.14 s** | 两个根的 `truncated` 都是 **false**；扫描上限（深度 4 / 相对深度 2 / 每对象 400 文件 / 200 对象）一个都没触到 |
+| `adopt`（PE 探测 + 摘要） | **0.14 s** | 只算入口点那一个文件的摘要（110 592 B） |
+| `tool verify`（12.7 MB 载荷整树摘要） | **0.13 s** | `verified=true`，`problems=[]` |
+| `doctor --verify` | **0.15 s** | `healthy` |
+| `data-root add` / `tool status` / `where` | 0.12–0.13 s | — |
+
+**没有发现无界递归**（这一项是"要量不要猜"的，所以量了；结论是有界）。
+
+### 121.4 顺带量到的一处**政策 revision 的后果**（不是缺陷，但会被误读成故障）
+
+改白名单 revision 之后，`doctor` 立刻报了两条 `WHITELIST_REVISION_STALE`（`info`，不是 error）：
+
+```text
+data_root=dr-cargo    recorded=wl-4   current=wl-5
+data_root=dr-rustup   recorded=wl-4   current=wl-5
+```
+
+它是**对的**：`data_roots.whitelist_revision` 记的是声明那个根时用的版本，而白名单已经变了。补救办法是
+**重新声明那个根**（`data-root add` 是 upsert，会把 revision 刷新），实测之后这两条 `info` 消失、
+`doctor` 仍是 `healthy` 且 `diagnostics` 只剩 `UNMANAGED_OBJECT_PRESENT` + `POLICY_ONLY_MODE`。
+**记在这里的理由**：一个"改了策略版本就要重新声明数据根"的连带动作，是升级路径的一部分，而不是噪音。
+
+### 121.5 写进文档的结论：**"安装器自己装的产物"在账本里算什么**
+
+**它算 `external_reference`——一条 AIROOT 记录、不拥有的引用；不是 `managed_tool_instance`。** 三条理由：
+
+1. **AIROOT 没有装它，是它装的工具装的**。`is_owned` 的两个信号（`store_path` 在 `store/` 下、后端不是
+   外部后端）一条都不成立，而这两个信号正是"删除之前必须成立"的判据（§14.2-3）。所以它天然落在
+   reference 那一侧：可观察、可诊断、可在 `where` 里被选中，**永不被 `uninstall`/`gc` 删除**。
+2. **它不由 AIROOT 定义版本**。`.rustup` 的内容由 `rustup` 自己维护（`rustup update` 会改它），AIROOT
+   的登记是**观测**：`version=1.98.1.0` 是那一刻从 PE 里读出来的，`observed_digest` 是那一刻的入口点
+   摘要。把它当 owned 就等于声称"AIROOT 决定它是什么版本"——那是假的。
+3. **外部发现默认不迁移**（规划 §5、ADR-0004 的管家模型）。这条不变量在"安装器装了别人"这个场景下
+   **没有被放宽**：恰恰相反，它正是这个场景的正确答案——AIROOT 认出来、记下来、**不去搬它**。
+
+**所以"AIROOT 装了一个安装器，那个安装器又装了别人"这件事在账本上是两行**：一行是 store 里的
+`managed_tool_instance`（`rustup-init.exe`，owned、可 `uninstall`/`gc`），另一行是用户目录里的
+`external_reference`（`toolchains`，非拥有、只可 `forget`）。**删掉 AIROOT 本体不会带走第二行指向的
+任何文件**——这条由 §121.3 的 ② 逐字节实测。
+
+### 121.6 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1329 → 1330**（+1：`test_l1_discovery.py` 的新谓词守卫。§120 那 21 条记在它自己的表里） |
+| 审计检查（`test_l0_consistency.py`） | **109 → 109** |
+| golden 语料 | **43 → 43**（`discover_report.json` 与 `execution_bounds.json` 的**内容**变了：`wl-5`；`golden.py` 现在**从策略文件取** revision，不再写死一个字面量） |
+| 政策文件 | `policy/discovery-whitelist.json`：`wl-4` → **`wl-5`**，+1 条 `rust-toolchain` 条目 |
+| 新增 ADR | **ADR-0048** |
+| 不动的东西 | **没有 schema 变更、没有退出码变更、没有新动词**；`selection-policy.json`（`sp-1`）与冻结能力清单（`cap-3`）一个字节没动 |
+
+### 121.7 如实记录的边界
+
+1. **`.cargo\bin` 没有被登记，这是结论而不是遗漏**：它的三个 shim 没有任何版本资源（实测），所以
+   谓词认不出来。要让它们进入账本，需要一条**基于文件名**的谓词——而那会登记出三条"每一个事实都读不出来"
+   的引用（ADR-0048 明确否决了那条路）。它今天仍然出现在 `UNMANAGED_OBJECT_PRESENT` 里。
+2. **`.rustup\downloads` / `tmp` / `update-hashes` 也没有登记**：它们是下载暂存与元数据，不是能力对象。
+   排除名单**没有**覆盖它们（`tmp` 与 `-tmp`/`.tmp` 差一个字符），所以它们靠"没有谓词匹配"留在
+   `unmanaged` 里——**如果将来有人给某个能力写了匹配这些目录的谓词，这里会变**。
+3. **这次登记不改变"谁能删什么"**：reference 仍然不可 `uninstall`/`gc`；数据根内任何目录仍然永不被删除。
+4. **`where rust-toolchain` 的答案变了**（从安装器变成真编译器）。这是 steward-first 优先级早就写好的
+   行为，不是新规则；但如果有人依赖旧答案，这里就是那个变化点，**不是回归**。
+5. **跨用户与 ACL 仍然没测**：两个目录都在当前用户主目录下，登记与观测都只用本用户权限；这与 §115 的
+   跨用户边界是两件事，本节没有改变它。
+6. **`rust-toolchain` 的谓词只覆盖 MSVC 目标的工具链**（`rustc.exe` + `Rust Compiler`）：本机只有
+   `stable-x86_64-pc-windows-msvc` 一个工具链，其它目标/工具链没量过——**它在谓词下会不会被认出来是
+   未测的**，不是"应该也会"。
+
 

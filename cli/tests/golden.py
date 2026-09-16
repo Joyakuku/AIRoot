@@ -18,7 +18,7 @@ from typing import Any
 from airoot.caps import lifecycle
 from airoot.caps.boundary import load_capabilities
 from airoot.caps.doctor import INVARIANTS, doctor, status_exit_code
-from airoot.caps.discovery import discover_data_root
+from airoot.caps.discovery import discover_data_root, load_whitelist
 from airoot.caps.exposure import ExposureTarget, build_reference_plan, request_from_entry
 from airoot.caps.inventory import inventory
 from airoot.caps.where import WhereQuery, where
@@ -590,7 +590,10 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
                 path=str(data_root_path),
                 role="runtime",
                 volume_serial="deadbeef",
-                whitelist_revision="wl-4",
+                # Derived, not a literal: the recorded revision is what `data-root add` writes at
+                # the time, so a corpus that hard-codes one goes stale the moment the whitelist is
+                # bumped — and the fixture would then claim a revision nobody recorded (§121).
+                whitelist_revision=load_whitelist().revision,
                 added_at="2024-01-01T00:00:00Z",
             ),
         )

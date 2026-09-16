@@ -51,7 +51,7 @@
   },
   "policy_revisions": {
     "capabilities": "cap-3",
-    "discovery_whitelist": "wl-4",
+    "discovery_whitelist": "wl-5",
     "search": "srch-4",
     "selection": "sp-1",
     "sources": "src-1"

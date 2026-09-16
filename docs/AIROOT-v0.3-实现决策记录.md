@@ -2437,3 +2437,78 @@ payload 仍然会被执行；要拦它，调用方在 `run` 之前自己 `tool v
 runtime 的版本矩阵、以及任何形式的持久化，都在本轮的显式排除清单里（见最小版本文档 §3）。
 
 **状态：已裁决。** 实现与实测读数记在草案 §120。
+
+## ADR-0048：安装器装的产物要被账本认出来——给已冻结的 `rust-toolchain` 补上"识别"那一半
+
+**背景**：最小版本的定义（`docs/AIROOT-最小版本-v1.md` 最后那段）要求**账本能表述"AIROOT 装的安装器，
+又装了别的东西"**：那批产物可以被登记为 reference。§118 之后本机正好有这个真实例子——AIROOT 把
+`rustup-init.exe` 装进 store，而它把 rustc/cargo/rustup 写进了 `%USERPROFILE%\.cargo` 与 `.rustup`。
+W3 就是去把这件事登记进账本，而它**当场失败了**。
+
+**实测（真机，`D:\env\.airoot`）**：
+
+| 观察 | 读数 |
+|---|---|
+| `discover` 对 `.cargo` | 扫 4 个对象、1 个可执行文件；候选 `bin` 报 **"no whitelist entry matched (1 executable(s) inspected)"** |
+| `discover` 对 `.rustup` | 扫 5 个对象、6 个可执行文件；候选 `downloads`/`tmp`/`toolchains`/`update-hashes` 全部同一条结论（`toolchains` 那一条检视了 **6** 个可执行文件） |
+| 排除名单 | **一条都没命中**——被挡下来的不是它们 |
+| `adopt C:\...\.cargo\bin --mode reference --capability rust-toolchain` | **`CAPABILITY_NOT_DECLARED`(9)**，消息 `no whitelisted capability matches bin`，证据是那两条：`no whitelist entry matched (1 executable(s) inspected)` 与 **`freeze the capability and add a whitelist entry first`** |
+| `rustc.exe` 的 PE 静态事实 | `product_name="Rust Compiler"`、`file_description="rustc"`、**`file_version="1.98.1.0"`** |
+| `cargo.exe`（31 MB 真身）、`rustdoc.exe`、以及 `.cargo\bin` 下那三个 12.7 MB 的 rustup shim | **一个版本资源都没有**（六个字段全空） |
+
+**所以"缺的"不是能力名：`rust-toolchain` 已经在 `cap-3` 里冻结了。缺的是 §15.4 成长路径的第二步
+——白名单证据谓词。** 而 §117.5-3 当初**刻意**没给它写谓词，理由是"它是从可信来源装进来的，不需要在
+用户目录里被认出来"。**那条理由没有错，它只是没预见到今天这个局面**：§117 只把**安装器**放进账本，
+所以当时确实没有东西需要被认出来；而现在要登记的是**那个安装器写出来的东西**，它在用户目录里，账本要
+认它就必须有谓词。
+
+**决策：给已冻结的 `rust-toolchain` 加上识别谓词（白名单 `wl-4` → `wl-5`）。**
+
+```json
+{
+  "capability_id": "rust-toolchain",
+  "kind": "tool",
+  "evidence_all": [
+    {"type": "executable_name", "any_of": ["rustc.exe"]},
+    {"type": "pe_static", "field": "product_name", "contains": "Rust Compiler"}
+  ],
+  "entrypoints": ["rustc.exe"],
+  "version_source": "pe_static:file_version"
+}
+```
+
+**为什么是这两条谓词，而不是别的**：它们是**量出来的**，而且两条**都必须**成立才说明问题——
+`executable_name` 单独一条会把 `.cargo\bin` 里那三个**没有版本资源的 shim** 也算成 Rust 工具链
+（登记出来会是一条版本读不出来、证据只证明文件名的引用）；加上 `product_name contains "Rust Compiler"`
+之后，命中的是**真的编译器**（`rustc.exe`，版本 1.98.1.0），而 shim 因为 PE 里什么都没写而不命中。
+**这条不对称是这一段的重点**：`.rustup\toolchains` 会被认出来，`.cargo\bin` **不会**——后者留在
+`unmanaged` 里被如实报告，而不是被凑成一个空壳引用。
+
+**它不意味着什么（写清以免被读大）**：
+
+1. **对象不因此变成 AIROOT 拥有的**。登记走 `adopt --mode reference`，`uninstall`/`gc` 对它一律
+   `OWNERSHIP_REQUIRED`(7)——`is_owned` 的两个信号（`store_path` 在 `store/` 下、后端不是外部后端）
+   一条都不成立。`discover` 只是把它报成 **reference 候选**。
+2. **优先级一个字没改**（规划 §3.2 / §9.10、ADR-0006 的 steward-first）。但**结果会变**：`where
+   rust-toolchain` 之后会选中那条**健康的 reference**（真的 `rustc.exe`）而不是 store 里的**安装器**。
+   这是优先级规则早就写好的行为（"健康的 external reference 是一等候选"），不是这次新加的偏好；
+   读数记在 §121。
+3. **`rust-toolchain` 的冻结条目形状没动**：`kind`/`entry`/`side_effects`/`scope` 一个字节没改。
+
+**被否决的路（各一条附代价）**：
+
+- **发明一个新能力名**（例如 `rust` 运行时）：§15.4 明说不得为了让某个对象能被管而临时放宽/新增名字，
+  而"提议 → 冻结"是**另一件事**，不该混在一次登记里做完。代价：这条路的产出会是一个只有一行谓词、
+  没有真实安装路径的能力——正是 §117.3 那次"来源清单为一个不存在的能力声明来源"的镜像错误。
+- **只按可执行文件名匹配**（`cargo.exe`/`rustc.exe`/`rustup.exe`，不要求 PE 证据）：会把 `.cargo\bin`
+  的三个 shim 一起认成工具链，而它们**没有版本资源**（实测），于是登记出一条版本为 `null`、
+  证据只有文件名的引用。代价：账本里多出三份**看起来像能力、实际读不出任何事实**的记录。
+- **什么都不做，只报告"账本表达不了"**：这是**诚实的第一版答案**（W3 第一次跑出来的就是它），但它让
+  最小版本定义的最后一段永远不成立。代价：定义里那条被标成"已交付"的判据是假的。
+
+**代价照实说**：白名单 revision 从 `wl-4` 变成 `wl-5`（`execution_bounds.json` 逐个钉着五个 policy
+revision，所以 golden 要重生）；任何装了 Rust 的机器上，`discover` 会多报一个 reference 候选；
+谓词进入**加载期校验**的那张表（未知谓词类型 / 没有静态证据 / 引用未冻结能力都会在加载时抛错）。
+
+**状态：已裁决。** 落地读数（`discover` / `adopt` / `uninstall` / `forget` / `doctor` / `where` 六项断言
+与扫描成本）记在草案 §121。
