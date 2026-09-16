@@ -648,12 +648,15 @@ def test_the_one_remaining_issuer_refusal_names_the_pending_decision(registry: R
     assert err.value.reason_code == "INVALID_APPROVAL"
     assert ISSUER_PENDING not in err.value.message
 
-    assert "ADR-0025" in ISSUER_PENDING, "the shared sentence lost its pointer"
+    # The sentence names the decision a reader needs, and ADR-0046 replaced ADR-0025 as that pointer: an
+    # issuer now exists, so pointing at "wait for P2" would send a reader to wait for a stage that no
+    # longer unblocks anything instead of running the one provisioning step that does.
+    assert "ADR-0046" in ISSUER_PENDING, "the shared sentence lost its pointer"
     assert all(ISSUER_PENDING in message for message in messages), messages
 
     decision_log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
-    assert "## ADR-0025" in decision_log, (
-        "the refusal points at ADR-0025 but the decision log has no such entry; either write it "
+    assert "## ADR-0046" in decision_log, (
+        "the refusal points at ADR-0046 but the decision log has no such entry; either write it "
         "or update ISSUER_PENDING — a pointer to nothing is worse than no pointer"
     )
     assert "## ADR-0024" in decision_log, "and the brief it settled must stay readable"

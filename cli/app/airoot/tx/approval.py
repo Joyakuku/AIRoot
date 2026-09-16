@@ -27,8 +27,19 @@ The keyring is a map of **records**, not of bare key bytes: each entry says whic
 is for (``{"algorithm": "ed25519", "public_key": "base64:…"}``). That closes a hole the flat form had —
 the token's own ``signature.algorithm`` field decided which verification ran, so a token could name an
 algorithm the registered key was never registered for. Now the two must agree or the token is refused
-(draft §113, ADR-0039). The file is still called ``state/test-keyring.json`` because its only *writer*
-in this build is the test issuer; renaming it belongs to the stage that gives it a production writer.
+(draft §113, ADR-0039).
+
+**The keyring was renamed from ``state/test-keyring.json`` to ``state/keyring.json`` in ADR-0046.** The
+old name was kept honest by the fact that its only *writer* was the test issuer, and ADR-0039 decision 4
+said the rename belonged to the stage that gave it a production writer. That stage is ADR-0046: the
+private half now lives in the root beside it and the local signer writes both. The old name is still
+**read** (new name wins) so roots built by earlier runs keep working; migration here means "the old path
+is still legible", not "the old file is deleted".
+
+**What this keyring's integrity is worth, stated plainly** (ADR-0045/ADR-0046): it sits in the root, so a
+same-user process can replace it — and with a local signer, such a process could sign with its own key
+anyway. Verification therefore enforces **consistency** (this token is bound to this plan, not replayed,
+not expired) and **not authorisation**. Approval is an audit record, not a proof of permission.
 """
 
 from __future__ import annotations
@@ -47,7 +58,12 @@ from ..clock import Clock, SYSTEM_CLOCK, parse_timestamp
 from ..exits import AirootError
 from ..schema_io import validate_document
 
-KEYRING_RELATIVE = "state/test-keyring.json"
+KEYRING_RELATIVE = "state/keyring.json"
+
+#: The name this file had before ADR-0046, still **read** so roots built by earlier runs keep working.
+#: Not written any more: a writer that keeps both names alive would make "which one is authoritative"
+#: a question with two answers.
+LEGACY_KEYRING_RELATIVE = "state/test-keyring.json"
 TEST_ALGORITHM = "test_hmac_sha256"
 PRODUCTION_ALGORITHM = "ed25519"
 
@@ -69,17 +85,36 @@ class ApprovalKey:
     algorithm: str
     material: bytes
 
-#: The one sentence every refusal caused by the absent production issuer must contain.
-#: Five different commands reach it, and they used to explain themselves two different ways
-#: ("no keyring" vs "`ed25519` not implemented"). Since §113 there is **one** way left — a root with no
-#: keyring — because verification is real for both algorithms; the sentence keeps naming the pending
-#: decision (ADR-0025 chose option A) so a reader is told this is a boundary waiting for the P2 broker
-#: rather than a missing feature. A test pins the pointer so it cannot rot silently.
-ISSUER_PENDING = "no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)"
+#: The one sentence every refusal caused by a missing keyring must contain. Five commands reach it.
+#:
+#: **Rewritten in ADR-0046.** Until then it read "no production approval issuer exists in this build
+#: (decided: ADR-0025 keeps it waiting for the P2 broker)" — and that sentence became false the moment a
+#: local signer existed: the build *does* have an issuer, and what is missing is that **this root** has no
+#: key provisioned in it. A refusal that keeps blaming the build would send a reader to wait for a stage
+#: that no longer unblocks anything, instead of running the one provisioning step that does. The pointer is
+#: to ADR-0046 because that is now the decision a reader needs; `test_l1_transaction.py` holds this
+#: sentence to the decision log so it cannot name an entry that does not exist.
+ISSUER_PENDING = (
+    "no approval keyring is installed in this root; provision a signing key first "
+    "(decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)"
+)
 
 
 def keyring_path(root: Path) -> Path:
-    return Path(root) / KEYRING_RELATIVE
+    """The keyring this root uses: the current name if present, else the pre-ADR-0046 name.
+
+    The fallback is read-only in effect — `_write_records` always writes `KEYRING_RELATIVE` — so a root
+    still carrying the old name is upgraded the next time anything writes a record into it. That is what
+    "migration" means here: the old path stays legible, it is not moved or deleted.
+    """
+
+    current = Path(root) / KEYRING_RELATIVE
+    if current.is_file():
+        return current
+    legacy = Path(root) / LEGACY_KEYRING_RELATIVE
+    if legacy.is_file():
+        return legacy
+    return current
 
 
 def _b64(value: bytes) -> str:

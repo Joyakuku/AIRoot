@@ -1,4 +1,5 @@
 {
+  "approval_token": 0,
   "broker_request_commit_plan": 0,
   "broker_response_commit_plan": 0,
   "broker_response_gc_apply": 0,

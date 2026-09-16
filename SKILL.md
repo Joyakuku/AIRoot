@@ -35,7 +35,7 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "这台电脑上有没有 X / 在哪" | `airoot where X --json` | 不用 `where` 之外的命令去猜；不递归 `shell` 搜索 |
 | "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足 |
 | "这台机器上都有什么" | `airoot inventory --class … --json` | 不把 `unmanaged` 说成"AIROOT 管的" |
-| "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（这个 build 签不出 token：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
+| "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（需要本机签一次：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
 | "这个目录（D:\env 之类）交给 AIROOT 看着" | `airoot data-root add <path> --id <data_root_id> --role <runtime\|tool\|mixed> --json` | **注册不写任何文件**（`files_touched` 是 0）；这是管家域的第一步：没有数据根，`discover`/`adopt` 无事可做 |
@@ -43,11 +43,11 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
-| "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（这个 build 签不出 token：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
+| "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
 | "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json` | **对 reference 一律拒绝**：那不是 AIROOT 的东西 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
-| "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（这个 build 签不出 token：见《批准》） |
+| "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（需要本机签一次：见《批准》） |
 | "PATH 有没有被弄乱" | `airoot path verify --json` | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
 | "某个文件在哪 / 它叫什么名字" | `airoot search <query> --json` | **`search` 不是 `where`**：前者定位文件，后者解析能力。要按名搜一个叫 `status` 的文件用 `airoot search --query status --json` |
 | "搜得太慢 / 想要它快点" | `airoot search refresh --json` 建一次索引（crawl 建的，**不是 USN 索引**），之后查询走索引 | 不声称它是 Everything 级性能；`freshness.state=current` 只表示"上次遍历是最近做的" |
@@ -89,7 +89,7 @@ cancel             取消
 
 规则：
 
-- 选 `data-root` 是**权限提升**，需要它自己的批准（这个 build 签不出 token：见《批准》）；项目目录里的 manifest 不能自己升级自己
+- 选 `data-root` 是**权限提升**，需要它自己的批准（需要本机签一次：见《批准》）；项目目录里的 manifest 不能自己升级自己
   （`airoot plan … --scope data-root --project <项目>` 会返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`）。
 - **简单的必须不问**：被项目清单引用的依赖、单文件通用 CLI，CLI 已经直接给答案；
   你不要再问一遍，否则确认会退化成噪音，真正高风险的三类（装包 / 建环境 / 超 300 MB）也会失效。
@@ -111,12 +111,15 @@ cancel             取消
 - `airoot approve` 只**消费**批准，永远不会凭空制造它；你也不得把"我调用了 approve"
   解释成"用户批准了"。
 - 没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户。
-- **这个 build 里没有任何东西能签发批准**：核心只校验，唯一的签发方是测试用的
-  `cli/tests/fake_issuer.py`。所以上一条在当前版本里**走不到底**——`install` / `env persist` /
-  `tool gc --apply` / `uninstall` 带 `--token-file` 时会返回 `PROVENANCE_FAILED`（退出码 7），
-  消息里带这一句：`no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)`。
-  裁决与三条路见 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**已裁决：A 维持现状**，见 ADR-0025）；
-  **不要**试图自己造一个 token（伪造正是消费侧要拒绝的东西）。
+- **自 ADR-0046 起这条路是通的，但签发是一个显式步骤**：先在本 root 里签一次（`airoot.tx.issuer` 的
+  `provision` + `issue`），再由 `install` / `env persist` / `tool gc --apply` / `uninstall` 带
+  `--token-file` 消费。**没有 keyring 的 root 会拒绝**，消息里带这一句：
+  `no approval keyring is installed in this root; provision a signing key first (decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)`。
+- **批准是账本，不是授权证明**（ADR-0046）：私钥在 root 里，同用户进程读得到、也能自己签，所以验签通过
+  只说明"这份 plan 由这个 root 信任的钥匙签过、且此后没被改动或重放"。**挡同用户进程属于使用方
+  （上游 harness）的职责**，不是 AIROOT 的。裁决见 **ADR-0046**；它取代的 ADR-0025 D1 与 ADR-0044
+  仍然可读，且实测读数全部仍然成立。
+- **不要**试图自己造一个 token（伪造正是消费侧要拒绝的东西），也不要引用测试 keyring。
 
 ## 绝不做的清单（§16.2）
 

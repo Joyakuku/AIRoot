@@ -1,0 +1,19 @@
+{
+  "approval_id": "approval/golden-0001",
+  "approval_mode": "policy",
+  "approved_by_sid": null,
+  "expires_at": "2024-01-01T00:05:01Z",
+  "issued_at": "2024-01-01T00:00:01Z",
+  "issuer": "airoot-local-issuer",
+  "machine_id": "host-0123456789abcdef0123456789abcdef",
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "plan_hash": "sha256:b11d9abb954661624ae0a0e103af0e21011b0996a904a9e5dba34ade0555879b",
+  "policy_revision": 1,
+  "root_instance_id": "root-4f2a9c1d8e3b",
+  "schema_version": 1,
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "airoot-local-issuer-1",
+    "value": "base64:q0Oh/UvJfhlaXtD6XO6nzJsdZF64A2gcOn4IDiQIaU6LPlcoEjAih3sx3cMuS7F4J7C3/gz4il9OLUIKkFQvCQ=="
+  }
+}

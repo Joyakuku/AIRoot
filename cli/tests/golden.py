@@ -542,6 +542,28 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
         "exit_code": exit_code_for(broker_pipe_refusal["reason_code"]),
     }
 
+    # ---- the approval token, now that the core can produce one (ADR-0046) -- #
+    # `tx/issuer.py`'s `issue` is a **core** writer: it self-validates the `approval-token` it returns, which
+    # makes that schema a printed document and obliges it to appear here (`test_l0_consistency.py`'s
+    # printed-versus-corpus equality). Before ADR-0046 the only writer was the test-path `fake_issuer.py`,
+    # so the schema sat in `SCHEMA_FOR_HARNESS_FIXTURE`-style company and had no core fixture.
+    #
+    # A fixed seed and a fixed clock, so the token is byte-identical on every machine: an approval token
+    # carries `issued_at`/`expires_at` (real time) and a `nonce` (random), so a fixture built the ordinary
+    # way would drift on every run. The seed is a literal, not a fingerpring of anything.
+    from airoot.tx import issuer as issuer_module  # noqa: E402
+
+    issuer_root, _issuer_registry, issuer_clock = _build_root(base / "issuer")
+    issuer_module.provision(issuer_root.path, seed=bytes(range(32)))
+    issuer_token = issuer_module.issue(
+        plan,
+        root=issuer_root.path,
+        clock=issuer_clock,
+        approval_id="approval/golden-0001",
+        nonce="a" * 32,
+    )
+    documents["approval_token"] = {"document": issuer_token, "exit_code": 0}
+
     # ---- the two documents the transaction engine is about (draft §90) ----- #
     # Every document the core prints is self-validated first (`schema_io.validate_self`), and §90 found
     # that two of the eight had **no fixture at all**: the plan — what gets approved and executed — and

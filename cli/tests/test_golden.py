@@ -38,6 +38,10 @@ SCHEMA_FOR_FIXTURE = {
     "reference_plan": "reference-plan",
     "error_not_implemented": "error-response",
     "broker_request_commit_plan": "broker-request",
+    # The core's own approval token — `tx/issuer.py`'s `issue` self-validates what it returns (ADR-0046).
+    # It belongs in this map rather than the harness one because the writer is in the app package: before
+    # ADR-0046 the only producer was the test-path `fake_issuer.py`, so this schema had no core fixture.
+    "approval_token": "approval-token",
     # The core's own first `broker-response` (draft §115). The harness responses below are the *test*
     # path's writer, so this schema appears in both maps on purpose — the corpus needs one document the
     # core produces and documents the harness can reach past a live pipe.

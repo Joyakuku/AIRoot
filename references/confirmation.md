@@ -51,21 +51,24 @@ RFC 8032），唯一实现过的签发方是测试用的
 （`algorithm` + 材料，§113 / ADR-0039），所以同一个文件将来可以只放生产的**公钥**而不因此变成秘密；
 test- 这个名字要等有生产写者时再改。
 
-结果：`install --token-file`、`env persist --token-file`、`tool gc --apply --token-file`、
-`uninstall --token-file`（own 的那一支）以及 `approve --token-file` 在真机上都会返回
-`PROVENANCE_FAILED`（退出码 7），消息里带这一句：
+结果：**自 ADR-0046 起这条路是通的**——先在本 root 里**签一次**（`tx/issuer.py` 的 `provision` 生成密钥对、
+`issue` 用 `ed25519` 签出一份 `approval-token`），再由 `install --token-file` 等命令消费。
+**没有 keyring 的 root 仍然会拒绝**，消息里带这一句：
 
 ```text
-no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker)
+no approval keyring is installed in this root; provision a signing key first (decided: ADR-0046 — approval is an audit record, so the signer is a local, explicit step)
 ```
 
 所以：
 
-- **不要**对用户描述"批准之后就能装"的流程而不说明这个 build 签不出批准——那会让用户以为
-  自己少做了一步；
+- **不要**把批准说成"授权证明"：它是**账本**。私钥在 root 里、同用户进程读得到也能自己签，
+  所以验签通过只说明"这份 plan 由这个 root 信任的钥匙签过、且此后没被改动或重放"——
+  **一致性**，不是**权限**（ADR-0045/ADR-0046）。要挡同用户进程属于使用方（上游 harness）的职责；
+
 - **不要**试图自己造 token。伪造 token 正是消费侧要拒绝的东西，而测试 keyring 不属于生产路径；
-- 这条待裁决项写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0024**（状态：**已裁决：A 维持现状**，见 ADR-0025），
-  里面列了 A/B/C 三条路、各自解锁什么、以及推荐（A 为默认）。
+- 这条路的裁决写在 `docs/AIROOT-v0.3-实现决策记录.md` 的 **ADR-0046**（状态：**已裁决：B——本机签发，
+  批准 = 账本**），它推翻了草案 §113.6 第 6 条；被它取代的两条更早的裁决是 ADR-0025 的 D1 与 ADR-0044，
+  两者仍然可读，且**实测读数全部仍然成立**（变的是"这算不算缺陷"）。
 
 ## 记忆（`.ai/tooling.json`）
 

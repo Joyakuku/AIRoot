@@ -235,15 +235,25 @@ def test_the_skill_does_not_offer_an_approval_it_cannot_obtain() -> None:
     text = skill_text()
     assert "plan 文件路径与 hash 交给用户" in text, "the approval hand-off is gone; this guard is about nothing"
     assert ISSUER_PENDING in text, (
-        "SKILL.md tells the agent to hand the plan to the user for approval without saying that this "
-        "build cannot mint a token; the agent will describe a step that cannot be performed"
+        "SKILL.md tells the agent to hand the plan to the user for approval without saying what the "
+        "refusal actually is; the agent will describe a step that cannot be performed as written"
     )
-    assert "ADR-0025" in text, "the honest block must point at the decision that was taken"
-    assert "维持现状" in text or "已裁决" in text, (
-        "the decision ADR-0025 took must be visible, or the Skill reads as if the gap were still open"
+    # The pointer is derived from the refusal sentence rather than spelled here: the Skill and the refusal
+    # must name the *same* decision, and a hard-coded number is exactly how they drift apart (ADR-0046
+    # replaced ADR-0025 as that decision, and only one of the two places had to be edited to make them
+    # disagree).
+    decision = re.search(r"(ADR-\d{4})", ISSUER_PENDING)
+    assert decision is not None, "the refusal sentence no longer names a decision record"
+    assert decision.group(1) in text, (
+        f"the Skill must point at {decision.group(1)}, the decision the refusal sentence names"
     )
-    assert "走不到底" in text or "签不出" in text, (
-        "the decision does not make the step available: the Skill must still say it cannot be completed"
+    assert "本机签一次" in text or "显式" in text, (
+        "the Skill must say the signing step is explicit and local, or it reads as if approval were "
+        "unavailable rather than one command away"
+    )
+    assert "账本" in text, (
+        "the Skill must say an approval is an audit record rather than a proof of permission (ADR-0046), "
+        "or an agent will treat a verified token as authorisation"
     )
 
     # Widened in §68: one caveat in the 批准 section is ~50 lines away from the command map the agent
@@ -261,8 +271,9 @@ def test_the_skill_does_not_offer_an_approval_it_cannot_obtain() -> None:
 
 
 #: The compact per-site pointer. It is short on purpose: it has to fit inside a table cell that an
-#: agent reads while deciding what to run.
-APPROVAL_POINTER = "（这个 build 签不出 token：见《批准》）"
+#: agent reads while deciding what to run. It used to say "this build cannot mint a token"; since
+#: ADR-0046 it can, so the pointer now warns about the *step* rather than about the build.
+APPROVAL_POINTER = "需要本机签一次：见《批准》"
 
 
 def _outside_approval_lines(text: str) -> list[tuple[int, str]]:
@@ -307,8 +318,10 @@ def test_the_agent_metadata_does_not_offer_an_approval_it_cannot_obtain() -> Non
         "the import lane this guard was written for is gone; the guard is now about something else"
     )
     for note in presuming:
-        assert ISSUER_PENDING in note, f"lane note presumes approval without the boundary: {note!r}"
-        assert "ADR-0025" in note, "the boundary must point at the decision that was taken"
+        assert ISSUER_PENDING in note or "provision" in note.lower(), (
+            f"lane note presumes approval without saying what it takes to get one: {note!r}"
+        )
+        assert "ADR-0046" in note, "the boundary must point at the decision that was taken"
 
 
 def test_the_reason_code_reference_does_not_prescribe_an_approval_nobody_can_give() -> None:
@@ -326,10 +339,10 @@ def test_the_reason_code_reference_does_not_prescribe_an_approval_nobody_can_giv
     section = text.split("## 4 —", 1)[1].split("\n## ", 1)[0]
     assert "等人工批准" in section, "the hand-off prescription is gone; this guard is about nothing"
     assert ISSUER_PENDING in section, (
-        "the exit-4 reference prescribes waiting for an approval without saying that this build "
-        "cannot issue one"
+        "the exit-4 reference prescribes waiting for an approval without saying what the refusal "
+        "actually is, so an agent cannot tell the user how to obtain one"
     )
-    assert "ADR-0025" in section and ("已裁决" in section or "维持现状" in section), (
+    assert "ADR-0046" in section, (
         "it must point at the decision that was taken, not leave the gap looking open"
     )
 
@@ -347,9 +360,9 @@ def test_the_entry_document_marks_the_commands_it_cannot_complete() -> None:
     text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
     assert "--token-file" in text, "the token commands are gone; this guard is about nothing"
     assert ISSUER_PENDING in text, (
-        "AGENTS.md shows `--token-file` commands without saying that this build cannot issue a token"
+        "AGENTS.md shows `--token-file` commands without naming the refusal an operator will actually hit"
     )
-    assert "ADR-0025" in text, "and without pointing at the decision that was taken"
+    assert "ADR-0046" in text, "and without pointing at the decision that was taken"
 
 
 def test_the_reference_set_is_present() -> None:

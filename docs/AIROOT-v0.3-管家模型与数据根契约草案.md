@@ -9667,8 +9667,11 @@ keyring 或公钥挪进 token / 调用方参数的唯一理由。
    给它接调用者。
 5. **对象/回调 ACE 写不了**：真实数据根的 DACL 里可能有这类 ACE，本模块对它们的 apply/restore 都抛
    `ValueError`，即**这类目录的 ACL 本模块还原不了**——只在合成条目上测过。
-6. **Ed25519 不是常数时间的**，`sign` 用私钥时有数据相关的加法链，因此**不得**用它保管长期签发密钥
-   （P2/Rust 才拥有那把密钥）；`verify` 只处理公开数据。
+6. **Ed25519 不是常数时间的**，`sign` 用私钥时有数据相关的加法链，**当时**因此判断"不得用它保管长期
+   签发密钥"（P2/Rust 才拥有那把密钥）；`verify` 只处理公开数据。**这条已于 ADR-0046 被推翻，理由写在那里**：
+   它防的是**本机进程的计时观测**，而 ADR-0045 把安全归属移到使用方之后，签发方不再需要抵抗本机进程，
+   **约束的前提消失**。今天那把密钥由本模块的 `sign` 签，而"同用户进程读得到、也能自己签"是**已知且接受**
+   的后果。原文保留在此，因为它是当时正确的判断。
 7. **本阶段没有动 schema、退出码与 golden 语料**：改的是 keyring 的**格式**、一处拒绝消息、以及三块新地基。
 
 ## 114. 受保护边界要问的第一个问题：谁在问（ADR-0041）
@@ -10040,4 +10043,71 @@ pipe 里截下来的：`serve_pipe` 在提权 token 下拒绝启动，而 `test_
    fixture 冻结的**只有**"被拒绝的提交"这一条路。它不是"这条线的验收面全在这里"的意思。
 7. **`nMaxInstances`、overlapped 句柄、`WaitNamedPipeW` 的 `dwTimeout=0` 语义**等读数记在 §115.4 与模块
    文档里，属于"将来写 Rust 版时不要再摸一遍"的知识，而不是本阶段的实现。
+
+## 116. 本机签发：让真机上的 `install` 能跑完（ADR-0046）
+
+§115 把线接上了，但**没有东西能签发批准**，所以 `install` 在真机上停在 `PROVENANCE_FAILED`——也就意味着
+**Rust 工具链永远装不进来**（ADR-0001 的入口）。本阶段补上那一步。裁决是 **ADR-0046**，它是本阶段唯一的
+权威；本节记录它怎么落地的、验了什么、以及边界在哪。
+
+### 116.1 先记一条走不通的路（它一度是推荐解）
+
+"上游（DSH 那类 harness）持私钥签发、公钥作为信任锚随 AIROOT 分发"曾是首选：不改 schema，且在新威胁模型
+下那把私钥不需要强保护。**实测否掉**——keyring 在 root 里（`state/keyring.json`），而三大核心契约第 22 行
+自己写着 user compatibility mode **不能声称能阻止同用户 Agent 直接修改用户目录**。于是本机进程可以把锚换成
+**自己的**公钥、用自己的私钥签一份合法 plan，而 AIROOT 验签**通过**。
+
+**"密钥不需要强保护"对密钥成立，对信任锚不成立**：锚必须比它约束的东西更强，而那需要提权或 ACL——正是
+ADR-0045 决定不做的。所以这条路不是"代价高"，是**它买不到它声称的那件事**。
+
+### 116.2 落地的形状
+
+| 件 | 位置 | 它是什么 |
+|---|---|---|
+| **签发者** | `cli/app/airoot/tx/issuer.py`（新） | `provision` 生成密钥对并登记公钥；`load_private_key` 读私钥；`issue` 用 `ed25519` 签出一份 schema-valid 的 `approval-token`；`write_token` 落盘供 `--token-file` 消费 |
+| **私钥** | `state/issuer-key.json` | root 里，**文件自己写着**"同用户进程可读，这是已知且接受的后果"——不让一个看起来像密钥库的文件承诺它不提供的保证 |
+| **keyring** | `state/keyring.json`（改名，见下） | 只放**公钥**；ADR-0039 决策四说改名属于"给它一个生产写者"的那一阶段，现在那个写者存在了 |
+| **语义** | `tx/approval.py` 的 `ISSUER_PENDING` | 这句拒绝语**被重写**了：旧的是"this build 里没有生产签发方"，而它**自本阶段起是假的**——build 里有签发者，缺的是**这个 root 里没有密钥**。指向也从 ADR-0025 改成 ADR-0046 |
+
+**签发者不进核心，也不做成 CLI 动词**：恒定式是"核心永远没有签名侧"，而一个动词会让签名看起来像 CLI
+自己就能做的事。它是**一次显式的人工步骤**，与核心分开。
+
+### 116.3 守卫与验红
+
+| 守卫 | 它在拒什么 | 验红 |
+|---|---|---|
+| `test_a_real_install_completes_with_a_locally_signed_approval` | 把"能跑完"从声称变成断言 | ✅ 本阶段前**必红**：没有 keyring 就停在 `PROVENANCE_FAILED` |
+| `test_every_fact_comes_from_the_plan_so_a_mutation_breaks_verification`（4 个参数） | 签发者自己供给 plan 事实（那它就能授权一份没人看过的 plan） | ✅ 逐字段改后验签失败 |
+| `test_provisioning_refuses_to_overwrite_an_existing_key` | "密钥换了而没人发现" | ✅ 第二次 provision 报 `INVALID_INPUT` |
+| `test_human_mode_refuses_rather_than_inventing_a_sid` | 凭空造一个 SID 当作人的批准 | ✅ `mode=human` 无 SID 报 `INVALID_APPROVAL` |
+| `test_the_approval_is_consistency_not_permission_so_a_foreign_key_still_verifies` | **方向反的那条谎**：把批准读成权限证明 | ✅ 未登记的钥匙被拒（一致性），而**用户可写 keyring** 这件事被断言出来（权限不在这一层） |
+| 打印集 ⟷ 语料双向相等（既有） | `issue` 自校验 `approval-token`，所以这个 schema 成了"核心打印的文档" | ✅ 加 fixture 前它**就是红的**——又是它先发现的 |
+
+**第五条是本阶段最该看的一条**：它的名字里就写着这个项目的诚实口径——**批准是账本，不是授权证明**。
+它同时钉住两个方向：未登记的钥匙被拒（说明验签**真的在验**），以及密钥与 keyring 都可被用户改写
+（说明它**不是**权限边界）。将来若有人"顺手"加一个权限检查让第一条红，那不是回归，是另一个设计。
+
+### 116.4 计数与影响
+
+| 项 | 变化 |
+|---|---|
+| 测试 | **1294 → 1307**（+13，全部在 `cli/tests/test_l2_issuer.py`；含 4 个参数化用例） |
+| 审计检查（`test_l0_consistency.py`） | **108 → 108**（本阶段只把 repo map 的 ADR 范围与 fixture 计数改对） |
+| golden 语料 | **42 → 43**（新增 `approval_token.json`：固定 seed + 固定时钟 + 固定 nonce） |
+| 新增模块 | `cli/app/airoot/tx/issuer.py`（签发者）；`state/issuer-key.json` 与 `state/keyring.json` 是它写出的运行时状态 |
+| 契约变更 | **无 schema 变更**：`approval-token` 的必填项与 enum 一个字节没动；改的是**拒绝语**、**keyring 路径名**与 **Skill/reference 里七处措辞** |
+| 新增 ADR | **ADR-0046**（本机签发——批准是账本，不是授权证明；推翻 §113.6 第 6 条） |
+
+### 116.5 如实记录的边界
+
+1. **批准不是授权**。私钥在 root 里、同用户进程读得到也能自己签，所以验签通过只证明**一致性**（这份 plan
+   由该 root 信任的钥匙签过、此后没被改动或重放）。**挡同用户进程是使用方（上游 harness）的职责**——
+   ADR-0045 把这条归属移出去了，本阶段只是接受它的后果。
+2. **ADR-0044 的实测读数全部仍然成立**（CNG 不支持 Ed25519、软件 KSP 容器对拥有者开放、同用户进程读得到）。
+   **变的不是读数，是"这算不算缺陷"**——旧模型下它是阻塞，新模型下它是被接受的后果。这一点写进了 ADR-0046。
+3. **`state/keyring.json` 的旧名仍可读**（新名优先）：既有 root 不会因为改名而失效。**迁移 = 旧路径仍然可读**，
+   不是把旧文件搬走或删掉。
+4. **本阶段没有跑真实 Rust 安装**。`install` 的**机制**现在能跑完（116.3 第一条用真实文件证明了），但
+   "把 `rustup-init.exe` 装进 store"是**下一次**的事——它要真机验收脚本改口径，而那是另一个决定。
+5. **`test_hmac_sha256` 仍然只许出现在测试路径**：本机签发用 `ed25519`，不是把测试算法搬进生产。
 

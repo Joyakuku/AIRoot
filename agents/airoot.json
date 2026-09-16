@@ -139,7 +139,7 @@
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
-      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an issuer, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the write cannot be completed on a real machine. The document is the self-validated `reference-plan` **plus** `plan_file` / `required_action` / `reason_code`; those three are deliberately not part of the plan contract (the approvable artifact is the file, and it is the one whose hash this document carries), so no single schema describes what is printed -- measured, not assumed (draft §94)",
+      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an approval, and since ADR-0046 an approval is an explicit local signing step -- provision the root's key first (airoot.tx.issuer), otherwise the command refuses with 'no approval keyring is installed in this root; provision a signing key first'. The approval is an audit record, not a proof of permission (a same-user process can read the key and could sign anyway). The document is the self-validated `reference-plan` **plus** `plan_file` / `required_action` / `reason_code`; those three are deliberately not part of the plan contract (the approvable artifact is the file, and it is the one whose hash this document carries), so no single schema describes what is printed -- measured, not assumed (draft §94)",
       "document_schema": null
     },
     {
@@ -166,7 +166,7 @@
       "question": "take ownership of a portable file I already have",
       "command": ["adopt", "<file>", "--mode", "import", "--capability", "<id>"],
       "read": ["plan_file", "required_action", "source.integrity.artifact_digest", "metadata.import.version_source", "metadata.import.size_bytes", "target.instance_id"],
-      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so the approve/install steps cannot be completed on a real machine. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied. As with `env persist`, the printed document is the self-validated `plan` plus `plan_file` / `required_action` / `reason_code`, so no single schema describes it (draft §94)",
+      "notes": "produces an install plan (nothing is copied yet); approve it and run install. The digest pins the bytes and attests no origin, so `publisher` is null. Boundary: the approve/install steps need an approval, and since ADR-0046 that is an explicit local signing step (provision the root's key, then `airoot.tx.issuer` signs the plan) -- approval is an audit record, not a proof of permission. It is also refused with SCOPE_CONFIRMATION_REQUIRED (exit 4) for the high-risk classes the routing layer must ask about — a frozen runtime, or a payload over the confirmation threshold — because import binds machine scope and cannot ask which scope you want; the plan records the measured size so the approver can see what would be copied. As with `env persist`, the printed document is the self-validated `plan` plus `plan_file` / `required_action` / `reason_code`, so no single schema describes it (draft §94)",
       "document_schema": null
     },
     {
@@ -213,7 +213,7 @@
       "question": "what may be collected, and collect it",
       "command": ["tool", "gc", "--plan"],
       "read": ["candidates[].blockers", "plans[].plan_hash"],
-      "notes": "--apply needs an approval token bound to the plan hash, and no production approval issuer exists in this build (decided: ADR-0025 keeps it waiting for the P2 broker), so only --plan is reachable today",
+      "notes": "--apply needs an approval token bound to the plan hash, and since ADR-0046 that token comes from an explicit local signing step, so --plan is reachable without one and --apply needs the root's key provisioned first",
       "document_schema": null
     },
     {
