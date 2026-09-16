@@ -17,6 +17,7 @@ Three independent claims are checked, and each of them is checked in a direction
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import pathlib
 import re
@@ -163,21 +164,24 @@ def parse_document() -> tuple[list[Row], dict[str, list[Row]], list[str]]:
         rows.append(row)
         by_schema[current].append(row)
 
-    exempt: list[str] = []
+    exempt: dict[str, str] = {}
     for line in tail.splitlines():
         if not line.startswith("|") or set(line) <= set("|-: "):
             continue
         cells = _cells(line)
-        if len(cells) != 2 or cells[0] in ("schema",):
+        if len(cells) != 3 or cells[0] in ("schema",):
             continue
         name = BACKTICK_RE.search(cells[0])
         if name is not None:
-            exempt.append(name.group(1).replace(".schema.json", ""))
+            exempt[name.group(1).replace(".schema.json", "")] = cells[1].strip().strip("`")
     assert rows, "no rows parsed out of the doc — the table shape changed"
     return rows, by_schema, exempt
 
 
-ROWS, BY_SCHEMA, EXEMPT = parse_document()
+ROWS, BY_SCHEMA, EXEMPT_CLASS = parse_document()
+#: The exempt schema names, in table order — the same rows as `EXEMPT_CLASS`, kept separate because
+#: most guards only ask *which* schemas are exempt, not why.
+EXEMPT = list(EXEMPT_CLASS)
 
 
 # --------------------------------------------------------------------------------------------
@@ -312,6 +316,60 @@ def test_every_documented_field_resolves_to_exactly_the_documented_values() -> N
     assert not problems, "documented values and schema values disagree:\n" + "\n".join(problems)
 
 
+#: The two kinds of "a published schema with no row of its own". Which one a schema is in is
+#: **declared by the table** and **measured here** (draft §107): the reasons used to be prose only, and
+#: one was false — `root-marker` said "同上", i.e. the same as the two `broker-*` rows ("P2 has not
+#: built it"), while this build *does* write root markers (`_produced_schemas` finds it). What it
+#: actually has is no vocabulary of its own: `schema_version`/`protocol_version` are version pins.
+EXEMPT_CLASSES = ("unbuilt", "no-own-vocabulary")
+
+
+def _measured_exempt_class(name: str) -> str | None:
+    """Which class this build's own facts support for ``name``, or None when they do not single one out."""
+
+    documented = {frozenset(row.values) for row in ROWS}
+    fits: list[str] = []
+    if name not in set(_produced_schemas()):
+        fits.append("unbuilt")
+    unaccounted = [
+        path
+        for path, values in vocabulary_with_paths(name).items()
+        if frozenset(values) not in documented and path.split(".")[-1] not in VERSION_PIN_FIELDS
+    ]
+    if not schema_walk.enums_by_path(schema_document(name)) and not unaccounted:
+        fits.append("no-own-vocabulary")
+    return fits[0] if len(fits) == 1 else None
+
+
+def test_each_exempt_schema_declares_the_reason_this_build_measures() -> None:
+    """§107: "why it has no row" is a claim about a *document*, so it is measured like the others.
+
+    The table declares the class; this guard derives it from the build (`_produced_schemas` for
+    "does anything construct this document", the walk for "does it have vocabulary of its own") and
+    holds the two equal. Neither class may be empty: a class with no members is a word a reader meets
+    and cannot use — the rule the deferral categories already follow.
+    """
+
+    assert EXEMPT_CLASS, "the exemption table parsed no rows"
+    assert set(EXEMPT_CLASS) == set(EXEMPT), "the two parsers disagree about which schemas are exempt"
+
+    problems: list[str] = []
+    for name in sorted(EXEMPT_CLASS):
+        declared = EXEMPT_CLASS[name]
+        if declared not in EXEMPT_CLASSES:
+            problems.append("%s: %r is not one of %s" % (name, declared, list(EXEMPT_CLASSES)))
+            continue
+        measured = _measured_exempt_class(name)
+        if measured != declared:
+            problems.append("%s: the table says %r, the build measures %r" % (name, declared, measured))
+    assert problems == [], "exemption reasons the build does not support:\n" + "\n".join(problems)
+
+    declared_classes = set(EXEMPT_CLASS.values())
+    assert declared_classes == set(EXEMPT_CLASSES), (
+        "classes with no member: %s" % sorted(set(EXEMPT_CLASSES) - declared_classes)
+    )
+
+
 def test_every_documented_producer_path_exists() -> None:
     missing = []
     for row in ROWS:
@@ -379,8 +437,14 @@ def test_each_daggered_value_has_no_writer_in_its_own_field() -> None:
 REQUIRED_KEYS = "required"
 
 
+@functools.lru_cache(maxsize=1)
 def _produced_schemas() -> dict[str, list[str]]:
-    """Schemas some function builds: its own keys cover every required property."""
+    """Schemas some function builds: its own keys cover every required property.
+
+    Cached since §107: three guards ask this question and the walk parses every module in the app,
+    so asking it once per exempt schema turned a 3-second module into a 12-second one. Nothing
+    mutates the result (callers take `set(...)` of it), and nothing in the suite rewrites the tree.
+    """
 
     produced: dict[str, list[str]] = {}
     for path in sorted(SCHEMA_DIR.glob("*.schema.json")):

@@ -307,13 +307,25 @@
 
 ## 不在这张表里的 schema
 
-| schema | 为什么不列 |
-|---|---|
-| `broker-request.schema.json` | P2 未实现：没有任何代码写出或读入它，方案在 `docs/broker/`。它的 `operation`/`integrity` 现在还只是设计 |
-| `broker-response.schema.json` | 同上；`status`/`security_mode`/`enforcement` 里的 `acl_and_broker` 这一版不会出现 |
-| `root-marker.schema.json` | 同上：没有枚举字段（`schema_version`/`protocol_version` 是版本钉，不算词汇；见取值表末尾那段）。它是 AIROOT 自己的根标记文件，不是给 agent 读的输出 |
+| schema | 类别 | 为什么不列 |
+|---|---|---|
+| `broker-request.schema.json` | `unbuilt` | P2 未实现：这一版**没有任何函数构造**它，方案在 `docs/broker/`。它的 `operation` 与 `client.integrity` 现在还只是设计，两条都在 `UNDOCUMENTED_BY_DESIGN` 里被点名 |
+| `broker-response.schema.json` | `unbuilt` | 同上：没有构造者。它的 `status` 与 `enforcement` 被点名（`security_mode` 在 `common` 那一节有行） |
+| `root-marker.schema.json` | `no-own-vocabulary` | **这一版会写出它**——根标记文件是十三个被构造的 schema 之一（`state/root.json`）。它被列在这里是因为**它自己没有词汇**：`schema_version` 与 `protocol_version` 两个字段都是**版本钉**（见本节末尾）。**原先这里写的是"同上"**（即按两个 `broker-*` 那样归到"P2 未实现"），那句话是**错的**，§107 量出来后改的 |
 
-这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105）：**任何一个已发布
-schema 能携带的词汇**（跟 `$ref` 走），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`
-（`test_l1_field_values.py`）里被**点名**——今天被点名的四条全部来自 `broker-*`：
+这张表只回答"**为什么不给它单独一节**"。"有没有人记录"由另一条判据守着（§105/§106）：**任何一个已发布
+schema 能携带的词汇**（跟 `$ref`、含唯一取值的 `const`），要么在表里有行，要么在 `UNDOCUMENTED_BY_DESIGN`
+（`test_l1_field_values.py`）里被**点名**。今天被点名的四条全部来自 `broker-*`：
 `operation`、`client.integrity`、`status`、`enforcement`。少一条、多一条都会红。
+
+**一套词汇"不在表里"只有三种合法理由**，而且这三种各有判据：
+
+1. **它在别处有行**——共享词汇（`common` 的 `$defs`）写在"定义处"那一节，别的文件不重复；
+2. **它被点名豁免**——`UNDOCUMENTED_BY_DESIGN` 里的四条（两个 `broker-*`），双向断言；
+3. **它是版本钉**——`VERSION_PIN_FIELDS` 里的字段名（`schema_version`/`protocol_version`/`schemaVersion`），
+   值恒为 `1`，由 `docs/schema/README.md` 规则 1 与 `test_l1_schema_catalog` 守着，**不写表行**。
+
+类别那一列（`unbuilt` / `no-own-vocabulary`）不是给人看的标签：它是**判据读的那一格**。
+"为什么不在表里"这件事的**声明**在文档里，**度量**在 `test_l1_field_values.py` 的
+`_measured_exempt_class` 里（"这一版有没有构造者" + "它自己有没有词汇"），两者必须一致——
+所以"给它编一个理由"这件事现在是做不到的。
