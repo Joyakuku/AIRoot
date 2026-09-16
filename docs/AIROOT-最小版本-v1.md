@@ -79,9 +79,8 @@
 > `security_mode=policy_only`；X 项测试通过（其中 Y 项跳过），golden 语料与全部计数守卫一致，
 > 真机验收脚本逐项通过。
 >
-> **但这话仍要带两个括注**：判据 #11（切换活跃版本不改 PATH、不重写入口）与 #14（崩溃恢复/回滚）
-> 目前是**机制 + pytest 覆盖**，真机闭环上还没走那两步——要按 §5 的实测状态说，不要把它们说成
-> 已经在真机上验过。
+> **但这话仍要带一个括注**：判据 #14（崩溃恢复/按规则回滚）目前是**机制 + pytest 故障注入**，
+> 真机闭环上还没逐个状态注入过——要按 §5 的实测状态说，不要把它说成已经在真机上验过。
 
 **不允许说**：AIROOT 已实现 / 已可用 / 具备 Everything 级性能 / 已具备受保护边界。
 ## 5. 结果：本轮结束时的实测状态
@@ -101,7 +100,7 @@
 | 8 | `where <capability>` 解析到它 | ✅ | §124：`management=managed`、`source=registry` |
 | 9 | 有动词真的把受管 payload 跑起来 | ✅ | §120 / ADR-0047 + §124：`run --capability` 的 `exit_status=0`、`persisted=false` |
 | 10 | 不依赖 machine PATH 的稳定入口 | ✅ | §123 / ADR-0050 + §124：`cli\exposure\bin\archive.cmd` 真实存在、**由 `cmd.exe` 真的转发**、`launcher_present=true` |
-| 11 | 切换活跃版本不改 PATH、不重写入口 | ⚠️ **一半** | 入口字节不变有测试（`test_a_new_version_rewrites_no_launcher_bytes`）；machine PATH 一字未写（没有任何动词写它）。**缺的是把这两件事放进真机闭环**——目前它们是 pytest 里的断言，不是 `real_machine_acceptance.py` 的一步 |
+| 11 | 切换活跃版本不改 PATH、不重写入口 | ✅ | §125：真机闭环上装了 `9.9.9` 再装 `9.9.10`，入口**逐字节相同**、入口路径不变、`where` 的目标变成新版本，machine PATH **读出来前后逐项相同** |
 | 12 | `retire` + `gc` 真的删掉真实 payload | ✅ | §124：`gc --apply` 之后那个 store 目录不在了 |
 | 13 | `doctor` 无 error | ✅ | §124：`status=healthy`、无 error/warning |
 | 14 | 中途崩溃能恢复或按规则回滚 | ⚠️ **一半** | `tx/rollback.py` 是唯一实现、pytest 里有故障注入覆盖（§109 / ADR-0035）。**缺的是在真实闭环上逐个状态注入一次**——§124 只跑了成功路径与真实删除 |

@@ -605,6 +605,40 @@ def closed_loop() -> int:
         check("and the PATH invariant holds", path.get("violations") == 0)
         check("the entry matches what this build writes", path.get("launchers", [{}])[0].get("matches_current") is True)
 
+        # Judgement 11, on the real loop: switching the active version must not rewrite the entry and
+        # must not touch the machine PATH. The entry's bytes are the whole promise (ADR-0050), and the
+        # PATH is read here rather than assumed -- nothing in this script writes it, which is exactly
+        # the kind of claim that should be measured rather than stated.
+        from airoot.caps.effective import machine_path as _machine_path
+
+        entry_before = entry.read_bytes()
+        path_before = list(_machine_path())
+        code, switch_plan = call(
+            "adopt", str(payload_source), "--mode", "import", "--capability", "archive", "--version", "9.9.10"
+        )
+        switch_file = str(switch_plan.get("plan_file") or "")
+        switch_token = root / "state" / "approvals" / "loop-switch-token.json"
+        call("issue", switch_file, "--out", str(switch_token))
+        call("approve", switch_file, "--token-file", str(switch_token))
+        code, switched = call("install", switch_file, "--token-file", str(switch_token))
+        show("install (new version)", code, switched, ("state", "instance_id", "generation_after"))
+        new_instance = str(switched.get("instance_id") or "")
+        code, where_after = call("where", "archive")
+        show("where archive (after switch)", code, where_after, ("instance_id", "launcher", "version"))
+        check(
+            "the switch bound the new version",
+            code == 0 and bool(new_instance) and new_instance != instance
+            and where_after.get("instance_id") == new_instance,
+        )
+        check("and left the stable entry byte-identical", entry.read_bytes() == entry_before)
+        check(
+            "and named the same entry path",
+            bool(where_after.get("launcher"))
+            and Path(str(where_after["launcher"])).resolve() == entry.resolve(),
+        )
+        check("and did not touch the machine PATH", list(_machine_path()) == path_before)
+        instance = new_instance  # the rest of the loop retires and collects what is bound now
+
         code, retired = call("tool", "retire", instance)
         show("tool retire", code, retired, ("payload_removed", "reason_code"))
         check("retiring clears the binding and keeps the payload", retired.get("payload_removed") is False)

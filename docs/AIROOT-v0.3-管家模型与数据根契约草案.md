@@ -10915,3 +10915,38 @@ root，**不联网**，用 `adopt --mode import` 从一个本地文件造出真�
 | golden 语料 / schema | **43 / 20**（不变） |
 | 新增 ADR | 无（这一节是验收，不是设计变更） |
 | W1 | `cli/tests/.tmp/` 的 7 个残留目录（`agent-acl-finish`、`agent-aclwrite`、`orchestrator`×2、`airoot-test-*`×3）已清掉；它本来就会被 pytest 的会话夹具删掉，残留只说明某些运行是被中断的 |
+## 125. 判据 #11 的另一半：在真机闭环上切一次活跃版本
+
+**§124 把闭环跑通了，但没有切过版本**；判据 #11（切换活跃版本不改 PATH、不重写入口）当时只有 pytest 断言。
+这一节把它搬进真机闭环：同一个能力先装 `9.9.9`，再装 `9.9.10`，然后量四件事。
+
+| 量的东西 | 实测 |
+|---|---|
+| 切换是否真的绑到了新版本 | `where archive` 的 `instance_id` 变成 `archive/probe-tool/9.9.10/win-x64`，`version=9.9.10` |
+| 稳定入口有没有被重写 | `entry.read_bytes()` **前后逐字节相同** |
+| `where` 报的入口路径有没有变 | 不变，仍是 `cli\exposure\bin\archive.cmd` |
+| machine PATH 有没有被动过 | `machine_path()` 前后**逐项相同**（这里是**读**出来的，不是假设"没人写它"） |
+
+**第四条值得单独说**：整个项目一直声称"没有任何动词写 machine PATH"，但那是**没有被度量过的声称**。
+验收脚本现在在切换前后各读一次真实的 machine PATH 并比较——**"我们没写"变成了"读出来没变"**。
+这不会让写 PATH 变成不可能（同用户进程仍可写），它只是让**这一条**从信条变成读数。
+
+### 125.1 为什么这条不能只用 pytest 代替（而 §124 之前正是那样）
+
+pytest 里的 `test_a_new_version_rewrites_no_launcher_bytes` 用的是**模拟 runner**，它证明"写入口的那段逻辑
+与版本无关"。真机闭环证明的是另一件事：**从 `adopt` 到 `install` 这条真实路径上，切换到第二个版本之后
+整条链（entry 字节、入口路径、PATH、`where` 的目标）仍然一致**。前者是单元性质，后者是验收判据 #11 的
+字面要求。**两者都要有，而在此之前只有前者。**
+
+### 125.2 成本
+
+| 项目 | 结果 |
+|---|---|
+**测试数不变**：1357 → 1357。验收脚本不是 pytest 模块，它的结论仍是 `closed loop: PASS`——这一节只多了四条 check，没有多一个测试函数。
+| golden 语料 / schema / ADR | **不变**（这一节没有设计变更，只有一次测量） |
+| 定义文档 | `docs/AIROOT-最小版本-v1.md` §5 的 #11 从"⚠️ 一半"改成"✅"，#14 仍是"⚠️ 一半"，§4 的括注随之只剩一条 |
+
+**剩下的一条（#14）现在有了确切的配方**：`TransactionJournal` 吃一个带 `checkpoint(state)` 的注入器
+（`conftest.FaultInjector` 就是它），`ArtifactRunner(registry, backend, injector=...)` 是可注入的入口，
+所以下一个阶段要做的只是"在真机闭环上逐个状态注入一次、再跑 `repair`"，而不是再设计什么。
+**把配方写在这里，是为了让下一轮不必重新测量一遍同样的东西。**
