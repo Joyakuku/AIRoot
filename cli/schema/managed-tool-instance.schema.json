@@ -20,7 +20,7 @@
     "file_manifest_digest": { "$ref": "common.schema.json#/$defs/digest" },
     "lifecycle_status": { "$ref": "common.schema.json#/$defs/lifecycle" },
     "health": { "$ref": "common.schema.json#/$defs/health" },
-    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[^\\\\/]+$" }, "uniqueItems": true },
+    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^(?!.*:)(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))[^\\\\/]+(?:[\\\\/][^\\\\/]+)*$" }, "uniqueItems": true },
     "bindings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/binding" }, "uniqueItems": true },
     "source": { "$ref": "common.schema.json#/$defs/source" },
     "manifest_digest": { "$ref": "common.schema.json#/$defs/digest" },

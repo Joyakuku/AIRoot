@@ -12329,3 +12329,66 @@ SELF_VALIDATION_FAILED: managed-tool-instance rejected a document produced by th
 | 未接线 | `source resolve` 暂时仍选单文件后端；**归档安装等 ADR-0052** |
 | 真机 | 未跑（没有可安装的归档路径）；本节的读数来自真机路径上的一次 `install` 失败 |
 
+## 145. 归档终于能装：owned payload 的入口点改成相对路径（ADR-0052）
+
+### 145.1 先量：那条 pattern 是**唯一的例外**
+
+§144.4 记下了 `SELF_VALIDATION_FAILED`。这一轮先把"到底谁在约束入口点"查了一遍：
+
+| 位置 | 对入口点的处理 |
+|---|---|
+| `where.py` | `from_root_relative(f"{store_path}/{entrypoints[0]}", root)` —— **在拼路径** |
+| `runtime.py` | `store_dir / Path(entrypoint_relative)` —— **在拼路径** |
+| `toolstate.py` | 按入口点名在载荷里逐个查文件 |
+| `discovery.py` | 观测到的入口点**就是相对路径**（`bin/python.exe`） |
+| `doctor.py` | 把记录的与**重新观测的**（相对路径）逐个比较 |
+| reference 一侧 | 测试里一直写着 `bin/java.exe`、`jdk-25.0.2/bin/java.exe`，**没有 schema 约束** |
+| `managed-tool-instance` / `runtime-instance` | `^[^\\/]+$` —— **只有它们说"裸名"** |
+
+**结论**：这不是一条有意为之的约束，是一处**不一致**。整个项目早就把入口点当"载荷根之下的相对路径"。
+
+### 145.2 改了什么
+
+1. 两个 schema 的 pattern 改成同一条相对路径 pattern（**纯超集**，裸名照旧合法 → 既有文档全部仍然有效，
+   不需要新 schema id）；
+2. **拒绝 `..` 段**与**任何含 `:` 的值**。冒号那一条是**写 pattern 时试出来的**：第一版接受了
+   `C:/abs.exe`，而 `Path("C:/abs.exe")` 是绝对路径，`store_dir / entrypoint` 会**丢掉 store 前缀**——
+   那等于让入口点跑到载荷外面去。Windows 文件名本来不允许冒号，所以这条拒绝零代价；
+3. `source resolve` 的 `_backend_for` 接回主线（`.zip` → `portable_archive`）；
+4. `docs/schema/README.md` 的兼容性修正节记一条。
+
+### 145.3 端到端（**离线**，这就是 P4 缺的那一半之一）
+
+`test_l1_sources.py` 那条"离线校验和 → 解析 → 计划 → 安装"的用例，夹具现在是一个**真正的 zip**
+（§144 已改），于是它走完整条归档路径：
+
+| 读数 | 值 |
+|---|---|
+| `plan` 的 `metadata.backend_id` | `portable_archive` |
+| `install` | `FINALIZED` |
+| 实例的 `entrypoints` | `["bin/cmake.exe"]`（**相对路径**，且是 `expose` 排出来的第一项） |
+| store 布局 | `store/<instance>/bin/cmake.exe`（剥掉包装目录之后） |
+
+**语料重生后 0 个 fixture 变化**——因为改的是 pattern 而不是枚举，`golden.py` 的输出本来就不含它。
+
+### 145.4 守卫与验红
+
+新用例（`test_l1_schema_catalog.py`）：拿 golden 的 `managed_tool_instance.json` 改 `entrypoints`，
+用核心自己的 `validate_document` 过：
+
+| 值 | 结果 |
+|---|---|
+| `bin/cmake.exe` / `cmake.exe` | **通过** |
+| `../escape.exe`、`C:/escape.exe`、`bin/../escape.exe`、`/escape.exe`、`bin/` | **各自被拒** |
+
+另加一条"同一走法两处定义"的断言：两个 schema 的 pattern **逐字相同**（否则两个 schema 会用两套约定）。
+
+### 145.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1381 → 1382**（+1）；常驻审计 **113 不动** |
+| 契约层 | 两个 schema 各改一处 pattern（**纯放宽**）；`docs/schema/README.md` +1 条 |
+| 语料 | **0 个 fixture 变化**（重生后无 diff） |
+| 真机 | 仍未跑：真实 cmake 的下载需要网络，而本机到 GitHub 的代理当时不可达（§143.4） |
+

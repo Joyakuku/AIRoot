@@ -2724,3 +2724,62 @@ binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
 
 **状态：已裁决（B —— 最深包含 + 地址化 id）。** 实现与实测记录见草案 **§140**。
 
+## ADR-0052 — **owned payload 的入口点允许是相对路径**（把两个 schema 与其余部分对齐）
+
+### 背景
+
+`managed-tool-instance.entrypoints` 与 `runtime-instance.entrypoints` 每一项必须匹配 `^[^\\/]+$`，也就是
+**裸文件名**；而 §144 把归档后端接上主线时，真机上第一次 `install` 就报
+`SELF_VALIDATION_FAILED … entrypoints/0: 'bin/cmake.exe' does not match '^[^\\/]+$'`。
+
+查了一圈之后，这条约束**是唯一的例外，而不是一条设计决定**：
+
+| 位置 | 对入口点的处理 | 读数 |
+|---|---|---|
+| `caps/where.py` | `from_root_relative(f"{store_path}/{entrypoints[0]}", root)` | **在拼路径** |
+| `caps/runtime.py` | `entrypoint = store_dir / Path(entrypoint_relative)` | **在拼路径** |
+| `caps/toolstate.py` | 按 `entrypoints` 逐个查载荷里的文件 | 名字即相对路径 |
+| `caps/discovery.py` | 观测到的入口点**就是相对路径**（`bin/python.exe`） | 见 `test_l1_discovery` |
+| `caps/doctor.py` | 把**记录的**入口点与**重新观测的**（相对路径）逐个比较 | 两边必须同形 |
+| **reference 一侧** | 测试里一直写着 `bin/java.exe`、`bin/flutter.bat`、`jdk-25.0.2/bin/java.exe` | **没有 schema 约束它** |
+| 两个 owned-instance schema | `^[^\\/]+$` | **只有它说"裸名"** |
+
+所以这**不是放宽一条有意为之的约束**，而是**修一处不一致**：除这两个 schema 之外，整个项目早就把入口点
+当成"载荷根之下的相对路径"。
+
+### 决定
+
+**A —— 把 `managed-tool-instance` 与 `runtime-instance` 的入口点 pattern 改成相对路径，并显式拒绝能离开载荷根的形状。**
+
+新 pattern（两份文件**同一条**，由测试钉住）：
+
+```text
+^(?!.*:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$))[^\\/]+(?:[\\/][^\\/]+)*$
+```
+
+- **接受**：`cmake.exe`、`bin/cmake.exe`、`bin\cmake.exe`、`jdk-25.0.2/bin/java.exe`；
+- **拒绝**：`../escape.exe`、`bin/../escape.exe`、`/escape.exe`、`bin/`、`a//b`、空串；
+- **拒绝任何含 `:` 的值**——这一条是写 pattern 时**试出来的**：第一版接受了 `C:/abs.exe`，而
+  `Path("C:/abs.exe")` 在 Windows 上是**绝对路径**，`store_dir / entrypoint` 会**丢掉 store 前缀**去跑载荷外的东西。
+  Windows 文件名本来也不允许冒号，所以这条拒绝没有代价。
+
+**纯放宽**：新 pattern 是旧 pattern 的超集（每个裸名仍然匹配），所以**没有任何既有文档因此失效**，
+不需要新 schema id，也不需要语料重生（实测：`golden.py` 重生后 **0 个 fixture 变化**）。
+
+### 被否决的路
+
+- **新增可选字段 `payload_root`**（§144.5 曾倾向的那条）：表达力相同，代价却是**一个 DB 列 + 一次
+  migration + `runtime`/`toolstate`/`launcher` 三处 join**，而且要把"载荷根"这个概念在 schema、DDL 与
+  文档里各说一遍。**§144.5 当时把 (c) 排在前面，是因为把这条 pattern 当成了有意为之的约束；它不是。**
+- **解压后扁平化**：cmake 这类"exe 靠同级/上级 `share`"的工具会跑不起来（§144.5 已记）。
+- **让后端只报裸名**：那就得把树压平，或者让 `expose` 撒谎——后者比前一条更糟。
+
+### 后果
+
+- 归档载荷可以被**如实描述**：实例的 `entrypoints` 是 `["bin/cmake.exe"]`，`store/<instance>/bin/cmake.exe`；
+- 参考一侧与 owned 一侧终于同形，`doctor` 的"记录 vs 重观测"比较不再依赖两个不同的约定；
+- **两个 schema 文件各改一处 pattern**，`docs/schema/README.md` 的兼容性修正节记一条；
+- 没有新 reason code、没有新动词、没有 DB 变更。
+
+**状态：已裁决（A —— 相对路径，且拒绝 `..` 与冒号）。** 实现与实测记录见草案 **§145**。
+

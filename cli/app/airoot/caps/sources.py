@@ -475,7 +475,7 @@ def resolve_source(
         capability_id=capability_id,
         version=version,
         source=source,
-        backend_id="portable_file" if offline else "https_artifact",
+        backend_id=_backend_for(locator, offline=offline),
         expected_digest=expected,
         artifact_url=str(locator),
         checksum_url=checksum_url_template if not offline else checksum_location,
@@ -484,6 +484,19 @@ def resolve_source(
         offline=offline,
         evidence=evidence,
     )
+
+
+def _backend_for(locator: Path | str, *, offline: bool) -> str:
+    """Which install backend can stage this artifact (draft §144/§145).
+
+    A ``.zip`` is a payload *tree*: staging it as a single file would put a zip in the store
+    with no entrypoint to bind. Everything else keeps the single-artifact backends they were
+    built for.
+    """
+
+    if Path(str(locator)).suffix.lower() == ".zip":
+        return "portable_archive"
+    return "portable_file" if offline else "https_artifact"
 
 
 def _fetch_text(url: str) -> str:

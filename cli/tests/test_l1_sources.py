@@ -349,7 +349,7 @@ def test_offline_resolution_uses_the_published_checksum(offline_release) -> None
 
     assert resolved.expected_digest == sha256_file(artifact)
     assert resolved.offline is True
-    assert resolved.backend_id == "portable_file"
+    assert resolved.backend_id == "portable_archive"
     assert resolved.source["locator"] == str(artifact)
     # provenance and integrity are separate fields with separate origins
     assert resolved.source["provenance"]["publisher"] == "Kitware"
@@ -430,7 +430,7 @@ def test_the_fetch_path_is_used_when_provided(offline_release) -> None:
     resolved = resolve_source(capability_id="build", version="3.31.6", fetch_text=fetcher)
 
     assert seen and seen[0].startswith("https://github.com/Kitware/CMake/releases/download/v3.31.6/")
-    assert resolved.backend_id == "https_artifact"
+    assert resolved.backend_id == "portable_archive"
     assert resolved.expected_digest == sha256_file(artifact)
 
 
@@ -509,7 +509,7 @@ def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
             "plan", "build", "--source-json", str(source_file),
         )
     assert code == 0, plan
-    assert plan["metadata"]["backend_id"] == "portable_file"
+    assert plan["metadata"]["backend_id"] == "portable_archive"
     assert plan["source"]["integrity"]["artifact_digest"] == sha256_file(artifact)
     assert plan["metadata"]["source_catalog"]["provenance_and_integrity_are_separate"] is True
     assert plan["metadata"]["source_catalog"]["signature"] is None
@@ -533,7 +533,10 @@ def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
     registry_handle = Registry.open(cli_root)
     try:
         row = registry_handle.instance(plan["target"]["instance_id"])
-        assert row["install_backend_id"] == "portable_file"
+        assert row["install_backend_id"] == "portable_archive"
+        # §145: the extracted tree is the payload, so the recorded entrypoint is a path inside
+        # it — and it is *first* because `expose` orders the capability's declared entry first.
+        assert json.loads(row["entrypoints_json"]) == ["bin/cmake.exe"]
     finally:
         registry_handle.close()
     assert artifact.is_file(), "the source artifact is never consumed"

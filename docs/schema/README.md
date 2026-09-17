@@ -118,3 +118,10 @@ python -m pytest cli/tests -q                                                   
 - `where-response` 新增**可选**属性 `launcher`（§123 / ADR-0050）：稳定入口的路径，没有就是 `null`。
   可选而不是必填——加必填按上面的兼容规则要新 schema id；而这一版**总是**把它写出来，这一点由
   CLI 测试钉住（"可选"与"总是发"是两件事，后者才是给调用方的承诺）。
+
+- `managed-tool-instance` / `runtime-instance` 的 `entrypoints`：pattern 从"裸文件名"
+  （`^[^\\/]+$`）放宽成**载荷根之下的相对路径**（§145 / ADR-0052）。这是**纯放宽**——旧的裸名仍然匹配，
+  所以没有既有文档失效、不需要新 schema id。它修的是**一处不一致**：`where`/`runtime`/`toolstate` 一直在拼
+  路径，reference 一侧的入口点一直就是路径（`bin/java.exe`），只有这两个 schema 说"裸名"，而归档载荷天生
+  是一棵树。新 pattern 另外**拒绝 `..` 段与任何含 `:` 的值**——后者是写 pattern 时试出来的：`C:/abs.exe`
+  在 Windows 上是绝对路径，`store_dir / entrypoint` 会丢掉 store 前缀。

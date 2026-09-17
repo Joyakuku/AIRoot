@@ -19,6 +19,8 @@ import json
 import pathlib
 import re
 
+import pytest
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SCHEMA_DIR = REPO / "cli" / "schema"
 CATALOG = REPO / "docs" / "schema" / "README.md"
@@ -37,6 +39,54 @@ VERSION_BY_PROTOCOL = {"broker-request": "the broker design's IPC envelope carri
 CONDITIONAL_KEYWORDS = frozenset({"if", "then", "else", "allOf", "anyOf", "oneOf", "not"})
 
 MIN_BOUNDARY_LENGTH = 20
+
+
+def test_an_owned_payload_entrypoint_may_be_a_relative_path() -> None:
+    """§145 / ADR-0052: the owned-instance schemas were the only place that forbade a path.
+
+    `where`, `runtime`, `toolstate` and the whole *reference* side have been joining path-shaped
+    entrypoints for stages (`bin/java.exe` is in the shipped tests), discovery reports relative paths
+    (`bin/python.exe`) that `doctor` compares against recorded ones — and only these two schemas said
+    "a bare filename". An archive payload is a tree, so the pattern now accepts a relative path below
+    the payload root and still refuses anything that could leave it.
+
+    The document used here is the golden instance, mutated: that keeps the check about the *pattern*
+    rather than about hand-writing a valid instance.
+    """
+
+    import copy
+
+    from airoot.exits import AirootError
+    from airoot.schema_io import validate_document
+
+    instance = json.loads(
+        (REPO / "cli" / "tests" / "fixtures" / "golden" / "managed_tool_instance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    relative = copy.deepcopy(instance)
+    relative["entrypoints"] = ["bin/cmake.exe"]
+    validate_document("managed-tool-instance", relative)
+
+    bare = copy.deepcopy(instance)
+    bare["entrypoints"] = ["cmake.exe"]
+    validate_document("managed-tool-instance", bare)
+
+    for escape in ("../escape.exe", "C:/escape.exe", "bin/../escape.exe", "/escape.exe", "bin/"):
+        broken = copy.deepcopy(instance)
+        broken["entrypoints"] = [escape]
+        with pytest.raises(AirootError):
+            validate_document("managed-tool-instance", broken)
+
+    # One definition, two files: `runtime-instance` describes the same payload tree shape.
+    patterns = {
+        name: json.loads((SCHEMA_DIR / f"{name}.schema.json").read_text(encoding="utf-8"))["properties"][
+            "entrypoints"
+        ]["items"]["pattern"]
+        for name in ("managed-tool-instance", "runtime-instance")
+    }
+    assert len(set(patterns.values())) == 1, patterns
 
 
 def schemas() -> dict[str, dict]:

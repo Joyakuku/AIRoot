@@ -257,7 +257,7 @@ def test_cli_pin_offers_a_real_plan_when_a_source_exists(
 
     assert code == 0, document
     assert document["plan"] is not None, document
-    assert document["plan"]["metadata"]["backend_id"] == "portable_file"
+    assert document["plan"]["metadata"]["backend_id"] == "portable_archive"
     assert Path(document["plan_file"]).is_file()
     assert document["active_binding_changed"] is False
     assert registry.instances() == [], "offering a plan installs nothing"

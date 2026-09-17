@@ -21,7 +21,7 @@
     "lifecycle_status": { "$ref": "common.schema.json#/$defs/lifecycle" },
     "health": { "$ref": "common.schema.json#/$defs/health" },
     "bindings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/binding" }, "uniqueItems": true },
-    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[^\\\\/]+$" }, "uniqueItems": true },
+    "entrypoints": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^(?!.*:)(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))[^\\\\/]+(?:[\\\\/][^\\\\/]+)*$" }, "uniqueItems": true },
     "source": { "$ref": "common.schema.json#/$defs/source" },
     "environment_generation": { "type": "integer", "minimum": 0 },
     "file_manifest_digest": { "$ref": "common.schema.json#/$defs/digest" }
