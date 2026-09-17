@@ -2890,3 +2890,64 @@ schema 自己的**形状构造（`runtime_id`/`runtime_family` 而不是 `tool_i
   `runtime-instance` 现在两边都在），换成了一个仍然两边都不在的名字——**变异不再变异就必须换掉**。
 
 **状态：已裁决（A/B/C/D 全部落地）。** 实现与读数见草案 **§150**。
+
+## ADR-0055 — **§12.1 的确认门这一版没有作答机制**（一个"必须确认"的类，却给不出答案）
+
+### 背景
+
+P5 的最后一步是让操作者装一个**真实运行时**。§151 把来源接上了，`source resolve node` 真的解析成功，
+而 `plan` 报：
+
+```text
+exit=4  SCOPE_CONFIRMATION_REQUIRED
+message: installing node needs confirmation before a plan may be produced
+evidence: installing a runtime creates an environment, and where it lives is a real choice
+          options: project-isolated / data-root / cancel
+          origin=high_risk
+```
+
+于是**再给一次显式答案**：`plan node --scope data-root --target data-root:dr-node`。**结果一样**——
+`SCOPE_CONFIRMATION_REQUIRED`。查代码：
+
+| 位置 | 读数 |
+|---|---|
+| `caps/planner.py:347-366` | 高危类（`creates_environment` / 超阈值 / **`kind=runtime`**）一律 `confirmation=True`，**与调用者给了什么无关** |
+| `cli.py:2249-2260` | `if decision.confirmation_required:` 直接抛，**从不读 `args.scope`** |
+| `cli.py:2250-2251` | 拒绝的理由是"未确认的计划落到磁盘上可能被另一条路批准" —— 那是**没作答**的情形，不是**已作答**的情形 |
+
+所以 §12.1 那三类"必须确认"里，**运行时装环境这一类在整个 build 里无法被确认**：它打印三个选项，
+而**三个选项一个都给不出来**。`adopt --mode import` 那条拒绝（§12.1 的同一道门）当时写下的理由是
+"import 固定绑机器级、问不了'装哪儿'，所以拒绝" —— 那一句是**对的**，错的是它的推论：`plan` **能**问，
+但没人接得住答案。
+
+### 决定
+
+**A —— 这是**产品面**的缺口，不是能力缺口，而且它必须被记成缺口而不是绕过去。** 运行时本身没有做不了的事：
+来源、后端、解包、`kind=runtime`、`runtime-instance` 写者、`gc` 全都就位，**只差一次确认**。绕过它的
+两条近路都被否决：
+- **在 `import` 上开一个 `--confirm`**：那正是 §12.1 拒绝过的东西（把三道高风险门里的一道变成装饰）；
+- **让 `--scope` 隐式作答而不记录**：那会把"谁决定它住在哪"从账本里抹掉，而 §20.3-2 的整条理由就是要
+  让它可查。
+
+**B —— 最小修法写在这里，留给下一个阶段落地（不在本 ADR 里实现）**：`cmd_plan` 的拒绝条件是
+**"没作答"**而不是"这个类需要确认"，也就是
+
+```text
+if decision.confirmation_required and not args.scope:   # 才是没作答
+```
+
+并且当调用者**给了** scope 时，把"这次确认是显式给出的"写进计划的 `metadata.routing`（现在那里只有
+`confirmation_required: true`，读起来像"没人确认过"）。这一条改的是**一次拒绝的触发条件**，
+不是那道门本身——没给 scope 的调用**照旧**被拒。
+
+**C —— 缺口进账本。** `AGENTS.md` §8 的"尚未实现"里多一条（在这一版，`kind=runtime` 的能力**无法**产生计划）；
+草案 §152 记读数与那条最小修法。
+
+### 代价
+
+- 代价：P5 的"装一个真实运行时"这一条**这一版仍然走不到头**，而且原因是一处**表面缺口**——读代码的人
+  很容易把 `SCOPE_CONFIRMATION_REQUIRED` 读成"设计如此"，而实际是"设计如此、但没人接答案"。
+- 不在本 ADR 里实现它的理由：它要改的是一个**已经发布并被守卫盯住的拒绝路径**，而这一轮的上下文预算
+  不足以把它连同真机整链一起验完；**分两轮做，比一轮做一半好**。
+
+**状态：已裁决（A —— 记成缺口；B —— 最小修法给出但未实现；C —— 进账本）。** 读数见草案 **§152**。

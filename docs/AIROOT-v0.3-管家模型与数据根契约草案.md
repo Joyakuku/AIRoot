@@ -12943,3 +12943,59 @@ evidence: installing a runtime creates an environment, and where it lives is a r
 | 语料 | **0 个 fixture 变化**（`execution_bounds.json` 里的 revision 字符串变了，数量不变，仍是 **44**） |
 | 真机读数 | 上游解析：真；`expected_digest` 与上游发布逐字相同；`plan` 报 `SCOPE_CONFIRMATION_REQUIRED(4)` |
 | **没有做** | **回答那道门之后的整链没有观察到**：`plan --scope … ` → `issue` → `approve` → `install` → `tool verify` → `run --capability node -- --version` → `retire` → `gc` 真删。所以这一节的标题是"路通了、它在正确的地方停下来问"，**不是"真机装成了一个运行时"**。下一轮补这一次并记录读数 |
+## 152. 度量：§12.1 的确认门这一版**没有作答机制**（ADR-0055）
+
+### 152.1 读数：给了答案，门还是不开
+
+§151 把第一个 runtime 来源接上之后，`plan` 报 `SCOPE_CONFIRMATION_REQUIRED`，并列了三个选项
+（`project-isolated / data-root / cancel`）。于是**按它列出的选项给一个显式答案**：
+
+| 命令 | 读数 |
+|---|---|
+| `plan node --version 22.14.0 --source-json <resolved>` | `exit=4`、`SCOPE_CONFIRMATION_REQUIRED`、`options: project-isolated / data-root / cancel` |
+| `plan node … --scope data-root --target data-root:dr-node` | **一模一样**：`exit=4`、`SCOPE_CONFIRMATION_REQUIRED` |
+
+代码侧的读数（两处，缺一不可）：
+
+| 位置 | 读数 |
+|---|---|
+| `caps/planner.py:347-366` | 高危三类（`creates_environment` / 超阈值 / **`kind=runtime`**）一律 `confirmation=True`，与调用者给了什么无关 |
+| `cli.py:2249-2260` | `if decision.confirmation_required:` 直接抛，**从头到尾没有读 `args.scope`** |
+
+所以这一版里，**§12.1 的三类"必须确认"中"装环境"这一类无法被确认**：它打印三个选项，而三个选项
+一个都给不出来。这不是"设计上就该拒绝"——拒绝的理由（`cli.py:2250`）是"未确认的计划落到磁盘上可能被
+另一条路批准"，那说的是**没作答**的情形；而调用者**给了** scope，仍然被当成没作答。
+
+### 152.2 这一条为什么重要：P5 的最后一步卡在**表面**上
+
+运行时那条路上**没有缺件**：来源（§151）、`portable_archive`（§145）、`kind=runtime`（§150）、
+`runtime-instance` 写者（§150）、`gc`（§144）全部就位，`source resolve node` 也真的解析成功
+（`expected_digest` 与上游发布逐字相同）。**只差一次确认**，而这一次确认无处可给。
+
+这也解释了 §150 里那句"操作者还没有一条路"的真正原因：它**不是**"没人写那条路"，而是"路的尽头是一道
+问得出、答不了的门"。
+
+### 152.3 最小修法（写在 ADR-0055 里，**本阶段不实现**）
+
+拒绝的条件应该是**"没作答"**而不是"这个类需要确认"：
+
+```text
+if decision.confirmation_required and not args.scope:
+```
+
+并且当调用者给了 scope 时，把"这次确认是显式给出的"记进计划的 `metadata.routing`（那里现在只有
+`confirmation_required: true`，读起来像"没人确认过"）。**没给 scope 的调用照旧被拒**——那道门不动，
+动的是它的触发条件。
+
+不在本阶段实现它的理由写在 ADR-0055：它要改的是一条**已被守卫盯住的既有拒绝路径**，而把"改它"与
+"真机跑通整链"塞进同一轮、又在预算见底时做，是本项目**明确不要**的那种一半。
+
+### 152.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 不动**（这一阶段只记读数与裁决，不改代码） |
+| 契约层 | **不动** |
+| 语料 | **不动** |
+| 真机 | `source resolve node` 真解析成功（`portable_archive`、digest 与上游逐字相同）；`plan` 两次都被同一道门拒 |
+| 没有做 | ADR-0055 的最小修法本身；以及它之后的整链（`plan --scope …` → `install` → `run --capability node -- --version` → `gc` 真删）——**那是下一轮的第一件事** |
