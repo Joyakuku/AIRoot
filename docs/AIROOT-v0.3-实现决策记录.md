@@ -2718,7 +2718,9 @@ binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
 - 现有 id 不动（逐字节），`test_matching_object_becomes_a_reference_candidate` 那类断言原样成立；
 - `doctor`、`where`、`inventory`、`search` 都**不需要改**：它们按路径工作；
 - **一处新增拒绝**：`adopt <数据根本身>`（以前掉进"不在数据根里"的模糊消息，现在说清是作用域不是对象）；
-- 不传数据根的调用点（`capability check`）保持旧 id 形态（`relative_path` 为 `None` 时回落到目录名）；
+- 不传数据根的调用点保持旧 id 形态（`relative_path` 为 `None` 时回落到目录名）。**这一条已被 §169 改掉**：
+  `capability check` 现在也把「哪个已注册数据根拥有这个目标」传给同一套判据（ADR-0068），于是它不再绕过
+  ADR-0051 那条「数据根不是它自己的孩子」的拒绝；原文保留在此，因为它是当时正确的边界。
 - **没有新 schema、没有新 reason code、没有新 CLI 动词**；`Candidate` 多一个内部字段 `relative_path`，
   它**不进文档**（`to_document` 未变，故 discover 的 schema 与 golden 语料不动）。
 
@@ -3670,7 +3672,62 @@ explain、doctor 四处一致）；没有索引 / 不覆盖 → `SEARCH_FALLBACK
 
 **状态：已裁决并已落地（草案 §168）**：三处独立字节级变异（行过滤、损坏索引的码、内容判据）各自命中
 它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`（真机索引
-51187 条、索引路径查询 exit 0）。：A 的守卫是
+51187 条、索引路径查询 exit 0）。
+
+## ADR-0068 — **这个 build 不许接受一件它自己的文档承载不了的事：身份在写之前校验，"缺批准"报批准而不是报输入**
+
+### 背景
+
+第三轮全表面测试里有一族缺陷是同一个形状：**入口收下一件这个 build 自己无法承载的东西，然后在别处
+把它报成"实现缺陷"或"输入错误"**（草案 §169 的读数）：
+
+- `root init <dir> --root-instance-id x4 --machine-id short` → **exit 0 / SUCCESS**，盘上留下一个完整的
+  root，`root status` 说它健康；此后**每一次 `plan` 都报 `SELF_VALIDATION_FAILED`(8)**——一个
+  `reason-codes.md` 明确定义为"这是实现缺陷，不是用户错误"的码。那个 pattern 出现在 **5 个已发布
+  schema** 里，而 `root init` 写出的 `state/registry.json` **正受其中之一（`registry-projection`）管**。
+- `install <plan>` / `approve <plan>` 不带 `--token-file` → **exit 8 / `INVALID_INPUT` /
+  "the following arguments are required"**。而文档对"需要批准的动作"的承诺是**退出码 4 + `required_action`
+  里带要批准的 `plan_hash`**，`env persist`/`tool gc --apply`/`uninstall` 三条也都是这么做的——只有这两条
+  把"缺批准"报成了"你的输入错了"，因为 `--token-file` 被声明成 argparse 必填，处理器根本没机会回答。
+- `capability check <已注册数据根>` → `adoptable`，而 `adopt` 对同一路径说 `INVALID_INPUT`；
+  `capability check <文件>` → 一句 "no capability matched this object"，而**父目录**同一判据报 `adoptable`；
+  `adopt <文件>` 的 `INVALID_INPUT` **证据是空的**。
+
+### 决定
+
+**A —— 身份在写任何东西之前校验，失败就是 `INVALID_INPUT`(8)。** `root init` 现在按**已发布 schema**
+校验 `root_instance_id` 与 `machine_id`（新增 `schema_io.field_errors()`：把某个字段的值按该文档为它钉的
+子约束校验，`$ref` 走同一个 registry），证据里带 **pattern 原文**与**是哪个字段**。**选"写之前校验"
+而不是"写完清掉"**：判据只依赖调用方入参，失败路径上盘上**什么都没有**，不需要再写一段"删除得对"的代码
+并证明它对。**顺带补上一条通则**：这个 build 自己产出的文档必须过自己的 schema——`update_projection`
+现在写盘前 `validate_self("registry-projection")`（`root-marker` 本来就有这一道）。
+
+**B —— "缺批准"要报批准。** `--token-file` 改**可选**，缺它时 `APPROVAL_REQUIRED`(4) + `required_action`
+带上**要批准的那个 `plan_hash`**，形状与 `env persist`/`uninstall` 一致。带 token 的路径一字不动。
+**这是"同一个状态只有一个词"的又一处**（ADR-0067 C 的同一条规则）：五条需要批准的动词不能有两条用
+"输入错误"回答。
+
+**C —— 分类要带上"谁拥有它"。** `adopt` 原有的"最深且严格包含"判据抽成 `_data_root_owning()`，`adopt`
+与 `capability check` **共用**，于是 `capability check` 不再绕过 ADR-0051 那条"数据根是作用域、不是它
+自己的对象"的拒绝。**一个文件**仍然诚实报 `unmanaged`（它本身不是可 adopt 的对象），但证据要点名
+**父目录及其分类**、并给出下一步；`adopt <文件>` 的空证据也补上。**"诚实的判决 + 可操作的证据"**是这一条
+的形状：verdict 不变，缺的是下一步。
+
+### 代价
+
+- **一处对外行为变化**：`root init` 对非法身份的退出码由 0 变 8（**这是修正**，旧行为会造出一个坏 root）；
+  `install`/`approve` 缺 token 时由 8 变 4；`capability check <已注册数据根>` 由 `adoptable` 变
+  `INVALID_INPUT`。**既有期望被取代 0 条**（实现方逐条审计过）。
+- **一处新增的前置条件（接受并记录）**：`capability check` 不带 `--capability` 时**现在会读 registry**
+  ——"谁拥有这个目标"是它回答③所必需的；于是 registry 读不出来时它以 `REGISTRY_MISSING`(6) 失败，
+  而不再"照旧回答"。理由与 §165 的 `path repair` 相同：读不出来时那是**未知**，而把未知读成"没有数据根"
+  正是这一族缺陷本身。**这个场景此前没有任何测试或文档覆盖**，写在 §169.3。
+- **库层不拦**：`Registry.initialize()` 仍能建出身份非法的 registry；守卫在**写盘那一刻**。
+- **嵌套数据根**沿 `adopt` 既有行为（owner 取最深且严格包含者）；不是为③单独论证过的规则。
+- **ADR-0051 的脚注被订正**（原文保留 + 指向本条）。
+
+**状态：已裁决并已落地（草案 §169）**：三处独立字节级变异（身份校验、缺 token 的批准分支、owner 判据）
+各自命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

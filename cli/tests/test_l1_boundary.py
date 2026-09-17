@@ -254,6 +254,142 @@ def test_cli_capability_check_rejects_a_lookalike(capsys, registry, tests_tmp: P
 
 
 # --------------------------------------------------------------------------- #
+# §169: the question is asked *about an object*, and a data root is not one
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def registered_data_root(capsys, registry, tests_tmp: Path, request) -> Path:
+    """A registered data root holding one real PE object (`python/python.exe`).
+
+    `capability check` has to pass the owning data root into discovery; the only way to see whether it
+    does is to ask about paths that are *inside* one, and about the root itself. Each test gets its
+    own root because the registry — and therefore the registration — is per-test.
+    """
+
+    from test_l1_discovery import place_python_pe
+
+    slug = re.sub(r"[^a-z0-9]+", "-", request.node.name.lower()).strip("-")[:40]
+    path = tests_tmp / f"boundary-data-root-{slug}"
+    place_python_pe(path / "python", "python.exe")
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "data-root", "add", str(path), "--id", f"dr-{slug}", "--role", "runtime",
+    )
+    assert code == 0, document
+    return path
+
+
+def test_capability_check_refuses_a_registered_data_root(
+    capsys, registry, registered_data_root: Path
+) -> None:
+    """§169: a data root is a **scope**, and discovery already refuses to call it its own object.
+
+    `capability check` used to call `classify_object` without passing the data root at all, which
+    bypassed that refusal: `D:\\env` itself came back `adoptable` with `capability_id=ffmpeg`, and the
+    remediation it printed (`airoot adopt D:\\env --mode reference`) is a command `adopt` refuses. The
+    answer now comes from the same rule, quoted from the same place.
+    """
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "capability", "check", str(registered_data_root),
+    )
+
+    assert code == 8, document
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert document.get("verdict") != "adoptable", "a scope is not one of its own objects"
+    assert any("data root is a scope" in item for item in document["evidence"]), document["evidence"]
+    assert any(str(registered_data_root) in item for item in document["evidence"]), document["evidence"]
+
+
+def test_capability_check_still_adopts_a_directory_inside_a_data_root(
+    capsys, registry, registered_data_root: Path
+) -> None:
+    """Non-vacuity for the refusal above: the object *inside* the root is unchanged."""
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "capability", "check", str(registered_data_root / "python"),
+    )
+
+    assert code == 0, document
+    assert document["verdict"] == "adoptable"
+    assert document["capability_id"] == "python"
+    assert document["capability_source"] == "observed (external_reference)"
+
+
+def test_capability_check_on_a_file_names_the_directory_that_can_be_adopted(
+    capsys, registry, registered_data_root: Path
+) -> None:
+    """§169: a file is never the object, but "no capability matched" is not an answer either.
+
+    `adopt --mode reference` registers a directory, so the only useful answer about a file names the
+    directory that *could* be adopted and how it classifies. The verdict stays honest: the file is
+    still `unmanaged` — nothing here claims the file is adoptable.
+    """
+
+    executable = registered_data_root / "python" / "python.exe"
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "capability", "check", str(executable),
+    )
+
+    assert code == 9, document
+    assert document["verdict"] == "unmanaged"
+    assert document["capability_id"] is None, "the file itself has no capability"
+    assert any(
+        str(registered_data_root / "python") in item and "capability_id=python" in item
+        for item in document["evidence"]
+    ), document["evidence"]
+    assert any("adopt" in item for item in document["evidence"]), document["evidence"]
+
+
+def test_capability_check_on_a_file_says_when_the_parent_is_not_adoptable_either(
+    capsys, registry, registered_data_root: Path
+) -> None:
+    """The other half of the same answer: when the parent is not adoptable, say so rather than point
+    at a directory that would be refused too."""
+
+    directory = registered_data_root / "mystery"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "python.exe").write_bytes(b"MZ-not-a-pe-at-all\n")
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "capability", "check", str(directory / "python.exe"),
+    )
+
+    assert code == 9, document
+    assert document["verdict"] == "unmanaged"
+    assert any(
+        str(directory) in item and "not an adoptable object either" in item
+        for item in document["evidence"]
+    ), document["evidence"]
+
+
+def test_adopt_on_a_file_refuses_with_evidence(
+    capsys, registry, registered_data_root: Path
+) -> None:
+    """§169: this `INVALID_INPUT` shipped with `evidence: []`, which is the same as no next step."""
+
+    executable = registered_data_root / "python" / "python.exe"
+
+    code, document = run(
+        capsys, "--json", "--root", str(Path(registry.path).parent.parent),
+        "adopt", str(executable), "--mode", "reference",
+    )
+
+    assert code == 8, document
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert document["evidence"], "an empty evidence list leaves the caller with nothing to do"
+    assert any(str(registered_data_root / "python") in item for item in document["evidence"]), (
+        document["evidence"]
+    )
+
+
+# --------------------------------------------------------------------------- #
 # the boundary at every entry point (draft §91)
 # --------------------------------------------------------------------------- #
 #

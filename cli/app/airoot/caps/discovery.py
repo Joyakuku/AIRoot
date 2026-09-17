@@ -514,7 +514,19 @@ def classify_object(
     target = Path(entry)
     relative_path = _relative_inside(target, data_root_path)
     if not target.is_dir():
-        raise AirootError("INVALID_INPUT", f"an adopted object must be a directory: {target}")
+        # §169: this refusal used to carry no evidence at all, which is the same as carrying no next
+        # step. A caller who names a file needs to know what object *would* work, and it is not this
+        # one: `adopt --mode reference` registers a directory.
+        raise AirootError(
+            "INVALID_INPUT",
+            f"an adopted object must be a directory: {target}",
+            evidence=[
+                f"{target.name} is a file; an adopted object is a directory, so it has no object root",
+                f"parent={target.parent}",
+                "ask about the parent with `airoot capability check <parent>`: a directory can be "
+                "adoptable where a file inside it is not",
+            ],
+        )
     if _is_reparse(target):
         return Candidate(
             object_root=target,

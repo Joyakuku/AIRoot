@@ -31,7 +31,7 @@ from .canon import digest_text
 from .clock import Clock, SYSTEM_CLOCK
 from .exits import AirootError
 from .paths import canonicalize, volume_serial
-from .schema_io import validate_document
+from .schema_io import field_errors, validate_document
 
 LAYOUT_DIRS = (
     STORE_DIR,
@@ -156,6 +156,41 @@ def ensure_layout(root: Path) -> None:
         Path(root).joinpath(relative).mkdir(parents=True, exist_ok=True)
 
 
+#: The identity fields this module freezes into the documents it writes, and the published schema
+#: that pins each shape. §169: they used to be written unchecked, so `root init` could hand back a
+#: root that looks healthy and then rejects every plan — `plan`, `reference-plan`,
+#: `registry-projection`, `transaction` and `approval-token` all pin `machine_id` to the same
+#: pattern, and `state/registry.json` (registry-projection) is the one `root init` writes itself.
+IDENTITY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("root_instance_id", "registry-projection"),
+    ("machine_id", "registry-projection"),
+)
+
+
+def validate_identity_fields(root_instance_id: str, machine_id: str) -> None:
+    """Refuse an identity the published schemas reject, naming the field and the shape.
+
+    The constraint is read out of the schema rather than restated here, so the evidence quotes the
+    pattern the schema actually carries — ``common.schema.json#/$defs.id`` for ``root_instance_id``
+    (``root-marker`` and ``registry-projection`` pin the same one) and the ``machine_id`` pattern
+    the five documents above share.
+    """
+
+    values = {"root_instance_id": root_instance_id, "machine_id": machine_id}
+    for field, schema in IDENTITY_FIELDS:
+        problems = field_errors(schema, field, values[field])
+        if problems:
+            raise AirootError(
+                "INVALID_INPUT",
+                f"root identity field {field} is not the shape its published schema pins",
+                evidence=[
+                    *problems,
+                    f"field={field} schema={schema}",
+                    "an identity this root's own documents cannot carry is refused before anything is written",
+                ],
+            )
+
+
 def init_root(
     root: Path,
     *,
@@ -174,6 +209,9 @@ def init_root(
     root = Path(root)
     if not root_instance_id or not machine_id:
         raise AirootError("INVALID_INPUT", "root_instance_id and machine_id are required")
+    # Before the marker, before the layout, before the registry: an identity its own documents
+    # reject must not reach the disk at all (§169).
+    validate_identity_fields(root_instance_id, machine_id)
     if marker_path(root).exists():
         raise AirootError("INVALID_INPUT", f"root already initialised: {root}")
     root.mkdir(parents=True, exist_ok=True)

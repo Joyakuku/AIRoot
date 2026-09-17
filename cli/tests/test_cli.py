@@ -208,6 +208,88 @@ def test_root_init_refuses_a_directory_that_already_has_contents(capsys, tests_t
     assert target.joinpath("the-user-s-file.txt").is_file()
 
 
+#: The two identities `root init` freezes into the documents it writes, the published shape each
+#: one must satisfy, and a value that violates it while still being an obviously *typed* argument.
+#: §169: a short `machine_id` used to be written unchecked, and the root then answered `root status`
+#: with `SUCCESS` while every plan failed `SELF_VALIDATION_FAILED` against the very same pattern.
+REJECTED_IDENTITIES = [
+    ("machine_id", "--machine-id", "short", "^[A-Za-z0-9._:-]{8,128}$", "short"),
+    ("machine_id", "--machine-id", "has spaces", "^[A-Za-z0-9._:-]{8,128}$", "spaces"),
+    ("root_instance_id", "--root-instance-id", "Root_Bad", "^[a-z0-9][a-z0-9._/-]{0,127}$", "upper"),
+    ("root_instance_id", "--root-instance-id", "root bad", "^[a-z0-9][a-z0-9._/-]{0,127}$", "spaced"),
+]
+
+
+@pytest.mark.parametrize(
+    "field,flag,value,pattern,slug", REJECTED_IDENTITIES, ids=[item[4] for item in REJECTED_IDENTITIES]
+)
+def test_root_init_refuses_an_identity_its_own_documents_cannot_carry(
+    capsys, tests_tmp: Path, field: str, flag: str, value: str, pattern: str, slug: str
+) -> None:
+    """§169: both identities are checked against the published schemas **before** anything is written.
+
+    Non-vacuity matters here: every call passes **both** identity flags, so argparse's `required`
+    cannot be what refuses — the schema constraint is. The evidence has to quote the pattern the
+    schema actually carries (read out of the schema, not restated in the code) and the whole point is
+    that no root is left behind: an init that failed at the end would leave a directory that
+    `root status` still calls healthy.
+    """
+
+    target = tests_tmp / f"init-bad-identity-{slug}"
+    other = {
+        "--root-instance-id": "root-identity-guard",
+        "--machine-id": "host-identity-guard",
+    }
+    other[flag] = value
+
+    code, document = run(
+        capsys, "--json", "root", "init", str(target),
+        "--root-instance-id", other["--root-instance-id"],
+        "--machine-id", other["--machine-id"],
+    )
+
+    assert code == 8, document
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert field in document["message"], document["message"]
+    assert any(pattern in item for item in document["evidence"]), document["evidence"]
+
+    assert not target.exists(), "a refused init left a partial root on disk"
+
+    # ...and the directory it refused is not a root anyone can be told is healthy.
+    status_code, status = run(capsys, "--json", "--root", str(target), "root", "status")
+    assert status_code != 0 and status["reason_code"] != "SUCCESS"
+
+
+def test_root_init_writes_two_documents_each_of_their_own_schemas_accept(capsys, tests_tmp: Path) -> None:
+    """§169: the guard is "this build's own documents pass this build's own schemas".
+
+    `state/root.json` was already validated before it was written; `state/registry.json` was not,
+    which is why the defect could only surface one verb later. Both are read back and re-validated
+    here, field by field, against the published schema that describes them.
+    """
+
+    from airoot import schema_io
+
+    target = tests_tmp / "init-identity-roundtrip"
+    code, document = run(
+        capsys, "--json", "root", "init", str(target),
+        "--root-instance-id", "root-identity-roundtrip", "--machine-id", "host-identity-roundtrip",
+    )
+    assert code == 0, document
+
+    marker = json.loads((target / "state" / "root.json").read_text(encoding="utf-8"))
+    projection = json.loads((target / "state" / "registry.json").read_text(encoding="utf-8"))
+
+    assert schema_io.errors_for("root-marker", marker) == []
+    assert schema_io.errors_for("registry-projection", projection) == []
+    assert projection["machine_id"] == "host-identity-roundtrip"
+    assert projection["root_instance_id"] == "root-identity-roundtrip"
+    # The same identities the plan layer re-checks, against the plan schema's own field subschemas:
+    # this is the check `plan` later runs on the document `root init` made possible.
+    assert schema_io.field_errors("plan", "machine_id", projection["machine_id"]) == []
+    assert schema_io.field_errors("plan", "root_instance_id", projection["root_instance_id"]) == []
+
+
 # --------------------------------------------------------------------------- #
 # where / doctor / inventory
 # --------------------------------------------------------------------------- #
@@ -351,6 +433,79 @@ def test_install_rejects_an_unknown_plan_file(capsys, prepared, tmp_path: Path) 
     )
     assert code == 8
     assert document["reason_code"] == "INVALID_INPUT"
+
+
+def _plan_written_by_the_verb(capsys, prepared) -> tuple[Path, dict]:
+    """A real plan on disk, produced by `plan` itself — the approvable document, not a fixture."""
+
+    code, document = run(capsys, "--json", "--root", str(prepared.path), "plan", "fake-tool")
+    assert code == 0, document
+    return Path(document["plan_file"]), document
+
+
+def test_install_without_a_token_asks_for_the_approval_instead_of_a_usage_error(
+    capsys, prepared
+) -> None:
+    """§169: "not approved yet" is a state of the world, so it is `APPROVAL_REQUIRED`(4).
+
+    `--token-file` was `required=True`, so argparse answered `INVALID_INPUT`(8) — the code that means
+    "your input is wrong" — and the hash that still has to be approved never reached the caller. This
+    pins the documented shape, the same one `env persist`/`uninstall` already use, and that the
+    approval really is still pending: the plan's own hash is what a token must be bound to.
+    """
+
+    plan_file, plan = _plan_written_by_the_verb(capsys, prepared)
+
+    code, document = run(capsys, "--json", "--root", str(prepared.path), "install", str(plan_file))
+
+    assert code == 4, document
+    assert document["reason_code"] == "APPROVAL_REQUIRED"
+    assert document["plan_hash"] == plan["plan_hash"]
+    assert plan["plan_hash"] in document["required_action"], document["required_action"]
+    assert document["plan_file"] == str(plan_file)
+
+
+def test_approve_without_a_token_asks_for_the_approval_instead_of_a_usage_error(
+    capsys, prepared
+) -> None:
+    """§169, same defect one verb over: `approve` consumes an approval it must be handed."""
+
+    plan_file, plan = _plan_written_by_the_verb(capsys, prepared)
+
+    code, document = run(capsys, "--json", "--root", str(prepared.path), "approve", str(plan_file))
+
+    assert code == 4, document
+    assert document["reason_code"] == "APPROVAL_REQUIRED"
+    assert plan["plan_hash"] in document["required_action"], document["required_action"]
+
+
+def test_the_approval_chain_with_a_token_is_unchanged(capsys, prepared, tmp_path: Path) -> None:
+    """Non-vacuity for §169: making the flag optional must not have moved the approved path.
+
+    This is the whole chain — `plan` wrote the document, the issuer signed it, `approve` recorded it,
+    `install` consumed it — so the refusal above is about the *missing* token and not about the verbs
+    having become unusable.
+    """
+
+    from airoot.clock import SYSTEM_CLOCK
+
+    plan_file, plan = _plan_written_by_the_verb(capsys, prepared)
+    token_file = write_token(fake_issuer.issue(plan, clock=SYSTEM_CLOCK), tmp_path)
+
+    approve_code, approved = run(
+        capsys, "--json", "--root", str(prepared.path), "approve", str(plan_file),
+        "--token-file", str(token_file),
+    )
+    assert approve_code == 0, approved
+    assert approved["plan_hash"] == plan["plan_hash"]
+
+    install_code, transaction = run(
+        capsys, "--json", "--root", str(prepared.path), "install", str(plan_file),
+        "--token-file", str(token_file),
+    )
+    assert install_code == 0, transaction
+    assert transaction["state"] == "FINALIZED"
+    assert transaction["reason_code"] == "SUCCESS"
 
 
 def test_repair_without_pending_work_is_a_no_op(capsys, prepared) -> None:

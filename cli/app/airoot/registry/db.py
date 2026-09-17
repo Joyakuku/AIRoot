@@ -946,11 +946,21 @@ class Registry:
         return digest_bytes(canonical_bytes(payload))
 
     def update_projection(self) -> dict[str, Any]:
-        """Rewrite ``state/registry.json`` and ``logs/audit`` from authoritative rows."""
+        """Rewrite ``state/registry.json`` and ``logs/audit`` from authoritative rows.
 
+        The projection is this build's **own** document, so it is checked against the schema that
+        describes it before the file is written (§169). Without this, `root init` wrote a
+        `state/registry.json` its own `registry-projection` schema rejects — the root answered
+        `root status` with `SUCCESS` and refused every plan as `SELF_VALIDATION_FAILED`. The check
+        is `validate_self`, not `validate_document`: a failure here is this build's defect, not the
+        caller's input.
+        """
+
+        from ..schema_io import validate_self
         from .projection import build_projection, write_audit_projection
 
         projection = build_projection(self)
+        validate_self("registry-projection", projection)
         target = Path(self.path).parent / "registry.json"
         target.write_text(json.dumps(projection, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         write_audit_projection(self)

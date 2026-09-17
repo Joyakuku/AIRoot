@@ -14365,3 +14365,60 @@ doctor 不报 `AUDIT_PROJECTION_DRIFT`；换掉 digest → 两者都报。也就
 | 契约层 / 语料 | **不动**（`remediation` 枚举与码表未改；golden 逐字节不变——doctor 的 generation 分支保持原证据两行，搜索语料是 crawl 答案） |
 | 文档面欠账（我在这一阶段一并处理） | `agents/airoot.json` 里描述 crawl 答案形状的那条 notes 在 ③ 之后不再穷尽（损坏索引的 crawl 答案是 DEGRADED）；`real_machine_acceptance.py` 第 565-566 行的注释说"索引不覆盖新数据根时报 `SEARCH_INDEX_DEGRADED`"，而那条路实际走 `SEARCH_FALLBACK_USED`——**这不是本次引入的**，一并改对 |
 | 没有做 | `stale_audit` 的包装字段（§168.3）；把 `projection_is_current` 多吃的那一次 clock tick 优化掉（实测没影响任何 golden 与时钟断言） |
+
+## 169. 第三轮全表面测试：根与身份的守卫
+
+裁决见 **ADR-0068**。这一节修的是"**这个 build 会接受一个它自己的文档承载不了的输入，然后怪自己**"：
+`root init` 收了非法身份、造出一个看起来健康的 root；`install`/`approve` 把"缺批准"报成"你的输入错了"；
+`capability check` 对**文件**与**数据根本身**给出会把人带偏的结论。
+
+### 169.1 四条
+
+| # | 修法前（实测） | 修法后 |
+|---|---|---|
+| **①** | `root init <dir> --root-instance-id x4 --machine-id short` → **exit 0 / SUCCESS**，盘上留下**一整个可用 root**（15 个目录 + 三份状态文件）；`root status` exit 0（看起来完全健康）；此后**每次 `plan` 都报 `SELF_VALIDATION_FAILED`(8)**——一个自称"实现缺陷"的码 | 在 `mkdir`/布局/registry **之前**按已发布 schema 校验两个身份（新增 `schema_io.field_errors()` 直接读 schema 子约束，证据里带 **pattern 原文**）→ `INVALID_INPUT`(8)，**盘上一个字节都没写**；同一 root 上 `plan` 从 exit 8 变 exit 0。**选了"写之前校验"而不是"写完清掉"**：判据只依赖调用方入参，失败路径上不需要自己写一段删除代码并证明它对 |
+| **②** | `install <plan>` / `approve <plan>` 不带 token → **exit 8 / `INVALID_INPUT` / "the following arguments are required: --token-file"**，而 `env persist`/`tool gc --apply`/`uninstall` 都是 exit 4 + `required_action` | `--token-file` 改**可选**，缺它时给出 **`APPROVAL_REQUIRED`(4)**，`required_action` 带上**要批准的那个 `plan_hash`**（照 `env persist` 的形状）；带 token 的路径一字未动（一条新用例跑完整链得 `FINALIZED`） |
+| **③** | `capability check <已注册数据根>` → exit 0 / `adoptable` / `capability_id: ffmpeg` / `remediation: adopt <数据根>`，而 `adopt` 对同一路径是 `INVALID_INPUT`（自相矛盾） | 把 `adopt` 原有的"最深且严格包含"判据抽成 `_data_root_owning()`，`adopt` 与 `capability check` **共用**，owner 传给 `discovery.classify_object` → `INVALID_INPUT`(8) 并说清"数据根是**作用域**不是它自己的对象"（ADR-0051） |
+| **④** | `capability check <文件>` → exit 9 / `unmanaged` / 只有一句 "no capability matched this object"，而它的**父目录**同一判据报 `adoptable`/`ffmpeg`；`adopt <文件>` 的 `INVALID_INPUT` **证据是空的** | 文件仍然诚实报 `unmanaged`（它本身不是可 adopt 的对象），但证据**点名父目录及其分类**（`the directory that can be adopted is its parent … which classifies as capability_id=ffmpeg`）、给出下一步命令；父目录也不可 adopt 时如实说是哪一种不可 adopt；`adopt <文件>` 的 `INVALID_INPUT` 补上三条证据 |
+
+### 169.2 我自己的验收
+
+```text
+A  删掉 root.py 的 `validate_identity_fields(root_instance_id, machine_id)`  → ① 的四条参数化用例 变红
+B  install 处理器 `if not args.token_file:` → `… and False:`                  → ② 的守卫 变红
+C  `_classify_with_owner(roots, target, whitelist)` → 传 `[]`（退化成"不传数据根"）→ ③ 的守卫 变红
+```
+
+三处都是字节级变异并按字节写回（跑完核对文件与改动前相同）。真机验收脚本我自己跑了：`closed loop:
+PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`，其中 `capability check <real object>` 仍
+`exit 0 / adoptable / java`（③ 没有把"数据根**里面**的对象"一起拦掉）。
+
+### 169.3 一次**新增的前置条件**（裁决：接受，并记在这里）
+
+`capability check`（不带 `--capability` 时）现在**会读 registry**——它必须知道"哪个已注册数据根拥有这个
+目标"才能回答③。于是"root 存在但 `state/registry.db` 缺失/损坏"时它从"照旧回答"变成**以
+`REGISTRY_MISSING`(6) 失败**。**接受**，理由与 §165 的 `path repair` 同一条：读不出来的时候"谁拥有它"
+是**未知**的，而把未知读成"没有数据根"正是③这一族缺陷要消灭的东西。**没有任何测试或文档覆盖过这个场景**
+——写在这里，免得下一个读者以为它是既有行为。
+
+### 169.4 其余裁决与已知边界
+
+- **库层不拦**：`Registry.initialize(machine_id="host-1")` 仍能建出身份非法的 registry；守卫在**写盘那一刻**
+  （`update_projection` 现在写之前 `validate_self("registry-projection")`，`root-marker` 本来就有）。
+  `root init` 这条 CLI 路径已经到不了那个状态。
+- **嵌套数据根**：owner 取"最深且**严格**包含"的那个，与 `adopt` 既有行为完全一致（所以嵌套根自身被当成
+  外层的对象）。这不是为③单独论证过的规则，记在这里。
+- **ADR-0051 的脚注被订正**：`docs/AIROOT-v0.3-实现决策记录.md` 里"不传数据根的调用点（`capability check`）
+  保持旧 id 形态"那一句在③之后不再成立，已在原位标注并指向 ADR-0068（原文保留，它是当时正确的边界）。
+- **既有期望被取代：0 条**（实现方逐条审计：`test_root_init_never_invents_an_identity` 仍走 argparse 的
+  required 分支；带 `--token-file` 的 `install` 用例走 `_load_plan`；`test_l1_boundary.py` 那两条的目录
+  不在任何已注册数据根里，`roots` 为空因此行为不变）。
+
+### 169.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1467 → 1481**（+14，含四条参数化） |
+| 代码 | `cli.py`（+190/−22）、`root.py`（+39/−1）、`schema_io.py`（+18：`field_errors`）、`registry/db.py`（+11/−1）、`caps/discovery.py`（+13/−1） |
+| 契约层 / 语料 | **不动**（没有新 schema、没有新 reason code、没有新动词；`APPROVAL_REQUIRED` 本来就有写者） |
+| 没有做 | §170（口径与匹配）与 §171（面与文档）的其余发现 |

@@ -84,6 +84,24 @@ def errors_for(name: str, document: Any) -> list[str]:
     return [f"{'/'.join(str(part) for part in error.path) or '<root>'}: {error.message}" for error in collected]
 
 
+def field_errors(name: str, field: str, value: Any) -> list[str]:
+    """Validate one value against the subschema its published document pins for that field.
+
+    The published schema is layer 1 (v0.3 §1.1), so a value the core is about to freeze into a
+    document has to be checked against the **same** subschema the document itself is checked
+    against. A pattern restated in the code is a copy of the contract, and copies drift; this reads
+    the constraint instead of repeating it. The ``$ref`` subschemas a field uses
+    (``common.schema.json#/$defs/id``) resolve through the same registry as the whole-document
+    validator, so ``field_errors`` and ``validate_document`` can never disagree about a shape.
+    """
+
+    subschema = load_schema(name).get("properties", {}).get(field)
+    if subschema is None:  # pragma: no cover - only a caller naming a field the schema does not pin
+        raise AirootError("SCHEMA_UNSUPPORTED", f"{name} does not describe a field {field!r}")
+    validator = _validator(name).evolve(schema=subschema)
+    return [f"{field}: {error.message}" for error in validator.iter_errors(value)]
+
+
 def validate_document(name: str, document: Any, *, reason_code: str = "INVALID_INPUT") -> None:
     problems = errors_for(name, document)
     if problems:

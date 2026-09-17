@@ -575,6 +575,92 @@ def _record_observations(registry: Registry, report: Any, data_root: Any) -> int
     return len(recordable)
 
 
+def _data_root_owning(roots: Any, target: Path) -> tuple[Any, bool]:
+    """The deepest registered data root strictly containing ``target`` (draft §140 / ADR-0051).
+
+    Returns ``(row, at_a_root)``, where ``at_a_root`` is True when ``target`` **is** a registered
+    root — the one case a scope cannot answer about itself, because a data root is not one of its
+    own objects. `adopt` and `capability check` ask the same question, so it is asked in one place.
+    """
+
+    inside: list[tuple[int, Any]] = []
+    for row in roots:
+        root_path = Path(_claim_spelling(str(row["path"])))
+        try:
+            relative = target.relative_to(root_path)
+        except ValueError:
+            continue
+        if str(relative) != ".":
+            inside.append((len(root_path.parts), row))
+    owner = max(inside, default=(0, None), key=lambda item: item[0])[1]
+    at_a_root = owner is None and any(
+        Path(_claim_spelling(str(row["path"]))) == target for row in roots
+    )
+    return owner, at_a_root
+
+
+def _classify_with_owner(roots: Any, target: Path, whitelist: Any) -> tuple[Any, str | None]:
+    """Classify ``target`` under the data root that owns it, or say why it has no owner.
+
+    Returns ``(candidate, None)`` when it classifies and ``(None, reason)`` when the path is itself
+    a registered data root. Handing `discovery.classify_object` the owning root is what makes that
+    refusal reach the caller: without it the classifier has no scope to compare against, and a
+    registered data root came back classified as if it were an object inside itself (§169).
+    """
+
+    from .caps.discovery import classify_object
+
+    owner, at_a_root = _data_root_owning(roots, target)
+    if owner is None and at_a_root:
+        return None, (
+            f"{target} is a registered data root; a data root is a scope, not one of its own "
+            "objects (draft §140 / ADR-0051)"
+        )
+    return (
+        classify_object(
+            target,
+            data_root_id=None if owner is None else str(owner["data_root_id"]),
+            data_root_path=None if owner is None else Path(_claim_spelling(str(owner["path"]))),
+            whitelist=whitelist,
+        ),
+        None,
+    )
+
+
+def _file_adoption_evidence(roots: Any, target: Path, whitelist: Any) -> list[str]:
+    """What a caller can do about a **file** that is not itself an adoptable object (§169).
+
+    `adopt --mode reference` registers a directory, so the useful answer about a file names the
+    directory that could be adopted and how it classifies — or says plainly that the parent is not
+    adoptable either. Nothing here changes the verdict about the file itself.
+    """
+
+    parent = target.parent
+    candidate, reason = _classify_with_owner(roots, parent, whitelist)
+    opening = (
+        f"a file is not an object `adopt --mode reference` can take: {target} is a file, and an "
+        "adopted object is a directory"
+    )
+    if candidate is None:
+        return [
+            opening,
+            f"the directory that contains it, {parent}, is not adoptable either: {reason}",
+        ]
+    if candidate.management == "external_reference":
+        return [
+            opening,
+            f"the directory that can be adopted is its parent {parent}, which classifies as "
+            f"capability_id={candidate.capability_id} (management={candidate.management})",
+            f"airoot adopt {parent} --mode reference",
+        ]
+    note = "; ".join(candidate.notes) or "no whitelisted capability matched it"
+    return [
+        opening,
+        f"its parent directory {parent} is not an adoptable object either "
+        f"(management={candidate.management}: {note})",
+    ]
+
+
 def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """Establish a reference to an object inside a registered data root."""
 
@@ -611,20 +697,8 @@ def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any
         # target, not the one it happens to be a direct child of. A data root is a scope, so a
         # root nested inside another one refines it rather than competing with it; and the
         # target must be strictly inside, because the scope itself is not an object.
-        inside: list[tuple[int, Any]] = []
-        for row in roots:
-            root_path = Path(_claim_spelling(str(row["path"])))
-            try:
-                relative = target.relative_to(root_path)
-            except ValueError:
-                continue
-            if str(relative) != ".":
-                inside.append((len(root_path.parts), row))
-        owner = max(inside, default=(0, None), key=lambda item: item[0])[1]
+        owner, at_a_root = _data_root_owning(roots, target)
         if owner is None:
-            at_a_root = any(
-                Path(_claim_spelling(str(row["path"]))) == target for row in roots
-            )
             raise AirootError(
                 "INVALID_INPUT",
                 (
@@ -1930,17 +2004,47 @@ def cmd_capability_check(args: argparse.Namespace, context: Context) -> tuple[di
     """Answer "may AIROOT manage this object?" without touching anything (draft §15.2)."""
 
     from .caps.boundary import check_admission
-    from .caps.discovery import classify_object, load_whitelist
+    from .caps.discovery import load_whitelist
     from .paths import canonicalize
 
     target = canonicalize(args.path, must_exist=True)
     capability_id = args.capability
     evidence_source = "declared"
-    if capability_id is None and target.is_dir():
+    object_evidence: list[str] = []
+    if capability_id is None:
         whitelist = load_whitelist()
-        candidate = classify_object(target, whitelist=whitelist)
-        capability_id = candidate.capability_id
-        evidence_source = f"observed ({candidate.management})"
+        registry = context.registry()
+        try:
+            roots = registry.data_roots()
+            if target.is_dir():
+                # §169: the owning data root is passed in, so a **registered data root** can no
+                # longer be classified as one of its own objects and reported `adoptable`. This is
+                # the same refusal `adopt` gives, produced by the same function
+                # (`discovery.classify_object` -> `_relative_inside`) rather than by a second set of
+                # rules kept here; the old call simply passed no root and stepped around it.
+                candidate, reason = _classify_with_owner(roots, target, whitelist)
+                if candidate is None:
+                    raise AirootError(
+                        "INVALID_INPUT",
+                        f"a data root is a scope, not one of its own objects: {target}",
+                        evidence=[
+                            reason,
+                            "a data root is a scope; `adopt` says the same thing about the same path",
+                            "ask about a directory inside it instead",
+                            f"registered roots={[row['path'] for row in roots]}",
+                        ],
+                    )
+                capability_id = candidate.capability_id
+                evidence_source = f"observed ({candidate.management})"
+            else:
+                # §169: a file is not an object `adopt --mode reference` can take — it registers a
+                # directory. Answering only "no capability matched this object" left the caller with
+                # no next step, so the **parent** — the object that could actually be adopted — is
+                # classified here and its conclusion goes into the evidence. The verdict stays
+                # honest: the file itself is still not adoptable.
+                object_evidence = _file_adoption_evidence(roots, target, whitelist)
+        finally:
+            registry.close()
 
     admission = check_admission(
         target=target,
@@ -1948,6 +2052,8 @@ def cmd_capability_check(args: argparse.Namespace, context: Context) -> tuple[di
         source_verifiable=not args.source_unverifiable,
         requires_irreversible_effect=args.irreversible,
     )
+    # The parent's conclusion first: it is the next step, and the reason the file itself is not one.
+    admission.evidence = [*object_evidence, *admission.evidence]
     document = admission.to_document()
     document["capability_source"] = evidence_source
     document["managed_files_touched"] = 0
@@ -2798,6 +2904,30 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
 
 def cmd_approve(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     plan = _load_plan(args.plan_file)
+    if not args.token_file:
+        # §169: `--token-file` used to be `required=True`, so argparse refused before this handler
+        # ran and the documented answer — "this needs an approval, here is the hash to approve" —
+        # could never be given. Same shape as `env persist`/`uninstall`: the plan plus the report
+        # keys (neither is part of the plan contract; the approvable thing is the file).
+        document = dict(plan)
+        document["plan_file"] = str(args.plan_file)
+        document["reason_code"] = "APPROVAL_REQUIRED"
+        document["required_action"] = (
+            f"issue a token for {plan['plan_hash']} "
+            f"(airoot issue {args.plan_file} --out <token.json>) and re-run with --token-file <token.json>"
+        )
+        _emit(
+            document,
+            as_json=args.json,
+            lines=[
+                f"plan {plan['plan_id']} ({plan['plan_hash']}) is not approved yet",
+                f"  plan_file={args.plan_file}",
+                f"  {document['required_action']}",
+                "  nothing was recorded; `airoot approve` consumes an approval, it does not create one",
+            ],
+        )
+        return document, exit_code_for("APPROVAL_REQUIRED")
+
     token = _load_token(args.token_file)
     registry = context.registry()
     try:
@@ -2897,6 +3027,27 @@ def _runner_for(registry: Any, plan: dict[str, Any], context: Context) -> Any:
 
 def cmd_install(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     plan = _load_plan(args.plan_file)
+    if not args.token_file:
+        # §169: same defect as `approve` — the missing approval was reported as a usage error.
+        # `required_action` carries the hash because that is what a token has to be bound to.
+        document = dict(plan)
+        document["plan_file"] = str(args.plan_file)
+        document["reason_code"] = "APPROVAL_REQUIRED"
+        document["required_action"] = (
+            f"approve {plan['plan_hash']} and re-run with --token-file <token.json>"
+        )
+        _emit(
+            document,
+            as_json=args.json,
+            lines=[
+                f"plan {plan['plan_id']} ({plan['plan_hash']}) is not approved yet",
+                f"  plan_file={args.plan_file}",
+                f"  {document['required_action']}",
+                "  nothing was installed; `airoot issue` signs a token, `airoot approve` records it",
+            ],
+        )
+        return document, exit_code_for("APPROVAL_REQUIRED")
+
     token = _load_token(args.token_file)
     registry = context.registry()
     try:
@@ -3587,12 +3738,21 @@ def build_parser() -> argparse.ArgumentParser:
     root_init.add_argument(
         "--root-instance-id",
         required=True,
-        help="this root's identity; an explicit input, because P1 does not invent one (ADR-0025)",
+        help=(
+            "this root's identity; an explicit input, because P1 does not invent one (ADR-0025). "
+            "Checked against the published id shape '^[a-z0-9][a-z0-9._/-]{0,127}$' "
+            "(common.schema.json#/$defs/id) before anything is written"
+        ),
     )
     root_init.add_argument(
         "--machine-id",
         required=True,
-        help="the machine this root belongs to; the registry records it",
+        help=(
+            "the machine this root belongs to; the registry records it. Checked against the "
+            "published shape '^[A-Za-z0-9._:-]{8,128}$' (registry-projection/plan/transaction/"
+            "approval-token all pin it) before anything is written — the identity is refused with "
+            "INVALID_INPUT rather than written into a root that can never produce a plan"
+        ),
     )
 
     where_parser = subparsers.add_parser("where", help="resolve a capability", parents=[common])
@@ -3660,7 +3820,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     approve_parser = subparsers.add_parser("approve", help="consume a protected approval token", parents=[common])
     approve_parser.add_argument("plan_file")
-    approve_parser.add_argument("--token-file", required=True)
+    # Not `required`: "nobody approved this yet" is a state of the world, and the answer to it is
+    # `APPROVAL_REQUIRED`(4) with the plan hash to approve — not a usage error (§169). argparse got
+    # there first, so the refusal could never name the thing that still has to be approved.
+    approve_parser.add_argument(
+        "--token-file", default=None, help="the approval token to consume; omit to be told what to approve"
+    )
 
     issue_parser = subparsers.add_parser(
         "issue",
@@ -3687,7 +3852,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser("install", help="run the simulated controlled transaction", parents=[common])
     install_parser.add_argument("plan_file")
-    install_parser.add_argument("--token-file", required=True)
+    # See `approve`: a missing token is a pending approval, not a typo in the command line (§169).
+    install_parser.add_argument(
+        "--token-file", default=None, help="approval token bound to the plan hash; omit to be told what to approve"
+    )
 
     repair_parser = subparsers.add_parser("repair", help="journal-driven recovery", parents=[common])
     repair_parser.add_argument("--tx")

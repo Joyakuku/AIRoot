@@ -288,6 +288,43 @@ def test_projection_file_is_valid_json_text(registry: Registry, root) -> None:
     assert document["schema_version"] == 1
 
 
+def test_the_projection_writer_refuses_a_document_its_own_schema_rejects(
+    clock, tests_tmp: Path
+) -> None:
+    """§169: `state/registry.json` is this build's own document, so it is checked before it is written.
+
+    `root-marker` was already validated on the way out; the projection was not, and that is why an
+    identity the published schemas reject could be written down and only surface later, as
+    `SELF_VALIDATION_FAILED` from an unrelated verb. An identity is only refused here because the
+    registry itself accepts it — that is the point: the guard has to be at the write, not only at
+    `root init`.
+
+    Non-vacuity: the very same rows write a **valid** projection once the identity is a legal one.
+    """
+
+    from airoot.exits import AirootError
+
+    # `Registry.initialize` does not police the identity (the CLI verb does); this is the state a
+    # caller that skipped the verb would be in.
+    handle = Registry.initialize(
+        tests_tmp / "projection-identity-guard",
+        machine_id="host-ok-1234",
+        root_instance_id="root-ok-1234",
+        clock=clock,
+    )
+    try:
+        assert handle.update_projection()["machine_id"] == "host-ok-1234"
+        handle._conn.execute("UPDATE meta SET value = ? WHERE key = ?", ("short", "machine_id"))
+        handle._conn.commit()
+        with pytest.raises(AirootError) as caught:
+            handle.update_projection()
+    finally:
+        handle.close()
+
+    assert caught.value.reason_code == "SELF_VALIDATION_FAILED", caught.value.reason_code
+    assert any("machine_id" in item for item in caught.value.evidence), caught.value.evidence
+
+
 # --------------------------------------------------------------------------- #
 # events
 # --------------------------------------------------------------------------- #
