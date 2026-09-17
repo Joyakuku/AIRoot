@@ -13454,3 +13454,131 @@ FAILED test_root_init_refuses_an_existing_root_without_rewriting_it
 | 计数同步 | `agents/airoot.json` 的 lane **36 → 37**（`read` 路径 **166 → 177**，它的 honesty note 里三个数字一起改）；`AGENTS.md` 的测试数 ×3、lane 数 ×1、`read` 路径数 ×1 与新增的命令行；`references/field-values.md` 的 `operation` 值 **13 → 14**（`root_init`） |
 | 真机 | 这一节没有跑真机脚本：`root init` 在**临时目录**上实测过（建 15 个目录、marker、registry，二次 init 被拒），而 `D:\env_test` 的正式 root 由操作者一条命令建出（§158） |
 | 没有做 | `bootstrap` 本身（ACL 布局、machine PATH——仍是 P9/使用方）；`root relocate`/`root adopt`（受保护状态）；root 身份的**生成算法**（仍开放，两个 id 必须显式给） |
+
+## 158. 第一次"真人可用"：建 root、动环境变量、把 skill 部署到 `.dsh`、隔离区里真跑一次
+
+这一节不是设计阶段，是**把 §157 那个动词用出去**，并回答"skill + cli 现在到底能不能用"。读数是操作记录，
+所以只写事实、不写裁决（要裁决的部分已在 ADR-0056/0057/0058 里）。
+
+### 158.1 操作者定下的边界
+
+| 项 | 决定 |
+|---|---|
+| skill 与 CLI | **分开**：skill 表面（`SKILL.md` + `agents/` + `references/`）部署到 `$DSH_HOME/skills/airoot`，**CLI 留在仓库** `D:\AIRoot\cli`；将来拆成两个仓库 |
+| 环境变量 | **可以动** |
+| 来源清单 | **暂不扩**（今天能装的仍是有来源的那三个：`rust-toolchain`、`build`、`node`） |
+| 测试隔离 | 新建 `D:\env_test`，测试只在它里面动，**以后删掉** |
+| 其余 | 按我给出的建议 |
+
+### 158.2 建 root：`root init` 第一次用在真机上
+
+```text
+$ python -m airoot root init D:\env_test\.airoot \
+      --root-instance-id root-env-test --machine-id machine-home-single-user --json
+exit=0  canonical_path=D:\env_test\.airoot  directories_created=15
+        marker=D:\env_test\.airoot\state\root.json  registry=D:\env_test\.airoot\state\registry.db
+        registry_generation=0  volume_serial=<本卷>  path_written=false  security_mode=policy_only
+```
+
+`machine_id` 取的是这台机器**已有那个 root** 的同一个值（`root status` 读出来的），`root_instance_id` 是新的
+——同一台机器、两个 root，这才是这两个身份各自的含义。（这两个值本身**不抄进本文件**：它们是本机身份，
+§131 的守卫在全树文本里搜的正是这一类东西。）
+
+### 158.3 环境变量（用户级，不动 machine 级）
+
+| 变量 | 值 | 作用 |
+|---|---|---|
+| `AIROOT_HOME` | `D:\env_test\.airoot` | 让 `airoot …` 不带 `--root` 也能找到 root —— **指到的是测试 root**，测试结束必须改掉或删掉 |
+| `PATH`（用户级） | 追加 `D:\AIRoot\cli\bin` | 让 `SKILL.md` 教的 `airoot …` 这个拼写真的可执行 |
+
+写入时保留了原值的**类型**（`Path` 原本是 `REG_SZ`，写回时**不改成** `REG_EXPAND_SZ`）：只该改这一条，不该顺手
+改变它的语义。`D:\AIRoot\cli\bin` 是**开发期启动器**所在的目录，不是 AIROOT 的 machine PATH 条目（那一条仍然
+按 ADR-0050 不写）。
+
+### 158.4 部署 skill：逐字节副本，CLI 不动
+
+```powershell
+$dst = "$env:USERPROFILE\.dsh\skills\airoot"
+Copy-Item 'D:\AIRoot\SKILL.md'   "$dst\SKILL.md"   -Force
+Copy-Item 'D:\AIRoot\agents'     "$dst\agents"     -Recurse -Force
+Copy-Item 'D:\AIRoot\references' "$dst\references" -Recurse -Force
+```
+
+`SKILL.md`、`agents/airoot.json`、`references/*` 实测与仓库那份 **SHA256 逐字节相同**。部署目录里多一份
+`README.md`（人读的），写清"这是副本、CLI 不在这里、怎么重新同步"。
+
+**DSH 当场就认出了它**：部署完成后，本会话的技能目录从只有 `motion-web` 变成同时列出 `airoot`——
+不需要重启（新 skill 目录被 skill 根扫描到，`$DSH_HOME/skills` 是 §3 那张表里的用户级根）。
+
+**为什么这一条没有守卫**：副本在仓库之外，任何盯它的测试都会让套件依赖**这台机器**的 `$DSH_HOME`
+（§133.6 已经为真机契约做过同样的判断：套件保持离线自足，机器相关的东西放真机脚本）。能证明的只有
+一句可执行的同步命令 + 一次人工 `Get-FileHash`——写在这里，而不是假装它被守着。
+
+### 158.5 隔离区
+
+`D:\env_test` 下只有两样东西：`.airoot`（刚建的 root）与 `apps\python\python.exe`（从本机 conda 环境复制
+的一个真实 PE，104 208 字节，用来让发现面有东西可看）。数据根 `dr-test-apps` 注册进测试 root，
+`files_touched=0`；`discover` 的账本是 **`python` → `external_reference`**，`truncated=false`。
+**到这一步为止，操作者的环境没有被改动**：只有登记 + 只读扫描，没有 adopt/install/gc/env persist，
+没有写 HKCU，没有动 `D:\env`。
+
+### 158.6 交给一个"只读到 skill 的 agent"做一次
+
+给一个 subagent 的**全部**输入是：加载 `airoot` skill、部署事实（CLI 在 `D:\AIRoot\cli`、启动器绝对路径、
+本会话环境里没有 `AIROOT_HOME`、root = `D:\env_test\.airoot`）、硬边界（只在 `D:\env_test` 内、不下载、
+不动 PATH/注册表/ACL）、以及九条要做的事。**没有教它任何命令**——命令只能来自 skill。
+
+它九步全通，**每一步的字段都与 skill 的说法吻合**：
+
+| 步 | 读数（摘） | skill 的说法 |
+|---|---|---|
+| 1 | `root status` → `SUCCESS`、`registry_state=available`、`policy_only`；`doctor` → `healthy`，唯一诊断是 info 级 `POLICY_ONLY_MODE`（"a same-user process can bypass it"） | "先确认状态"、`policy_only` 照实说 ✔ |
+| 2 | `capability list` → `cap-4`、9 个能力（3 runtime / 6 tool） | ✔ |
+| 3 | `data-root add` → **`files_touched=0`**、`wl-6` | "注册不写任何文件" ✔ |
+| 4 | `discover` → `files_touched=0`、`recorded=0`、`truncated=false`；账本 = `python`（`pe_static`：产品串 Python + 入口点深度 0），**未命名对象 0 个** | 只读、有界 ✔ |
+| 5 | `adopt --mode reference` → `ownership="none"`、`files_touched=0` | "不拥有" ✔ |
+| 6 | `where python` → `management=external_reference`、`zone=R`、**`selection_reason=STEWARD_REFERENCE_HEALTHY`**，证据里 `precedence=steward` | steward-first ✔ |
+| 7 | `source list` → `src-2`、5 个 host、**有来源的能力 3 个**（`rust-toolchain`/`build`/`node`）、`signature_verification=not_implemented_in_v1` | "digest 不是签名" ✔ |
+| 8 | `plan build … --dry-run` → exit 0、`confirmation_required=false`、`required_approval="none"`、`origin=generic_tool`、`size_note=SIZE_ESTIMATE_UNAVAILABLE` | 体积未知就说未知 ✔ |
+
+**它自己查出的环境副作用**：`D:\env_test` 内只有 `state/registry.db`、`state/registry.json`、
+`logs/audit/events.json` 被写（adopt 的登记）；被引用的 `python.exe` 的 `LastWriteTime` **未变**；
+`D:\env_test` 之外零读写。
+
+### 158.7 它指出的三处摩擦，与这一轮据此做的改动
+
+一个"只读到 skill"的 agent 报了三件真事，前两件已在这一轮改进 skill，第三件是**提示词的自由度而不是缺陷**：
+
+1. **第一步的两条命令写成无条件的 `airoot …`，真机上不带 `--root` 会吃 `ROOT_NOT_RESOLVED`(8)。**
+   它实测：`airoot root status --json`（cwd 在别处）→ exit 8，`message="no AIROOT root given: pass --root or
+   set AIROOT_HOME"`。**已改**：`SKILL.md` 第一步现在明写"每条命令都需要一个 root，而 root 不在本文件里
+   ——由调用方用 `--root` 或 `AIROOT_HOME` 给出"，并把 `ROOT_NOT_RESOLVED` 与"还没有可用 root"分成两条路。
+2. **skill 不说 CLI 在哪、也不给"CLI 可能不在 PATH 上"的兜底。** 这是**部署事实**（skill 与 CLI 分开是
+   操作者的决定），所以答案不该写进 `SKILL.md` 的**值**里——写进去还会撞上守卫（`SKILL.md` 里禁止出现
+   绝对路径）。**已改**：`SKILL.md` 只加**规则**（"若 `airoot` 不在 `PATH` 上，调用方必须给出启动器的位置；
+   skill 目录里没有 CLI"），具体位置留在部署副本的 `README.md`（人读的那一份）。
+3. **`registry_generation` 在 `adopt` 之后仍是 0**，容易被误读成"登记没生效"。**已改**：第一步那段加一条
+   ——它数的是 **active binding 的提交**，非拥有式登记不推进它。
+4. 它另外报"第 5/8 步挑哪个对象、哪个能力由我自己选，skill 没给排序"——**这一条不改**：skill 的原则是
+   "调用方决定"，给一份隐式偏好排序反而会让 agent 以为自己有权替用户选。测试提示词里那两句的自由度是
+   **有意的**，记在这里以免被当成缺口。
+5. 它自己没有做的：`install`/`gc`/`uninstall`/`env persist`，以及 6 条未实现动词——都按 skill 与提示词的
+   边界避开了。**所以这一轮的结论只覆盖"读/登记/计划"这半边**：真装一个 artifact（下载 + 校验 + 解压 +
+   `run`）与 `gc` 真删，在 §148/§153/§155 的真机链上验过，但**没有**在"只读到 skill 的 agent"手里验过——
+   这是下一轮该做的事，写在这里而不是留给读者以为已经做过。
+6. **守卫抓住的是我自己的这一节**：本节初稿在"仓库外"那一行写了 profile 目录的**真实绝对路径**，运行套件时
+   守卫第三十七组（§131）直接变红——"the remote is public, so no tracked file may carry this host's identity"。
+   已改成 `%USERPROFILE%\.dsh\skills\airoot`（即 `$DSH_HOME\skills\airoot`）。**同一个坑 §131 已经写过一次**
+   （"写这一类记录时不要把它要防的值再抄一遍"），而我抄了——留在这里当证据：那条守卫不是装饰，它每次都真的
+   在量，而"有人真的量过"是唯一能让这类禁令成立的东西。
+
+### 158.8 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1410 不动**（这一阶段不动代码、不加用例；test count 不变） |
+| 代码 | **不动**（唯一被改的仓库文件是 `SKILL.md` 的三段文字——它们是 skill 的**规则**，不是运行状态） |
+| 契约层 / 语料 | **不动** |
+| 仓库外 | `%USERPROFILE%\.dsh\skills\airoot\`（即 `$DSH_HOME\skills\airoot`；副本，逐字节同源）+ 用户级 `AIROOT_HOME` 与 `PATH` 追加一项 + `D:\env_test\`（**测试用，以后删**） |
+| 人工动作 | 只有一次 root 建立、一次 `data-root add`、一次 subagent 实测；`install`/`gc`/`env persist` **没有**跑 |
+| 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |

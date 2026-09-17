@@ -21,6 +21,12 @@ airoot root status --json     # root 身份是否可证明
 airoot doctor --json          # D1-D10 不变量、数据根、reference 观测漂移
 ```
 
+**每条命令都需要一个 root，而 root 不在本文件里**（本 skill 刻意不带路径与运行状态）：由调用方用
+`--root <目录>` 或 `AIROOT_HOME` 给出。上面的写法省了它，是为了让命令本身读起来清楚；**真机上不带
+`--root` 而环境里也没有 `AIROOT_HOME` 时，回答是 `ROOT_NOT_RESOLVED`(8)**（"还没有告诉它在哪"，
+不是"AIROOT 坏了"）。同理，若 `airoot` 不在 `PATH` 上，调用方也必须给出**启动器的位置**——skill 目录里
+没有 CLI，它在哪由部署方说明。
+
 - `status=healthy` → 继续。
 - `status=degraded` → 可以继续，但必须把降级原因说出来（`doctor` 的 `diagnostics[].impact`）。
 - `status=broken` / `recovery_required` → **停下来报告**，先跑 `airoot repair --json`，
@@ -29,6 +35,8 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
   两条路，不要有第三条：让调用方用 `--root` / `AIROOT_HOME` 指到已有的 root，或者建一个 ——
   `airoot root init <目录> --root-instance-id <id> --machine-id <id> --json`（只在新**建或空**目录里建，
   不需要提权、不写 PATH；两个身份是入参，因为 P1 不替你编身份）。**绝不拿当前目录猜一个。**
+- `registry_generation` 数的是 **active binding 的提交**：只做非拥有式登记（`adopt --mode reference`）
+  **不会**推进它，那不等于"什么都没发生"（登记写进了 declared 层与审计）。
 - `security_mode=policy_only` → **照实说**：P1 的强制手段是约定与审计，不是 ACL；
   同一用户权限下的进程可以绕过它。绝不能说成"已受保护"。
 
