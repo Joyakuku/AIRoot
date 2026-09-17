@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
@@ -416,11 +417,18 @@ def slug(value: str, *, max_length: int = 48) -> str:
 
 
 def _iter_executables(root: Path, limits: dict[str, int]) -> tuple[list[tuple[Path, int]], bool]:
-    """Bounded, reparse-point-free walk for PE images.
+    """Bounded, reparse-point-free walk for PE images, **shallowest first**.
 
     Returns ``(executable, directory_depth_below_root)`` pairs; ``truncated`` says the
     per-object file cap was hit. Depth is reported so the matcher can require an
     object's *own* entrypoint rather than a tool bundled deep inside it.
+
+    The walk is **breadth-first**, and that is a correctness property rather than a detail:
+    the cap is a *budget*, so a depth-first walk spends it inside the first big subtree it
+    meets. Measured (§142): `D:\\env_apps\\Git` keeps its own `bin\\git.exe` at depth 1, but a
+    depth-first walk of 400 files never got past `usr\\`, so the tree came out `unmanaged`
+    — same tree, same predicate, different answer depending on walk order. Shallowest-first
+    also matches how the matcher already chooses among several candidates.
 
     The walk descends through the `\\\\?\\` form so a data root below `MAX_PATH` works regardless of
     the machine's long-path policy, and returns **native** paths — the prefix is ours, not the
@@ -433,9 +441,9 @@ def _iter_executables(root: Path, limits: dict[str, int]) -> tuple[list[tuple[Pa
     truncated = False
     walk_root = Path(extended_path(root))
     base_depth = len(walk_root.parts)
-    stack: list[Path] = [walk_root]
-    while stack:
-        current = stack.pop()
+    queue: deque[Path] = deque([walk_root])
+    while queue:
+        current = queue.popleft()
         try:
             entries = sorted(current.iterdir())
         except (OSError, PermissionError):
@@ -448,7 +456,7 @@ def _iter_executables(root: Path, limits: dict[str, int]) -> tuple[list[tuple[Pa
                     continue
                 if entry.is_dir():
                     if len(entry.parts) - base_depth < limits["max_depth"]:
-                        stack.append(entry)
+                        queue.append(entry)
                     continue
             except OSError:
                 continue

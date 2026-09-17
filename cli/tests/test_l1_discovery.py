@@ -526,6 +526,72 @@ def write_pe_with_version(source: Path, destination: Path, version: tuple[int, i
 
 
 @pytest.fixture
+def capped_git_whitelist(tmp_path: Path) -> Path:
+    """A git rule with a deliberately tiny per-object file cap.
+
+    The product string is `Python` because that is the PE these tests can produce without a real Git
+    install; the rule's *shape* is what matters here — a name plus one static fact, and a budget too
+    small to walk a subtree.
+    """
+
+    path = tmp_path / "wl-capped.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "revision": "wl-test-capped",
+                "scan": {
+                    "max_depth": 4,
+                    "max_relative_depth": 2,
+                    "max_files_per_object": 3,
+                    "max_versions_per_object": 8,
+                },
+                "entries": [
+                    {
+                        "capability_id": "git",
+                        "kind": "tool",
+                        "evidence_all": [
+                            {"type": "executable_name", "any_of": ["git.exe"]},
+                            {"type": "pe_static", "field": "product_name", "contains": "Python"},
+                        ],
+                        "entrypoints": ["git.exe"],
+                        "version_source": "pe_static:file_version",
+                    }
+                ],
+                "exclusions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_file_cap_cannot_hide_a_shallow_entry_point_behind_a_deep_tree(
+    data_root: Path, capped_git_whitelist: Path
+) -> None:
+    """§142: the cap is a budget, so it has to be spent shallowest-first.
+
+    Measured on this machine: `D:\\env_apps\\Git` carries its own `bin\\git.exe` at depth 1 with a large
+    `usr\\` subtree below it, and a depth-first walk of 400 files never reached `bin\\` — the tree came
+    out `unmanaged`, while the same tree walked shallowest-first does not. The fixture's budget is 3
+    files and the deep subtree holds 5, so here the walk order decides the answer.
+    """
+
+    object_root = data_root / "Git"
+    for index in range(5):
+        place_python_pe(object_root / "deep", f"deep-{index}.exe")
+    place_python_pe(object_root / "bin", "git.exe")
+
+    rules = load_whitelist(capped_git_whitelist)
+    report = discover_data_root(path=data_root, data_root_id="dr-env", whitelist=rules)
+
+    candidate = next(item for item in report.candidates if item.directory_name == "Git")
+    assert candidate.management == "external_reference", report.counts()
+    assert candidate.capability_id == "git"
+    assert candidate.entrypoints == ("bin/git.exe",)
+
+
+@pytest.fixture
 def python_rule_whitelist(tmp_path: Path) -> Path:
     """A minimal whitelist, so these tests do not depend on the shipped one."""
 
