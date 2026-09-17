@@ -42,7 +42,11 @@ def runner_for(
         return SimulationRunner(registry, clock=clock, keyring=keyring, injector=injector)
     return ArtifactRunner(
         registry,
-        resolve_backend(backend_id, root=Path(registry.path).parent.parent),
+        resolve_backend(
+            backend_id,
+            root=Path(registry.path).parent.parent,
+            capability_id=str((plan.get("target") or {}).get("capability_id") or "") or None,
+        ),
         clock=clock,
         keyring=keyring,
         injector=injector,

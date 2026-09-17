@@ -12253,4 +12253,79 @@ truncated AGENTS.md from 65840 to 65243 bytes
 | 仓库 | refs 恢复、索引重建、工作树 0 改动、`fsck` 干净 |
 | 未完成 | **推送**：代理不可达，本轮的提交只能先留在本地 |
 
+## 144. portable archive 后端：解压规则做成库，而"路径型入口点"被冻结 schema 挡住
+
+### 144.1 缺口在哪（P4 的"单文件或无脚本 portable archive"）
+
+读代码得到的三条，不是推断：
+
+- `https_artifact.stage` 只是 `shutil.copy2`——**一个 `.zip` 会被原样装进 store**，没有任何入口点可供绑定；
+- 实例的 `entrypoints` **就是 `backend.expose(store_dir)` 的返回值**（`tx/artifact.py`），而
+  `run --capability` 执行 **index 0**（`caps/runtime.py`）——所以"哪个文件是主入口"由后端决定；
+- `policy/sources.json` 里 **`build`/cmake 的条目早就在**（`sha256sums` 名称匹配，§59 只解析过 digest，
+  **artifact 从未下载过**），而 `cmake-{version}-windows-x86_64.zip` 正是"无脚本 portable archive"。
+
+### 144.2 做了什么：`PortableArchiveBackend`（库，暂时没有调用者）
+
+新后端 `portable_archive`：取回与校验照 `https_artifact` 办，**stage 改成解压**，规则一律"拒绝而不是消毒"：
+
+| 规则 | 行为 |
+|---|---|
+| 穿越 | 绝对路径、盘符、`..`、空成员名 → `UNSUPPORTED_BACKEND` |
+| 链接 | 非普通成员（符号链接/设备）→ 拒绝；stage 里只放我们自己写的字节 |
+| 预算 | 成员数上界 + 解压体积上界；**声明值与实际写入字节都查**（归档里谎报大小的成员会被抓） |
+| 安装脚本 | **顶层**且名字属于安装类词干（`install`/`setup`/`bootstrap`…）的脚本 → 拒绝。**按名字而不是后缀**，因为按后缀会把 node 的 `npm.cmd`/`npx.cmd` 这类 shim 也拒掉 |
+| 包装目录 | 所有成员共享的那一层目录被**剥掉**，于是入口点是 `bin/cmake.exe` 而不是 `cmake-3.31.6-windows-x86_64/bin/cmake.exe` |
+
+`expose()` 把**冻结能力清单里的 `entry`** 排在最前——那是"主入口"的权威来源，
+`resolve_backend(..., capability_id=…)` 因此多了一个入参（四个调用点都拿得到能力 id）。
+登记面：`BACKEND_IDS`、`declaration_for()`、`resolve_backend()` 都已就位。
+
+### 144.3 测试（4 个新用例，只测后端本身）
+
+| 用例 | 问什么 |
+|---|---|
+| 剥包装 + 入口排序 | `cmake-x/bin/{cmake,cpack}.exe` → `expose == ["bin/cmake.exe", "bin/cpack.exe"]` |
+| 穿越与链接 | `../escape.exe` 与符号链接成员各自被拒，码是 `UNSUPPORTED_BACKEND` |
+| 安装脚本 vs shim | `install.sh` 被拒，而 `npm.cmd` **被接受**——这一对才是规则诚实的证明 |
+| 预算与非归档 | 一个叫 `.zip` 的文本文件被拒；把体积预算调到 8 字节后超限被拒 |
+
+### 144.4 撞上的那堵墙：**入口点必须是裸文件名**
+
+把 `source resolve build` 接上归档后端之后，真机路径上的第一次 `install` 报的是：
+
+```text
+SELF_VALIDATION_FAILED: managed-tool-instance rejected a document produced by this build
+  entrypoints/0: 'bin/cmake.exe' does not match '^[^\\/]+$'
+```
+
+**这是本轮最有价值的读数**：它不是实现错误，而是**冻结契约**对"一个 owned payload 长什么样"的规定——
+`managed-tool-instance.entrypoints` 每一项是**裸文件名**（不允许分隔符），也就是 `portable_file` 那种
+扁平目录 `store/<instance>/<name>`。**而归档天生是一棵树。** 两者不冲突是不可能的。
+
+### 144.5 三条出路（**未裁决**，留给 ADR）
+
+| 路 | 代价 |
+|---|---|
+| (a) 解压后**扁平化**到单层 | 对 cmake 这类"exe 依赖同目录/上一级 `share`"的工具不可行——会把它跑不起来 |
+| (b) **放宽 schema**：`entrypoints` 允许相对路径 | 动第 1 层契约。按 ADR-0003，改类型/枚举需要**新的 schema id** 或一条记录在案的例外；好处是 `runtime.py` 本来就在做 `store_dir / relative`（它想要的**就是**路径） |
+| (c) **新增一个可选字段**（如 `payload_root`），`entrypoints` 保持裸名 | **新增可选属性是 minor 兼容**（AGENTS §7）：不放宽、不换 schema id，语料只需重生成；代价是 `runtime.py`/`toolstate.py`/`launcher` 各多一次 join |
+
+**本轮停在这里**：三条路的取舍是设计决定，不替项目做；已把读数与代价写进本节。
+
+### 144.6 于是接线**回退**了
+
+`caps/sources.py` 的 `_backend_for` 撤回，解析器仍按老的 `portable_file`/`https_artifact` 选后端——
+**不能让一条会 `SELF_VALIDATION_FAILED` 的路径留在主线上**。保留下来的是：后端模块、四条解压规则与
+四个用例、`BACKEND_IDS`/`declaration_for`/`resolve_backend(capability_id=…)` 的登记面。
+`test_l1_sources.py` 的夹具仍然改成**真正的 zip**——一个叫 `.zip` 的非归档文件是谎话，无论接不接线。
+
+### 144.7 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1377 → 1381**（+4，全部只测后端本身）；常驻审计 **113 不动** |
+| 协议面 | **无 schema 变更、无新 reason code、无新动词**；`BACKEND_IDS` +1，`resolve_backend` +1 个可选入参 |
+| 未接线 | `source resolve` 暂时仍选单文件后端；**归档安装等 ADR-0052** |
+| 真机 | 未跑（没有可安装的归档路径）；本节的读数来自真机路径上的一次 `install` 失败 |
 

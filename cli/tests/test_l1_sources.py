@@ -9,6 +9,7 @@ structurally impossible here — `parse_sha256sums` is the only source of an exp
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -328,7 +329,12 @@ def offline_release(tmp_path: Path) -> tuple[Path, Path]:
     release = tmp_path / "release"
     release.mkdir()
     artifact = release / "cmake-3.31.6-windows-x86_64.zip"
-    artifact.write_bytes(b"portable archive bytes, no installer script\n")
+    # §144: a file named `.zip` that is not an archive is exactly the kind of lie a fixture
+    # must not tell — the resolver now picks the archive backend for this suffix, so the
+    # fixture has to be a real (if tiny) release archive.
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("cmake-3.31.6-windows-x86_64/bin/cmake.exe", b"MZ not a real image\n")
+        archive.writestr("cmake-3.31.6-windows-x86_64/share/cmake.txt", b"docs\n")
     checksums = release / "cmake-3.31.6-SHA-256.txt"
     checksums.write_text(f"{sha256_file(artifact)[7:]}  {artifact.name}\n", encoding="utf-8")
     return artifact, checksums

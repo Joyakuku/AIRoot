@@ -23,6 +23,7 @@ import pytest
 import fake_issuer
 from airoot.caps.backends import (
     BACKEND_IDS,
+    Artifact,
     BACKEND_OPERATIONS,
     DECLARED_FIELDS,
     BackendDeclaration,
@@ -439,6 +440,115 @@ def loopback():
     yield start
     for server in servers:
         server.close()
+
+
+# --------------------------------------------------------------------------- #
+# portable_archive (draft §144)
+# --------------------------------------------------------------------------- #
+
+
+def _archive(path: Path, members: dict[str, bytes], *, link: str | None = None) -> Path:
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in members.items():
+            archive.writestr(name, payload)
+        if link is not None:
+            import stat as stat_module
+
+            info = zipfile.ZipInfo(link)
+            info.external_attr = (stat_module.S_IFLNK | 0o777) << 16
+            archive.writestr(info, "target")
+    return path
+
+
+def _artifact(path: Path) -> Artifact:
+    return Artifact(path=path, digest="sha256:" + "0" * 64, size=path.stat().st_size)
+
+
+def test_the_archive_backend_strips_one_wrapper_and_puts_the_entry_first(tmp_path: Path) -> None:
+    """A release archive ships inside a versioned directory; a payload tree can hold several exes.
+
+    Both halves matter: the wrapper must not become part of every entrypoint, and the capability's
+    declared entry (`cmake.exe`, from the frozen list) must be `expose[0]` — that index is what
+    `run --capability` executes.
+    """
+
+    from airoot.caps.backends.portable_archive import PortableArchiveBackend
+
+    source = _archive(
+        tmp_path / "cmake-3.31.6-windows-x86_64.zip",
+        {
+            "cmake-3.31.6-windows-x86_64/bin/cmake.exe": b"MZ cmake\n",
+            "cmake-3.31.6-windows-x86_64/bin/cpack.exe": b"MZ cpack\n",
+            "cmake-3.31.6-windows-x86_64/share/cmake.txt": b"docs\n",
+        },
+    )
+    backend = PortableArchiveBackend(entry_name="cmake.exe")
+
+    backend.stage(_artifact(source), stage_dir=tmp_path / "stage")
+    store = backend.commit(tmp_path / "stage", store_dir=tmp_path / "store")
+
+    assert (store / "bin" / "cmake.exe").is_file()
+    assert backend.expose(store) == ["bin/cmake.exe", "bin/cpack.exe"]
+    assert backend.inspect(store)["health"] == "healthy"
+
+
+def test_the_archive_backend_refuses_traversal_and_links(tmp_path: Path) -> None:
+    """Refusal, not sanitisation: a member that escapes, and a member that is a pointer."""
+
+    from airoot.caps.backends.portable_archive import PortableArchiveBackend
+
+    escaping = _archive(tmp_path / "escaping.zip", {"../escape.exe": b"MZ\n"})
+    with pytest.raises(AirootError) as traversal:
+        PortableArchiveBackend().stage(_artifact(escaping), stage_dir=tmp_path / "stage-a")
+    assert traversal.value.reason_code == "UNSUPPORTED_BACKEND"
+    assert "traversal" in traversal.value.message
+
+    linked = _archive(tmp_path / "linked.zip", {"bin/cmake.exe": b"MZ\n"}, link="bin/link.exe")
+    with pytest.raises(AirootError) as link:
+        PortableArchiveBackend().stage(_artifact(linked), stage_dir=tmp_path / "stage-b")
+    assert "non-regular" in link.value.message
+
+
+def test_the_archive_backend_refuses_an_installer_but_admits_a_shim(tmp_path: Path) -> None:
+    """The rule is name-scoped on purpose: `install.sh` is an installer, `npm.cmd` is a payload.
+
+    A suffix-scoped rule would refuse every Windows runtime archive, which is why the two cases are
+    asserted together — this pair is what keeps the rule honest.
+    """
+
+    from airoot.caps.backends.portable_archive import PortableArchiveBackend
+
+    installer = _archive(tmp_path / "installer.zip", {"install.sh": b"#!/bin/sh\n", "bin/tool.exe": b"MZ\n"})
+    with pytest.raises(AirootError) as refused:
+        PortableArchiveBackend().stage(_artifact(installer), stage_dir=tmp_path / "stage-c")
+    assert "installer script" in refused.value.message
+
+    shimmed = _archive(tmp_path / "shim.zip", {"npm.cmd": b"@echo off\n", "bin/node.exe": b"MZ\n"})
+    payload = PortableArchiveBackend(entry_name="node.exe").stage(
+        _artifact(shimmed), stage_dir=tmp_path / "stage-d"
+    )
+    assert (payload / "bin" / "node.exe").is_file()
+
+
+def test_the_archive_backend_is_bounded_and_refuses_a_non_zip(tmp_path: Path, monkeypatch) -> None:
+    """The budgets are data; the point is that they are enforced against real bytes."""
+
+    from airoot.caps.backends import portable_archive
+    from airoot.caps.backends.portable_archive import PortableArchiveBackend
+
+    not_an_archive = tmp_path / "release.zip"
+    not_an_archive.write_bytes(b"this is not a zip at all\n")
+    with pytest.raises(AirootError) as refused:
+        PortableArchiveBackend().stage(_artifact(not_an_archive), stage_dir=tmp_path / "stage-e")
+    assert "not a zip archive" in refused.value.message
+
+    monkeypatch.setattr(portable_archive, "MAX_UNCOMPRESSED_BYTES", 8)
+    oversize = _archive(tmp_path / "oversize.zip", {"bin/tool.exe": b"MZ" + b"x" * 64})
+    with pytest.raises(AirootError) as bounded:
+        PortableArchiveBackend().stage(_artifact(oversize), stage_dir=tmp_path / "stage-f")
+    assert "unpacks to more than" in bounded.value.message
 
 
 def test_https_backend_refuses_plaintext(loopback, tmp_path: Path) -> None:

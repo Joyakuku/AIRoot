@@ -198,11 +198,19 @@ class InstallBackend(Protocol):
 # registry
 # --------------------------------------------------------------------------- #
 
-BACKEND_IDS = ("fake_fixture", "portable_file", "https_artifact")
+BACKEND_IDS = ("fake_fixture", "portable_file", "https_artifact", "portable_archive")
 
 
-def resolve_backend(backend_id: str, *, root: Path | None = None) -> InstallBackend:
-    """Instantiate a backend by id. Unknown ids are refused, never guessed."""
+def resolve_backend(
+    backend_id: str, *, root: Path | None = None, capability_id: str | None = None
+) -> InstallBackend:
+    """Instantiate a backend by id. Unknown ids are refused, never guessed.
+
+    ``capability_id`` is only read by the backends that need to know *which file* is an
+    object's entrypoint: an archive holds a tree, and its `expose` order becomes the
+    instance's `entrypoints` (and therefore what `run --capability` executes). The frozen
+    capability list is the authority for that name (`caps/boundary.py`).
+    """
 
     if backend_id == "fake_fixture":
         from ...tx.simulate import SimulationBackend
@@ -216,11 +224,28 @@ def resolve_backend(backend_id: str, *, root: Path | None = None) -> InstallBack
         from .https_artifact import HttpsArtifactBackend
 
         return HttpsArtifactBackend()
+    if backend_id == "portable_archive":
+        from .portable_archive import PortableArchiveBackend
+
+        return PortableArchiveBackend(entry_name=_declared_entry(capability_id))
     raise AirootError(
         "UNSUPPORTED_BACKEND",
         f"unknown install backend: {backend_id}",
         evidence=[f"known backends: {', '.join(BACKEND_IDS)}", "v1 admits script-free artifact backends only"],
     )
+
+
+def _declared_entry(capability_id: str | None) -> str | None:
+    """The entry filename the frozen capability list declares, or None when unknown."""
+
+    if not capability_id:
+        return None
+    from ..boundary import load_capabilities
+
+    for entry in load_capabilities().capabilities:
+        if entry.capability_id == capability_id:
+            return str(entry.entry)
+    return None
 
 
 def declaration_for(backend_id: str) -> BackendDeclaration:
@@ -232,6 +257,10 @@ def declaration_for(backend_id: str) -> BackendDeclaration:
         return DECLARATION
     if backend_id == "https_artifact":
         from .https_artifact import DECLARATION
+
+        return DECLARATION
+    if backend_id == "portable_archive":
+        from .portable_archive import DECLARATION
 
         return DECLARATION
     if backend_id == "fake_fixture":
