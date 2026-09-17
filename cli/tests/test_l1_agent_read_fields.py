@@ -248,7 +248,16 @@ def test_the_documented_read_path_count_is_the_number_this_module_resolves() -> 
 
 
 def test_every_read_path_resolves_in_the_document_the_cli_prints(
-    capsys, root, registry, clock, monkeypatch, cli_root: Path, data_root: Path, checksums: Path, tmp_path: Path
+    capsys,
+    root,
+    registry,
+    clock,
+    monkeypatch,
+    cli_root: Path,
+    data_root: Path,
+    checksums: Path,
+    tmp_path: Path,
+    tests_tmp: Path,
 ) -> None:
     """One root, every agent-facing invocation, every ``read`` path resolved structurally."""
 
@@ -311,6 +320,15 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
 
     # --- observation first: the mutating verbs below run last, on purpose ---------------------
     record("root status", "root", "status")
+    # §157: the lane that creates a root runs against its own path, never against `cli_root` — that
+    # one the fixture already initialised, and `root init` refuses a directory that is not new or
+    # empty. It is recorded here rather than with the mutations below because it needs no fixture
+    # state at all: it is the command that runs before any of this exists.
+    record(
+        "root init <path> --root-instance-id <id> --machine-id <id>",
+        "root", "init", str(tests_tmp / "cli-root-init"),
+        "--root-instance-id", "root-agent-lane", "--machine-id", "host-agent-lane",
+    )
     record("doctor", "doctor")
     record("where <capability>", "where", "python")
     record("where <capability> --version <constraint>", "where", "python", "--version", ">=3")

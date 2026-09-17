@@ -25,6 +25,10 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 - `status=degraded` → 可以继续，但必须把降级原因说出来（`doctor` 的 `diagnostics[].impact`）。
 - `status=broken` / `recovery_required` → **停下来报告**，先跑 `airoot repair --json`，
   不要"顺手修一下"（`doctor` 永不自动修复，`repair` 才是那个动词）。
+- `ROOT_NOT_RESOLVED`(8) 或 `ROOT_MARKER_MISSING`(6) → 这台机器**还没有可用的 root**。
+  两条路，不要有第三条：让调用方用 `--root` / `AIROOT_HOME` 指到已有的 root，或者建一个 ——
+  `airoot root init <目录> --root-instance-id <id> --machine-id <id> --json`（只在新**建或空**目录里建，
+  不需要提权、不写 PATH；两个身份是入参，因为 P1 不替你编身份）。**绝不拿当前目录猜一个。**
 - `security_mode=policy_only` → **照实说**：P1 的强制手段是约定与审计，不是 ACL；
   同一用户权限下的进程可以绕过它。绝不能说成"已受保护"。
 
@@ -32,6 +36,7 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 
 | 用户的话 | 你要跑的命令 | 你不该做的事 |
 |---|---|---|
+| "这台机器还没装过 AIROOT / 第一次用" | `airoot root init <目录> --root-instance-id <id> --machine-id <id> --json` | 不猜目录：它只在新**建或空**目录里建，且两个身份是**入参**（P1 不替你编身份）；不指望它写 PATH 或要提权 |
 | "这台电脑上有没有 X / 在哪" | `airoot where X --json` | 不用 `where` 之外的命令去猜；不递归 `shell` 搜索 |
 | "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足 |
 | "这台机器上都有什么" | `airoot inventory --class … --json` | 不把 `unmanaged` 说成"AIROOT 管的" |

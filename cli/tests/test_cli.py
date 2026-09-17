@@ -80,6 +80,111 @@ def test_airoot_home_is_honoured(capsys, prepared, monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# creating a root (§157)
+# --------------------------------------------------------------------------- #
+
+
+def test_root_init_creates_a_root_from_nothing(capsys, tests_tmp: Path, monkeypatch) -> None:
+    """The one command that runs before a root exists — and it needs no root to resolve.
+
+    Measured before this stage: every command, including this one, answered
+    `ROOT_MARKER_MISSING`(6) with "the root must be created by bootstrap (P2) or by a test fixture",
+    so a first-time operator had no path from nothing to a working root.
+    """
+
+    monkeypatch.delenv("AIROOT_HOME", raising=False)
+    target = tests_tmp / "init-from-nothing"
+
+    code, document = run(
+        capsys, "--json",
+        "root", "init", str(target),
+        "--root-instance-id", "root-created-by-test", "--machine-id", "host-created-by-test",
+    )
+
+    assert code == 0, document
+    assert document["canonical_path"] == str(target)
+    assert document["path_written"] is False, "creating a root never writes PATH"
+    assert document["security_mode"] == "policy_only"
+
+    # ...and the root it made is usable by the very next command, without an env var.
+    code, status = run(capsys, "--json", "--root", str(target), "root", "status")
+    assert code == 0, status
+    assert status["registry_state"] == "available"
+    assert status["machine_id"] == "host-created-by-test"
+    assert status["root_instance_id"] == "root-created-by-test"
+
+
+def test_root_init_reports_the_layout_it_actually_created(capsys, tests_tmp: Path) -> None:
+    """What the answer claims to have made has to be on disk: the count and the paths are read."""
+
+    from airoot.root import LAYOUT_DIRS
+
+    target = tests_tmp / "init-layout"
+    code, document = run(
+        capsys, "--json",
+        "root", "init", str(target), "--root-instance-id", "root-layout", "--machine-id", "host-layout",
+    )
+
+    assert code == 0, document
+    assert document["directories_created"] == len(LAYOUT_DIRS)
+    assert Path(document["marker"]).is_file()
+    assert Path(document["registry"]).is_file()
+    for relative in ("state/plans", "state/approvals", "cli/exposure/bin", "store"):
+        assert target.joinpath(relative).is_dir(), relative
+
+
+def test_root_init_never_invents_an_identity(capsys, tests_tmp: Path) -> None:
+    """Both identities are explicit inputs: P1 does not derive them (ADR-0025 keeps that open).
+
+    The refusal is the parser's `INVALID_INPUT` (exit 8), not an argparse traceback — the CLI has one
+    way to say "your input is wrong", and it happens before anything touches the filesystem.
+    """
+
+    target = tests_tmp / "init-without-identity"
+    code, document = run(capsys, "--json", "root", "init", str(target))
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert "--root-instance-id" in document["message"] and "--machine-id" in document["message"]
+    assert not target.exists(), "a usage refusal created the directory"
+
+
+def test_root_init_refuses_an_existing_root_without_rewriting_it(capsys, root) -> None:
+    marker = Path(root.path) / "state" / "root.json"
+    before = marker.read_text(encoding="utf-8")
+
+    code, document = run(
+        capsys, "--json",
+        "root", "init", str(root.path), "--root-instance-id", "root-other", "--machine-id", "host-other",
+    )
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert any("marker=" in item for item in document["evidence"]), document["evidence"]
+    assert marker.read_text(encoding="utf-8") == before, "a refused init must not rewrite the identity"
+
+
+def test_root_init_refuses_a_directory_that_already_has_contents(capsys, tests_tmp: Path) -> None:
+    """`init_root` only refuses an existing *marker*; without this the verb would take over any
+    directory the caller mistyped, which is silent clutter in a place that is not AIROOT's."""
+
+    target = tests_tmp / "init-not-empty"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "the-user-s-file.txt").write_text("keep me\n", encoding="utf-8")
+
+    code, document = run(
+        capsys, "--json",
+        "root", "init", str(target), "--root-instance-id", "root-nonempty", "--machine-id", "host-nonempty",
+    )
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert any("entries=1" in item for item in document["evidence"]), document["evidence"]
+    assert not target.joinpath("state").exists(), "a refused init created part of the layout"
+    assert target.joinpath("the-user-s-file.txt").is_file()
+
+
+# --------------------------------------------------------------------------- #
 # where / doctor / inventory
 # --------------------------------------------------------------------------- #
 

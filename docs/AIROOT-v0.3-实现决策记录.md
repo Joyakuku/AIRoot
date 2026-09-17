@@ -3084,4 +3084,65 @@ tool list                        → version=1.0.0
 **状态：已裁决并已落地（A、B、C，草案 §156）**：守卫是 `cli/tests/test_l1_sources.py` 的四条新用例
 加全链测试里的 `where --version ">=3.31"` 断言，三处合成变异各自只把自己那一半变红。
 
+## ADR-0058 — **建 root 的文件那一半不需要受保护状态**（`root init`，不是 `bootstrap`）
+
+### 背景
+
+"用 skill + cli 到底能做到什么"这个问题被追问到第一分钟时，答案是没有第一分钟：**每一条命令都要求先有
+一个 root，而建 root 没有动词**。实测（空目录）：
+
+```text
+$ airoot --root <空目录> root status --json
+ROOT_MARKER_MISSING (exit 6)
+message : root marker missing: <...>\state\root.json
+evidence: the root must be created by bootstrap (P2) or by a test fixture
+```
+
+`bootstrap` 在动词位置被拦下（`NOT_IMPLEMENTED`(1)，ADR-0027），`agents/airoot.json` 给的理由是：
+
+> A real bootstrap creates the root marker and the ACL layout, and that is protected state.
+
+**这句话把两件事捆在一起，而它们的归属在 ADR-0045 之后已经分开了**：
+- 写一个 root marker（+ 目录布局 + 一个空 registry）在 `policy_only` 下**本来就不受保护**——同一个用户
+  身份写一个 JSON 文件而已，正是 **ADR-0050** 用来把"稳定入口"从 P2 里放出来的那条论证；
+- ACL 布局与 machine PATH 条目**仍然**是受保护状态（ADR-0045 归于使用方 / 可选 P9）。
+
+同型论证没有应用到 root marker 上，于是这一半在整个 build 里都没有动词，而 `SKILL.md` 的第一步恰好就是
+`airoot root status --json`——**一个第一次拿到 AIROOT 的人/上游 harness 读完 skill 后无处可去。**
+
+### 决定
+
+**A —— 新增 `airoot root init <path> --root-instance-id <id> --machine-id <id>`，只做文件那一半。**
+建 `LAYOUT_DIRS` + `state/root.json` + `state/registry.db`（含投影），报告 `directories_created`、
+`marker`、`registry`、`volume_serial`、`path_written: false`。**不布 ACL、不写 PATH、不提权。**
+
+**B —— `bootstrap` 这个名字不动，也照旧报 `NOT_IMPLEMENTED`。** 它在规划 §15.1 里带着提权语义，而
+`not_implemented` 的六条与守卫第三十五组逐字盯着它。把文件那一半塞进这个名字，等于让"受保护的那半"
+看起来已经做了——那正是这个项目一直在防的事（§119 的措辞漂移、§115 的借码）。`deferred["bootstrap"]`
+的 `why` 改写为"marker 那一半是 `root init`，剩下的是 ACL/machine PATH"，`category` 与 `unblocked_by`
+**不变**（两个登记表必须逐字相同）。
+
+**C —— 两个身份是必填入参，不设默认值。** `machine_id`/`root_instance_id` 的生成算法是 ADR-0025 明确
+留下的开放项（"只接受注入或显式入参，不从硬件指纹推导"）。一个"贴心的默认值"就是 CLI 替项目回答一个
+刻意没回答的问题——ADR-0057 记的是同一种病的另一种形态（默认值冒充调用者的意思）。
+
+**D —— 拒绝"非空且没有 marker"的目录。** `init_root` 只拒绝已存在的 marker；没有这条守卫时，把
+`D:\env` 误当 root 传进来的调用者会得到 AIROOT 的 layout 铺在自己那棵树的顶层——**非破坏、但静默**。
+这条收紧按 ADR-0021 的"诚实规则"处理：它挡的不是权限，是一次会让用户事后才发现的事故。
+
+**E —— 这是唯一一条不需要 root 就能跑的命令**（`Context(resolve=False)`）。它的路径来自自己的位置参数；
+root 解析那条"**绝不回落到当前目录**"的规则没有被放宽。
+
+### 代价
+
+- `Context` 多了一个模式，`root_path` 变成可选：`registry()`/`path()` 在无 root 时改报 `ROOT_NOT_RESOLVED`(8)
+  而不是把 `None` 传下去（这一条同时让"哪条命令在没有 root 时失败"变成**一个**答案）。
+- **`bootstrap` 仍然不可调用**，所以"受保护模式的一次性窗口"仍然不存在。这一条不假装：`root init`
+  建出来的 root 是 `policy_only`，文档与它的输出都这么写。
+- **没有做**：身份生成算法（仍开放）、`root relocate`/`root adopt`（受保护状态）、ACL 布局、machine PATH。
+
+**状态：已裁决并已落地（A–E，草案 §157）**：五条新用例在 `cli/tests/test_cli.py`，三处合成变异各自
+只把自己那一半变红；`SKILL.md` 的第一步与命令地图各多一条出口；lane 36 → 37。
+
+
 

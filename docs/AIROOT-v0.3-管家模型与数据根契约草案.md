@@ -13352,3 +13352,105 @@ FAILED test_a_dry_run_from_a_missing_resolution_is_refused
 | 真机 | 不需要新真机读数：这一处是**离线可复现**的（本地 release + 本地校验和文件），全链测试就是那条链；§155.5 的真机链读数（`plan/node/22.14.0/…`）不受影响 |
 | 顺手做的 | `AGENTS.md` §6 那条 `plan build --source-json <resolved.json>` 的注释补上"版本来自解析结果"——它以前是正确的命令配着错的默认值 |
 | 没有做 | `plan` 仍不校验 `--version` 与 `artifact_url` 里嵌的版本；`metadata` 里仍没有"版本从哪来"的字段（`version_source` 只属于 `adopt` 的信封）——ADR-0057 的代价一节写了这一条 |
+
+## 157. `root init`：一个真人从零开始的第一个动词（`bootstrap` 的文件那一半）
+
+裁决见 **ADR-0058**。起因不是设计文档，是"**用 skill+cli 能不能做事**"这个问题被追问到第一分钟：对任何命令
+问一句"这条链从哪开始"，答案是**没有开始**。
+
+### 157.1 读数：每一件事都要求先有一个 root，而建 root 没有动词
+
+空目录上跑 CLI（实测）：
+
+```text
+$ airoot --root <空目录> root status --json
+ROOT_MARKER_MISSING (exit 6)
+message : root marker missing: <...>\state\root.json
+evidence: the root must be created by bootstrap (P2) or by a test fixture
+```
+
+`bootstrap` 在 `cli.py` 的动词位置上被拦下（`NOT_IMPLEMENTED`(1)），理由写在 `agents/airoot.json`：
+"一个真正的 bootstrap 会创建 root marker 与 ACL 布局，而那是受保护状态"。**它把两件事捆在了一起**——
+写一个 root marker，和布 ACL / 写 machine PATH。ADR-0045 把受保护状态整体移给使用方之后，前半句不再
+需要提权；ADR-0050 正是用同一型论证把"写稳定入口"从 P2 里放出来的（"在 `policy_only` 下这个文件本来就
+不受保护"）。**同型的论证没被应用到 root marker 上**，于是它在整个 build 里都没有动词。
+
+`SKILL.md` 的第一步就教 `airoot root status --json`，而它自己的纪律是"不要把可变运行状态写进本文件
+（root 路径）"——两句话都对，合起来的结果是：**一个第一次拿到 AIROOT 的人/上游 harness 读到的是
+"先确认 root 身份"，然后无处可去。**
+
+### 157.2 修法：只做不需要提权的那一半，并把两件事写清楚
+
+新增动词 `airoot root init <path> --root-instance-id <id> --machine-id <id>`：
+
+| 它做什么 | 它不做什么 |
+|---|---|
+| 在**新建或空**目录里建 `LAYOUT_DIRS` 的 15 个目录（实测 `directories_created=15`） | 不布 ACL、不碰 machine PATH、不提权（`path_written: false`） |
+| 写 `state/root.json`（含卷身份，`init_root` 原有行为） | 不覆盖已有 marker（拒绝并**不重写身份**） |
+| 建 `state/registry.db`（`Registry.initialize` + 投影）——marker 没有 registry 的 root 是**半初始化**的，`root status` 会报 `REGISTRY_MISSING` | 不注册数据根（那是 `data-root add` 的 lane），不 adopt 任何东西 |
+| 报 `volume_serial` / `marker` / `registry` / `directories_created` / `registry_generation` | 不猜身份：两个 id 都是**必填入参**（ADR-0025 把生成算法留成开放项） |
+
+两处设计判断写在这里，免得被当成顺手：
+
+1. **不叫 `bootstrap`。** 那个名字在规划 §15.1 里带着提权语义，`not_implemented` 的六条与守卫第三十五组
+   都盯着它。新动词只做文件那一半，`bootstrap` **照旧报 `NOT_IMPLEMENTED`**——它的 `why` 里"创建 root
+   marker"这半句现在指向 `root init`（§157.3）。
+2. **拒绝"非空且没有 marker"的目录。** `init_root` 只拒绝已存在的 marker，所以不加这条守卫时，一个把
+   `D:\env` 误传进来的调用者会得到：AIROOT 的 layout 被铺进他自己那棵树的顶层——**非破坏、但静默**。
+   拒绝比事后解释便宜。
+
+`Context` 因此多了一个 `resolve=False` 模式（`ROOTLESS_COMMANDS = {("root", "init")}`）：这是**唯一**一条
+不需要 root 就能跑的命令，它的路径来自自己的位置参数，**不是**当前目录（root 解析那条"绝不回落到 CWD"
+的规则没有被放宽）。`registry()`/`path()` 在无 root 时改报 `ROOT_NOT_RESOLVED`(8) 而不是把 `None` 传下去。
+
+### 157.3 顺带修掉的两处"措辞已经不准"
+
+- `agents/airoot.json` 的 `deferred["bootstrap"].why` 原文说"一个真正的 bootstrap 会创建 root marker 与
+  ACL 布局，而那是受保护状态"——现在前半句有了动词，**同一句话自己讲两个故事**（§119 的同一型缺陷）。
+  改写为：marker 那一半是 `root init`，`bootstrap` 剩下的是 ACL/machine PATH 那一半，`category` 与
+  `unblocked_by` **不动**（守卫第二十三组要求两个登记表逐字相同）。
+- `SKILL.md` 第一步现在带一条 `ROOT_NOT_RESOLVED`(8) / `ROOT_MARKER_MISSING`(6) → **去 `root init`**
+  的出口，命令地图也多了一行。它同时是给 agent 的：一个错误码配一条可执行的下一步，而不是"请询问用户"。
+
+### 157.4 守卫与验红
+
+五条新用例在 `cli/tests/test_cli.py`（"creating a root (§157)" 一节）:
+
+| 用例 | 盯的是 |
+|---|---|
+| `test_root_init_creates_a_root_from_nothing` | 删掉 `AIROOT_HOME`、不给 `--root` 也能建；建完**下一条命令就能用**（`registry_state=available`、两个身份原样）；`path_written is False` |
+| `test_root_init_reports_the_layout_it_actually_created` | `directories_created == len(LAYOUT_DIRS)`，marker/registry 真的在盘上，`state/plans`、`cli/exposure/bin` 等真的存在 |
+| `test_root_init_never_invents_an_identity` | 不给两个身份 ⇒ `INVALID_INPUT`(8)，消息点名两个选项，且**目录没被创建** |
+| `test_root_init_refuses_an_existing_root_without_rewriting_it` | 二次 init ⇒ 8，且 marker **逐字节未变** |
+| `test_root_init_refuses_a_directory_that_already_has_contents` | 非空目录 ⇒ 8、证据带 `entries=1`、**没有创建 layout 的任何一部分**、用户的文件还在 |
+
+**三处合成变异，各自只把自己那一半变红**（改完原样写回）：
+
+```text
+# 变异一：去掉"目录非空就拒绝"那段
+FAILED test_root_init_refuses_a_directory_that_already_has_contents
+       assert 0 == 8          ← 它真的会把 layout 铺进别人的目录
+
+# 变异二：ROOTLESS_COMMANDS 置空（回到"必须先有 root 才能跑"）
+FAILED test_root_init_creates_a_root_from_nothing
+       ROOT_NOT_RESOLVED(8) "no AIROOT root given: pass --root or set AIROOT_HOME"
+       ← 正是这一节要消掉的那个"无处可去"
+
+# 变异三：去掉二次 init 的 marker 检查（让 init_root 自己拒绝）
+FAILED test_root_init_refuses_an_existing_root_without_rewriting_it
+       evidence=['entries=10', ...]  ← 仍然退出 8，但落到**另一条**拒绝（非空目录）上
+```
+
+第三条变异量的是"我们给了什么理由"而不是"有没有拒绝"——这是它存在的意义：一条只断言 `code == 8` 的
+用例会在这个变异下**保持绿色**（`init_root` 也拒绝），所以那条断言里加了 `marker=` 这条证据。
+
+### 157.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1405 → 1410**（+5：`cli/tests/test_cli.py` 五条新用例） |
+| 契约层 | **不动**——没有新 schema：`root-marker.schema.json` 早就存在且 `init_root` 一直在写它，这个动词只是把它接到 CLI 上 |
+| 语料 | **不动**（`test_golden_fixtures_reproduce_exactly` 全绿） |
+| 计数同步 | `agents/airoot.json` 的 lane **36 → 37**（`read` 路径 **166 → 177**，它的 honesty note 里三个数字一起改）；`AGENTS.md` 的测试数 ×3、lane 数 ×1、`read` 路径数 ×1 与新增的命令行；`references/field-values.md` 的 `operation` 值 **13 → 14**（`root_init`） |
+| 真机 | 这一节没有跑真机脚本：`root init` 在**临时目录**上实测过（建 15 个目录、marker、registry，二次 init 被拒），而 `D:\env_test` 的正式 root 由操作者一条命令建出（§158） |
+| 没有做 | `bootstrap` 本身（ACL 布局、machine PATH——仍是 P9/使用方）；`root relocate`/`root adopt`（受保护状态）；root 身份的**生成算法**（仍开放，两个 id 必须显式给） |

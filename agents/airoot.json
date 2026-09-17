@@ -13,6 +13,25 @@
       "document_schema": null
     },
     {
+      "question": "there is no root yet — how do I create one",
+      "command": ["root", "init", "<path>", "--root-instance-id", "<id>", "--machine-id", "<id>"],
+      "read": [
+        "canonical_path",
+        "root_instance_id",
+        "machine_id",
+        "volume_serial",
+        "marker",
+        "registry",
+        "directories_created",
+        "registry_generation",
+        "security_mode",
+        "path_written",
+        "reason_code"
+      ],
+      "notes": "the only command that runs before a root exists: it creates the layout, the marker and the registry in a directory that is new or empty, and it refuses a directory that already has contents or a marker. Not `bootstrap` (that name carries the elevated ACL/machine-PATH half and stays declared-absent) and not a guess: both identities are inputs, because P1 does not derive them (ADR-0025). `path_written` is false by construction",
+      "document_schema": null
+    },
+    {
       "question": "is anything wrong (D1-D10, data roots, references)",
       "command": ["doctor"],
       "always_first": true,
@@ -429,7 +448,7 @@
     "security_mode_note": "P1 is policy_only: enforcement is convention and audit, not ACL. A same-user process can bypass it.",
     "degradation_note": "CURRENT_SOURCE_DEGRADED (exit 2) is a normal fallback to a healthy reference, not a failure.",
     "signature_note": "v1 verifies published digests only. A digest is not a signature; never imply the artifact was signed.",
-    "document_schema_note": "`document_schema` names the published schema that describes the document a lane's `read` paths live in, or null when no schema describes it. A null is **measured**, not assumed: the CLI is run, and every published document schema is tried against what it printed (cli/tests/test_l1_agent_read_fields.py). 5 of 36 lanes are pinned (doctor, where x2, inventory, search); the other 31 read a report whose shape only the field-existence check holds. Two of the 31 print a self-validated plan **plus** `plan_file` / `required_action` / `reason_code`, which are deliberately not part of the plan contract. **Why no report schema pins the rest** (measured, draft §100): the 31 reports have 31 distinct top-level shapes, so one schema either fails them all or would need `additionalProperties: true` — a published contract that accepts any extra key, which the doctrine refuses as a capability that only looks safe. What they do share is exactly `schema_version` and `reason_code`, and that much is guarded — as is the distinctness the argument rests on. Treat a null lane's fields as informational and never quote them as contract.",
+    "document_schema_note": "`document_schema` names the published schema that describes the document a lane's `read` paths live in, or null when no schema describes it. A null is **measured**, not assumed: the CLI is run, and every published document schema is tried against what it printed (cli/tests/test_l1_agent_read_fields.py). 5 of 37 lanes are pinned (doctor, where x2, inventory, search); the other 32 read a report whose shape only the field-existence check holds. Two of the 32 print a self-validated plan **plus** `plan_file` / `required_action` / `reason_code`, which are deliberately not part of the plan contract. **Why no report schema pins the rest** (measured, draft §100): the 32 reports have 32 distinct top-level shapes, so one schema either fails them all or would need `additionalProperties: true` — a published contract that accepts any extra key, which the doctrine refuses as a capability that only looks safe. What they do share is exactly `schema_version` and `reason_code`, and that much is guarded — as is the distinctness the argument rests on. Treat a null lane's fields as informational and never quote them as contract.",
     "allowed_claims": "See AGENTS.md §8. Never claim AIROOT is implemented, available, or Everything-class."
   }
 }

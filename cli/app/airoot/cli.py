@@ -55,22 +55,38 @@ class Context:
 
     ``verify=False`` resolves the path without validating root identity, which is
     what ``doctor`` needs: a broken root must still be diagnosable.
+
+    ``resolve=False`` is for the one command that runs **before** a root exists — ``root init``
+    names the directory it is about to create, so there is nothing to resolve, and falling back to
+    the current directory is exactly what root resolution refuses to do (draft §157).
     """
 
-    def __init__(self, root_argument: str | None, *, verify: bool = True) -> None:
+    def __init__(
+        self, root_argument: str | None, *, verify: bool = True, resolve: bool = True
+    ) -> None:
         self.clock = SYSTEM_CLOCK
         self.verify = verify
-        if verify:
+        self.root_path: Path | None
+        if not resolve:
+            self.root = None
+            self.root_path = None
+        elif verify:
             self.root = open_root(root_argument)
-            self.root_path: Path = self.root.path
+            self.root_path = self.root.path
         else:
             self.root = None
             self.root_path = resolve_root(root_argument)
 
     def registry(self) -> Registry:
-        return Registry.open(self.root_path, clock=self.clock)
+        return Registry.open(self.path(), clock=self.clock)
 
     def path(self) -> Path:
+        if self.root_path is None:
+            raise AirootError(
+                "ROOT_NOT_RESOLVED",
+                "this command needs a root and does not create one",
+                evidence=["pass --root or set AIROOT_HOME; `root init` is the verb that creates one"],
+            )
         return self.root_path
 
 
@@ -118,6 +134,104 @@ def cmd_root_status(args: argparse.Namespace, context: Context) -> tuple[dict[st
         ],
     )
     return document, code
+
+
+def cmd_root_init(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
+    """Create a root at the path the caller names: layout, marker, registry (draft §157).
+
+    Not ``bootstrap``: that name carries the **elevated** half (ACL baseline, the machine PATH
+    entry) and stays declared-absent. What this verb does is the half that never needed elevation —
+    the same argument ADR-0050 used for the stable entry: in `policy_only` a file the same user
+    could write by hand is not protected by AIROOT writing it.
+
+    Both identities are **required inputs** rather than derived: the generation algorithm for
+    `machine_id`/`root_instance_id` is an open item (ADR-0025), and a CLI that invented one would be
+    answering a question the project deliberately left open. It writes nothing outside the directory
+    it was given, and never touches PATH.
+    """
+
+    from .root import LAYOUT_DIRS, init_root, marker_path
+
+    target = Path(args.path)
+    if target.exists() and not target.is_dir():
+        raise AirootError(
+            "INVALID_INPUT",
+            f"the root path is not a directory: {target}",
+            evidence=["a root is a directory that holds state/, store/ and the rest of the layout"],
+        )
+    if target.is_dir():
+        if marker_path(target).exists():
+            raise AirootError(
+                "INVALID_INPUT",
+                f"root already initialised: {target}",
+                evidence=[
+                    f"marker={marker_path(target)}",
+                    "initialising it again would rewrite the root's identity; nothing was changed",
+                ],
+            )
+        present = sorted(entry.name for entry in target.iterdir())
+        if present:
+            # Measured decision, not a formality: `init_root` only refuses an existing *marker*, so
+            # without this the verb would happily create AIROOT's layout inside any directory the
+            # caller mistyped — the failure mode is silent clutter in a directory that is not ours.
+            raise AirootError(
+                "INVALID_INPUT",
+                f"the directory is not empty: {target}",
+                evidence=[
+                    f"entries={len(present)}",
+                    f"first={present[:5]}",
+                    "name a new or empty directory; AIROOT does not take over a directory that already has contents",
+                ],
+            )
+
+    created = [relative for relative in LAYOUT_DIRS if not target.joinpath(relative).is_dir()]
+    info = init_root(
+        target,
+        root_instance_id=args.root_instance_id,
+        machine_id=args.machine_id,
+        clock=context.clock,
+    )
+    registry = Registry.initialize(
+        info.path,
+        machine_id=args.machine_id,
+        root_instance_id=args.root_instance_id,
+        clock=context.clock,
+    )
+    try:
+        # The projection is derived state, and a fresh root should have it: `rebuild` exists to
+        # regenerate it, not to be a mandatory second step after every initialisation.
+        registry.update_projection()
+        generation = registry.generation
+    finally:
+        registry.close()
+
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "operation": "root_init",
+        "root_instance_id": info.root_instance_id,
+        "machine_id": args.machine_id,
+        "canonical_path": str(info.path),
+        "volume_serial": info.volume_serial,
+        "marker": str(marker_path(info.path)),
+        "registry": str(info.path / "state" / "registry.db"),
+        "directories_created": len(created),
+        "registry_generation": generation,
+        "security_mode": SECURITY_MODE,
+        "enforcement": enforcement_for(SECURITY_MODE),
+        "path_written": False,
+        "reason_code": "SUCCESS",
+    }
+    _emit(
+        document,
+        as_json=args.json,
+        lines=[
+            f"initialised root {document['canonical_path']}",
+            f"  identity: root_instance_id={document['root_instance_id']} machine_id={document['machine_id']}",
+            f"  created {document['directories_created']} directories, the marker and the registry",
+            f"  path_written={document['path_written']} security_mode={document['security_mode']}",
+        ],
+    )
+    return document, EXIT_SUCCESS
 
 
 def cmd_where(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
@@ -3166,6 +3280,22 @@ def build_parser() -> argparse.ArgumentParser:
     root_parser = subparsers.add_parser("root", help="root identity commands", parents=[common])
     root_sub = root_parser.add_subparsers(dest="subcommand", required=True)
     root_sub.add_parser("status", help="report the resolved root identity", parents=[common])
+    root_init = root_sub.add_parser(
+        "init",
+        help="create a root: layout, marker and registry (no elevation, no PATH)",
+        parents=[common],
+    )
+    root_init.add_argument("path", help="the directory to create the root in (new or empty)")
+    root_init.add_argument(
+        "--root-instance-id",
+        required=True,
+        help="this root's identity; an explicit input, because P1 does not invent one (ADR-0025)",
+    )
+    root_init.add_argument(
+        "--machine-id",
+        required=True,
+        help="the machine this root belongs to; the registry records it",
+    )
 
     where_parser = subparsers.add_parser("where", help="resolve a capability", parents=[common])
     where_parser.add_argument("capability")
@@ -3599,6 +3729,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS: dict[str, Callable[[argparse.Namespace, Context], tuple[dict[str, Any], int]]] = {
     "root.status": cmd_root_status,
+    "root.init": cmd_root_init,
     "where": cmd_where,
     "doctor": cmd_doctor,
     "inventory": cmd_inventory,
@@ -3653,6 +3784,12 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Context], tuple[dict[str, Any]
     # Search protocol surface (draft §31): one entry point, reserved words as first positional.
     "search": cmd_search,
 }
+
+
+#: The commands that run **before** a root exists. `root init` is the only one: it creates the root
+#: it is pointed at, so `--root`/`AIROOT_HOME` are deliberately not resolved for it — and the path
+#: it does use comes from its own argument, never from the current directory (draft §157).
+ROOTLESS_COMMANDS = {("root", "init")}
 
 
 def dispatch(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
@@ -3818,8 +3955,14 @@ def main(argv: list[str] | None = None) -> int:
         parser = build_parser()
         args = parser.parse_args(arguments)
         # doctor must be able to describe a broken root, so it resolves the path
-        # without asserting root identity first.
-        context = Context(args.root, verify=args.command != "doctor")
+        # without asserting root identity first. `root init` goes one step further: it names the
+        # directory it is about to *create*, so there is no root for it to resolve (draft §157).
+        rootless = (args.command, getattr(args, "subcommand", None)) in ROOTLESS_COMMANDS
+        context = Context(
+            args.root,
+            verify=args.command != "doctor",
+            resolve=not rootless,
+        )
         _document, code = dispatch(args, context)
         return code
     except AirootError as error:

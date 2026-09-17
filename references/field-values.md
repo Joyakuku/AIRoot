@@ -275,10 +275,11 @@
 
 ### `operation`（每个响应信封的顶层）
 
-`--json` 的顶层 `operation` 回答"**我手里这份文档是哪条命令产出的**"。schema 只在 `search-response` 与 `broker-request` 里枚举过它，所以其余文档没有权威可查。**13 个值**（`plan` 自己的 `operation` 是另一个字段，见上文 `plan.schema.json` 那一节）：
+`--json` 的顶层 `operation` 回答"**我手里这份文档是哪条命令产出的**"。schema 只在 `search-response` 与 `broker-request` 里枚举过它，所以其余文档没有权威可查。**14 个值**（`plan` 自己的 `operation` 是另一个字段，见上文 `plan.schema.json` 那一节）：
 
 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|
+| `root_init` | `root init`：建出 layout + marker + registry（§157） | `cli.py` |
 | `search` | `search <query>` 的响应信封 | `caps/search.py` |
 | `status` | `search status`：索引状态 + 新鲜度 | `cli.py` |
 | `explain` | `search explain`：会用索引还是实时遍历 | `cli.py` |
