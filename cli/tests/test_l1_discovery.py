@@ -96,7 +96,7 @@ def test_a_data_root_below_max_path_is_scanned(tmp_path: Path) -> None:
 
 def test_bundled_whitelist_loads_and_is_evidence_based() -> None:
     rules = load_whitelist()
-    assert rules.revision == "wl-5"
+    assert rules.revision == "wl-6"
     assert {entry.capability_id for entry in rules.entries} >= {"python", "node", "java", "git", "archive"}
     for entry in rules.entries:
         has_static = any(item.get("type") == "pe_static" for item in entry.evidence_all + entry.evidence_any)
@@ -158,6 +158,38 @@ def test_weak_evidence_is_allowed_when_declared(tmp_path: Path) -> None:
     assert rules.entries[0].weak_evidence is True
 
 
+def test_the_ffmpeg_entry_declares_why_its_evidence_is_weak() -> None:
+    """§141: the machine's ffmpeg carries **no** version resource, so the entry says so instead.
+
+    A name-only rule is refused at load time (`test_name_only_entry_is_refused`); the honest way to
+    describe a build like this one is to declare the weakness and a reason, which is what the
+    `build`/cmake entry already does. Both halves are pinned here: the capability is frozen (a
+    whitelist entry for an unfrozen name is refused at load) and the reason is not empty.
+    """
+
+    rules = load_whitelist()
+    entry = next(item for item in rules.entries if item.capability_id == "ffmpeg")
+    assert entry.kind == "tool"
+    assert entry.weak_evidence is True
+    assert entry.weak_reason and "no version resource" in entry.weak_reason
+    assert [item["type"] for item in entry.evidence_all] == ["executable_name", "pe_static"]
+    assert entry.entrypoints == ("ffmpeg.exe",)
+
+
+def test_ffmpeg_is_recognised_one_level_below_the_object_root(data_root: Path) -> None:
+    """The real layout is `<object>/bin/ffmpeg.exe` — depth 1 below the object root, like git's."""
+
+    place_python_pe(data_root / "ffmpeg-master-latest-win64-gpl-shared" / "bin", "ffmpeg.exe")
+
+    report = discover_data_root(path=data_root, data_root_id="dr-env")
+
+    candidate = next(item for item in report.candidates if item.directory_name.startswith("ffmpeg-"))
+    assert candidate.management == "external_reference"
+    assert candidate.capability_id == "ffmpeg"
+    assert candidate.entrypoints == ("bin/ffmpeg.exe",)
+    assert candidate.probe_level is not None
+
+
 def test_missing_whitelist_is_reported(tmp_path: Path) -> None:
     with pytest.raises(AirootError) as err:
         load_whitelist(tmp_path / "absent.json")
@@ -207,7 +239,7 @@ def test_matching_object_becomes_a_reference_candidate(data_root: Path) -> None:
     place_python_pe(data_root / "python")
 
     report = discover_data_root(path=data_root, data_root_id="dr-env")
-    assert report.whitelist_revision == "wl-5"
+    assert report.whitelist_revision == "wl-6"
     candidate = next(item for item in report.candidates if item.directory_name == "python")
     assert candidate.management == "external_reference"
     assert candidate.capability_id == "python"
@@ -774,7 +806,7 @@ def test_the_shipped_whitelist_uses_only_evaluable_vocabulary() -> None:
     """The load above is the assertion: `load_whitelist` now refuses anything it cannot evaluate."""
 
     rules = load_whitelist()
-    assert rules.revision == "wl-5"
+    assert rules.revision == "wl-6"
     for entry in rules.entries:
         for predicate in entry.evidence_all + entry.evidence_any:
             assert predicate["type"] in PREDICATE_TYPES

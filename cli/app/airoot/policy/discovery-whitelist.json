@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "revision": "wl-5",
-  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason. wl-4 (draft §82, decision D9): the `media_probe` entry went with the capability when `cap-2` unfroze it — the load-time check refuses a whitelist entry whose capability is not frozen, which is the check doing its job. wl-5 (draft §121, ADR-0048): `rust-toolchain` gained the recognition half it deliberately lacked in §117 — the ledger has to be able to describe what an installer wrote into the user's directories, and `rustc.exe`'s own PE version resource is what makes that recognisable. The predicate requires **both** the name and the product string on purpose: the shims in `.cargo\\bin` carry no version resource at all (measured), so a name-only rule would register three references whose every fact is unreadable.",
+  "revision": "wl-6",
+  "note": "Capability whitelist for discover. Keys are capability_ids, never directory names (v0.3 §9.3:716). Every entry must carry at least one pe_static predicate unless weak_evidence is declared with a reason. wl-4 (draft §82, decision D9): the `media_probe` entry went with the capability when `cap-2` unfroze it — the load-time check refuses a whitelist entry whose capability is not frozen, which is the check doing its job. wl-5 (draft §121, ADR-0048): `rust-toolchain` gained the recognition half it deliberately lacked in §117 — the ledger has to be able to describe what an installer wrote into the user's directories, and `rustc.exe`'s own PE version resource is what makes that recognisable. The predicate requires **both** the name and the product string on purpose: the shims in `.cargo\\bin` carry no version resource at all (measured), so a name-only rule would register three references whose every fact is unreadable. wl-6 (draft §141): the `ffmpeg` capability was frozen and got its entry in the same stage; the machine's build is a `gpl-shared` archive with **no version resource at all**, so this is the second entry (after `build`/cmake) that declares weak evidence rather than a product string, and its version is honestly reported as unknown.",
   "scan": {
     "max_depth": 4,
     "max_relative_depth": 2,
@@ -68,6 +68,18 @@
         { "type": "pe_static", "field": "product_name", "contains": "7-Zip" }
       ],
       "entrypoints": ["7z.exe"],
+      "version_source": "pe_static:file_version"
+    },
+    {
+      "capability_id": "ffmpeg",
+      "kind": "tool",
+      "weak_evidence": true,
+      "weak_reason": "the ffmpeg builds on this machine are `gpl-shared` archives whose PE carries no version resource at all (product, company and file version all absent, measured in draft §141), so the name plus a PE image is the strongest static evidence available and the version is reported as unknown rather than read from a resource that is not there.",
+      "evidence_all": [
+        { "type": "executable_name", "any_of": ["ffmpeg.exe"] },
+        { "type": "pe_static", "field": "is_pe", "equals": true }
+      ],
+      "entrypoints": ["ffmpeg.exe"],
       "version_source": "pe_static:file_version"
     },
     {

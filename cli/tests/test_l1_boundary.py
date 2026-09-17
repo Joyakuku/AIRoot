@@ -43,7 +43,7 @@ def run(capsys, *argv: str) -> tuple[int, dict]:
 def test_the_shipped_capability_list_is_valid_and_revisioned() -> None:
     frozen = load_capabilities()
 
-    assert frozen.revision == "cap-3"
+    assert frozen.revision == "cap-4"
     assert "python" in frozen.ids()
     # cap-3 (ADR-0047): `rust-toolchain` was frozen to close a gap — `policy/sources.json` had already
     # declared a trusted source for it (and §59 had verified resolution plus a real 12721664-byte

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "cap-3",
+  "revision": "cap-4",
   "notes": [
     "The frozen capability list (draft §15.2 condition 1). A capability exists here only after it",
     "has been *frozen*: a name, the CLI entry it answers, the shape of its request/response, its",
@@ -24,7 +24,12 @@
     "CAPABILITY_NOT_DECLARED. The catalog and the capability list disagreed about what may exist.",
     "`kind=tool`: the entry is a single self-contained installer, not an interpreter directory.",
     "`side_effects` is not `[none]`: installing a rust-toolchain writes a payload into the store and",
-    "registers a managed instance, and the ceiling is the *worst* case rather than the polite one."
+    "registers a managed instance, and the ceiling is the *worst* case rather than the polite one.",
+    "cap-4 (draft §141): `ffmpeg` was frozen because this machine actually has it and the ledger could",
+    "not say so — `D:\\env\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe` came out",
+    "`unmanaged` purely because no capability named it. Its build carries **no version resource at all**",
+    "(product, company and file version are all absent — measured), so the whitelist entry declares weak",
+    "evidence with that reason instead of inventing a product string: the `build`/cmake precedent."
   ],
   "capabilities": [
     {
@@ -74,6 +79,14 @@
       "side_effects": ["none"],
       "scope": ["machine", "session", "project"],
       "notes": "a build tool is the classic machine-level generic CLI"
+    },
+    {
+      "capability_id": "ffmpeg",
+      "kind": "tool",
+      "entry": "ffmpeg.exe",
+      "side_effects": ["none"],
+      "scope": ["machine", "session"],
+      "notes": "the ffmpeg/ffprobe command line; the builds on this machine are `gpl-shared` and carry no PE version resource, so the capability is recognised by name plus image and its version is reported as unknown (draft §141)"
     },
     {
       "capability_id": "rust-toolchain",

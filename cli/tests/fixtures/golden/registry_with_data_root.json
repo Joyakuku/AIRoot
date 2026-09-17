@@ -8,7 +8,7 @@
       "path": "<BASE>\\steward\\env",
       "role": "runtime",
       "volume_serial": "deadbeef",
-      "whitelist_revision": "wl-5"
+      "whitelist_revision": "wl-6"
     }
   ],
   "external_references": [

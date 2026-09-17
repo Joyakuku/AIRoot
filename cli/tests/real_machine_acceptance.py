@@ -134,6 +134,20 @@ def main_run() -> int:
     reports = doc.get("reports") or []
     show("discover", code, doc, ("whitelist_revision", "files_touched"))
     print(f"    counts={reports[0].get('counts') if reports else None} revision={doc.get('whitelist_revision')}")
+    # §141: the ledger has to describe *this* machine, so the capabilities this machine really
+    # has under D:\env are named and asserted, not merely counted. `ffmpeg` is the one that used
+    # to come out `unmanaged` purely because no capability named it.
+    recognised = {
+        str(obj.get("capability_id"))
+        for report in reports
+        for obj in (report.get("candidates") or [])
+        if obj.get("management") == "external_reference"
+    }
+    print(f"    recognised={sorted(recognised)}")
+    check(
+        "every capability this machine actually has under D:\\env must be recognised",
+        {"build", "java", "node", "ffmpeg"} <= recognised,
+    )
 
     code, doc = run("adopt", str(OBJECT), "--mode", "reference")
     show("adopt D:\\env\\java --mode reference", code, doc, ("ownership", "files_touched"))

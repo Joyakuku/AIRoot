@@ -12066,3 +12066,65 @@ truncated AGENTS.md from 65840 to 65243 bytes
 | 行为 | `adopt` 接受更深的对象；`adopt <数据根>` 的拒绝理由更准确；其余动词按路径工作，不变 |
 | ADR | **ADR-0051**（含三条被否决的路） |
 
+## 141. 能力面第一刀：把真机上真正在用的工具认出来（`ffmpeg` 冻结为 `cap-4`，白名单 `wl-6`）
+
+### 141.1 先量：这台机器上到底有什么
+
+| 工具 | 路径 | 所在数据根 | 今天 `discover` 的结果 |
+|---|---|---|---|
+| `python` | `D:\env_apps\miniconda3\python.exe` | `D:\env_apps`（**新登记**，只读） | ✅ `cap=python`，version `3.12.9150.1013` |
+| `node` | `D:\env\nvm4w\v26.8.1\node.exe` | `D:\env`（对象 `nvm4w`，**相对深度 2**） | ✅ `cap=node`，version/active `26.8.1.0` |
+| `git` | `D:\env_apps\Git\{cmd,bin}\git.exe` | `D:\env_apps` | ❌ unmanaged ——**原因不是谓词**，是扫描的 400 文件上限（见 §142） |
+| `ffmpeg` | `D:\env\ffmpeg-master-latest-win64-gpl-shared\bin\ffmpeg.exe` | `D:\env` | ❌ unmanaged ——**没有任何能力叫 `ffmpeg`** |
+| `flutter` / `dart` | `D:\env\flutter\bin\flutter.bat` | `D:\env` | ❌ unmanaged ——入口是 **`.bat`**（脚本），谓词词汇里没有它 |
+| `go` | —— | —— | 本机**没有** → **不冻结** |
+| `build` / `java` | `D:\env\cmake\…` / `D:\env\Java\jdk-25.0.2\…` | `D:\env` | ✅ 早已认出（3.31.6.0 / 25.0.2.0） |
+
+两条**当场纠正**的说法：
+- `python` 不是"认不出来"——它是**在没人登记的数据根里**。把 `D:\env_apps` 登记为数据根（只读）之后，
+  `miniconda3` 立刻是 `external_reference`/`python`；
+- `node` 的 nvm 布局（`nvm4w\v<版本>\node.exe`）**一直是被认出来的**，而且版本集合与活跃版本都在：
+  这正好复核了 §140 的深度规则。
+
+### 141.2 落地：`cap-3` → `cap-4`，`wl-5` → `wl-6`
+
+- **冻结 `ffmpeg`**（`kind=tool`、entry `ffmpeg.exe`、`side_effects=[none]`、`scope=[machine, session]`）：
+  与 `archive` 同类——机器级通用 CLI，答案不随项目变。
+- **白名单加条目，用弱证据**：`executable_name any_of [ffmpeg.exe]` + `pe_static is_pe == true`。
+  理由是**实测**：这台机器的 `gpl-shared` 构建**没有版本资源**——
+  `product_name`/`company_name`/`file_version` **全为空**（`probe_executable` 读出来是三个 `None`）。
+  要求产品串就等于要求它不存在的东西；`build`/cmake 已经先例过这条路。
+- **版本如实为未知**：没有资源就没有版本，`where ffmpeg --version "…"` 会按弱证据拒绝，而不是编一个。
+
+### 141.3 语料与真实读数
+
+| 对象 | 变化 |
+|---|---|
+| `discover_report.json` / `registry_with_data_root.json` | `wl-6` |
+| `frozen_capabilities.json` | `cap-4`（+ `ffmpeg`） |
+| `execution_bounds.json` | `capabilities: cap-4`、`discovery_whitelist: wl-6` |
+| 其余 **39** 个 fixture | 逐字节不变 |
+
+真机（验收脚本，只读 `D:\env`）：`discover` 的 `external_reference` 从 3 个变成 **4** 个，
+`recognised={build, ffmpeg, java, node}`——验收脚本这一条现在是**断言**，不再是打印。
+
+### 141.4 明确写在范围外的三件事
+
+1. **`flutter`/`dart`**：入口是 `.bat`。谓词词汇（`executable_name` / `pe_static`）表达不了脚本，
+   而"能不能把脚本当入口"是一个需要裁决的问题（装/跑/信任都不在 v1 的 portable 基线上）；
+   它要独立一段，不是往 `wl-6` 里塞一条不合法的谓词。
+2. **`go`**：本机没有。`cap-2` 的教训是**别冻一个没人能解释的名字**（解冻 `media_probe` 的理由），
+   所以本机没有对象的工具不冻结。
+3. **`~/.cargo/bin` 的三个 shim**：同 §140——它们**没有版本资源**且是 rustup 的转发器，
+   与"安装器装的产物"是两个问题。
+
+### 141.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1373 → 1375**（+2：弱证据形状、`bin/` 下深度 1 的识别）；常驻审计 **112 不动** |
+| 策略文件 | `capabilities.json` `cap-3 → cap-4`（+1 能力）、`discovery-whitelist.json` `wl-5 → wl-6`（+1 条目） |
+| 语料 | 4 个 fixture 内容变了；其余 39 个逐字节不变 |
+| 协议面 | 无新 schema、无新 reason code、无新动词 |
+| 真机 | 验收脚本新增一条断言（`D:\env` 下这台机器实有的能力必须都被认出） |
+

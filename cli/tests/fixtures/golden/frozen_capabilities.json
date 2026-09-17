@@ -77,6 +77,18 @@
       ]
     },
     {
+      "capability_id": "ffmpeg",
+      "entry": "ffmpeg.exe",
+      "kind": "tool",
+      "scope": [
+        "machine",
+        "session"
+      ],
+      "side_effects": [
+        "none"
+      ]
+    },
+    {
       "capability_id": "rust-toolchain",
       "entry": "rustup-init.exe",
       "kind": "tool",
@@ -104,6 +116,6 @@
       ]
     }
   ],
-  "revision": "cap-3",
+  "revision": "cap-4",
   "schema_version": 1
 }
