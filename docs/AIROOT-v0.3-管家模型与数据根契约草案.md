@@ -12742,3 +12742,33 @@ phase `online_install()`：`source resolve` → `plan` → `issue --provision` �
 | 语料 | **不动** |
 | 真机 | §148.1 那张表：真实上游 + 真实归档 + **8146 个真实文件** + `gc` 真实删除；§148.4 的三种状态 |
 | 没有做 | phase 的 PASS 路径本身（§148.4 已标注）；`--online --token-file` 那种"操作者自己签发"的更严格形态；`rust-toolchain` 的 fetch+verify 块保持不变 |
+### 148.7 补记：链路恢复之后，这个 phase 的成功路径观察到了 PASS
+
+§148.4 的第三行和它下面那段"诚实标注"写下来的时候是真的：那时只观察到"不传 `--online` 报 not run"和
+"上游不可达时报 `PROVENANCE_FAILED`"两种状态，第三次重跑又在 `source resolve` 上撞了超时。**链路恢复
+之后补跑了一次，全链 PASS**：
+
+```text
+source resolve (real upstream)   exit=0  backend_id=portable_archive
+  [ok ] resolution is online, not against a local file
+  [ok ] a .zip template resolves to the archive backend
+  [ok ] the expected digest came from the published checksum file
+plan (real artifact)             exit=0  plan/build/3.31.6/4b31a7981abd
+issue --provision                exit=0  {"permission_proof": false}
+install (real download+extract)  exit=0  state=FINALIZED
+payload on disk                  entries=8146  bin/cmake.exe  12029392 bytes
+tool verify                      exit=0  verified=true problems=[]
+run --capability                 exit=0  exit_status=0
+tool retire                      exit=0  payload_removed=false
+tool gc --plan                   exit=0  collectable=1
+tool gc --apply                  exit=0  payload_removed=true
+real artifact install: PASS
+isolation: PASS (0 difference(s))
+```
+
+所以 **P4 那条判据现在是"可由本项目的验收脚本复现"的**，不再只是"一次记录下来的实测"。§148.4 的两处
+按当时的读数保留（阶段记录是历史，不重写），**由本节取代**；`AGENTS.md` 与审查报告里的当前状态句已经
+就地改正，因为它们自称描述当前状态（§48 那一类）。
+
+**同时保留下来的是那两次失败和第一版的缺陷**：它们说明这条 phase 的"红"是可操作的（不传 flag 报 not
+run、上游不可达报传输层原文、异常不穿过隔离审计），而不是一次通过就再没人量过它。
