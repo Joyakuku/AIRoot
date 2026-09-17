@@ -1704,18 +1704,58 @@ def _locate_gc_plan(context: Context, args: argparse.Namespace, token: dict[str,
 def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """``uninstall`` = retire + gc. It never deletes without an approval token."""
 
-    from .caps.lifecycle import apply_gc_plan, uninstall_target
+    from .caps.lifecycle import apply_gc_plan, require_owned, uninstall_target
 
     registry = context.registry()
     plan_file: Path | None = None
     try:
+        if args.dry_run:
+            # §159 measured what this flag used to do: `uninstall_target` ran **before** the
+            # `dry_run` check, so `--dry-run` retired the instance, `where` stopped resolving it, and
+            # the only way back was to install a *different* version (the same plan and the same
+            # version both answer INSTANCE_CONFLICT). Every other dry run in this CLI writes nothing,
+            # and a caller who "just looks" must not lose the binding — so this branch comes first and
+            # reports the step that is required instead of performing it. A gc plan cannot exist
+            # before the retire half (it is built from a retired instance), which is exactly why the
+            # answer names `tool retire` rather than inventing a plan.
+            row = require_owned(registry, args.target)
+            document = {
+                "schema_version": 1,
+                "operation": "uninstall",
+                "dry_run": True,
+                "instance_id": str(row["instance_id"]),
+                "lifecycle_status": str(row["lifecycle_status"]),
+                "payload_removed": False,
+                "plan": None,
+                "plan_file": None,
+                "would_retire": True,
+                "reason_code": "SUCCESS",
+                "required_action": (
+                    f"run `airoot tool retire {row['instance_id']}` first: a gc plan can only be "
+                    "built for a retired instance, and nothing was changed here"
+                ),
+            }
+            _emit(
+                document,
+                as_json=args.json,
+                lines=[
+                    f"{document['instance_id']} ({document['lifecycle_status']}): nothing was changed",
+                    f"  {document['required_action']}",
+                    "  deletion still needs an approval token (--token-file); there is no --force",
+                ],
+            )
+            return document, EXIT_SUCCESS
+
         outcome = uninstall_target(registry, args.target, clock=context.clock)
         plan = outcome["plan"]
         plan_file = _plan_path(context, str(plan["plan_id"]))
         plan_file.parent.mkdir(parents=True, exist_ok=True)
         plan_file.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-        if args.dry_run or not args.token_file:
+        if not args.token_file:
+            # The grouped path when nobody approved the deletion yet: the retire half is done (it
+            # deletes nothing) and the plan is on disk waiting for a token. `--dry-run` never reaches
+            # here — it returned above without touching the registry.
             document = {
                 "schema_version": 1,
                 "operation": "uninstall",
@@ -1723,8 +1763,8 @@ def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str,
                 "plan": plan,
                 "plan_file": str(plan_file),
                 "payload_removed": False,
-                "dry_run": bool(args.dry_run),
-                "reason_code": "SUCCESS" if args.dry_run else "APPROVAL_REQUIRED",
+                "dry_run": False,
+                "reason_code": "APPROVAL_REQUIRED",
                 "required_action": f"approve {plan['plan_hash']} and re-run with --token-file <token.json>",
             }
             _emit(
@@ -1737,7 +1777,7 @@ def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str,
                     "  deletion needs an approval token (--token-file); there is no --force",
                 ],
             )
-            return document, EXIT_SUCCESS if args.dry_run else exit_code_for("APPROVAL_REQUIRED")
+            return document, exit_code_for("APPROVAL_REQUIRED")
 
         token = _load_token(args.token_file)
         document = apply_gc_plan(registry, plan, token, root=context.path(), clock=context.clock)
@@ -3683,7 +3723,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     uninstall_parser.add_argument("target", help="capability id or instance id")
     uninstall_parser.add_argument("--token-file", default=None)
-    uninstall_parser.add_argument("--dry-run", action="store_true", help="retire and print the plan")
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what uninstall would do and change nothing (a gc plan needs a retired instance)",
+    )
 
     path_parser = subparsers.add_parser(
         "path", help="inspect the PATH exposure invariant (draft §26)", parents=[common]

@@ -78,6 +78,39 @@ def test_cli_uninstall_stops_at_the_approval_boundary(
     assert (cli_root / "store" / installed).is_dir()
 
 
+def test_cli_uninstall_dry_run_changes_nothing(
+    capsys, cli_root: Path, installed: str, registry
+) -> None:
+    """§160: every other dry run in this CLI writes nothing, and this one used to retire.
+
+    §159 measured the damage: `--dry-run` retired the instance, `where` stopped resolving it, and the
+    way back was to install a *different* version — the same plan and the same version both answer
+    `INSTANCE_CONFLICT`. The flag's own help said "retire and print the plan", which is what the code
+    did; the flag name promised the other thing. Now the name is what happens.
+    """
+
+    before = run(capsys, "--json", "--root", str(cli_root), "tool", "status", installed)[1]
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "uninstall", installed, "--dry-run"
+    )
+
+    assert code == 0, document
+    assert document["dry_run"] is True
+    assert document["payload_removed"] is False
+    assert document["plan"] is None, "a dry run must not build a gc plan it cannot honour"
+    assert "tool retire" in document["required_action"], document["required_action"]
+
+    after = run(capsys, "--json", "--root", str(cli_root), "tool", "status", installed)[1]
+    assert before["instance"]["lifecycle_status"] == "active"
+    assert after["instance"]["lifecycle_status"] == "active", "a dry run retired the instance"
+    assert (cli_root / "store" / installed).is_dir(), "a dry run touched the payload"
+
+    # ...and the state it would have changed is still changeable: nothing was half-done.
+    code, gc_plan = run(capsys, "--json", "--root", str(cli_root), "tool", "gc", "--plan")
+    assert code == 0 and gc_plan["collectable"] == 0, "a dry run left something collectable behind"
+
+
 def test_cli_uninstall_on_a_reference_is_refused_with_the_path(
     capsys, cli_root: Path, tests_tmp: Path, registry
 ) -> None:

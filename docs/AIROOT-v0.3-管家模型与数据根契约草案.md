@@ -13642,4 +13642,74 @@ Copy-Item 'D:\AIRoot\references' "$dst\references" -Recurse -Force
 | 代码 / 契约层 / 语料 | **不动** |
 | 环境 | 三个 root 与两个数据根都在 `D:\env_test` 内；操作者真 root **只被读**；我唯一改过的对象文件已按备份还原并复验 digest（`df6a2920…`） |
 | 修复顺序建议 | 1) F1（唯一会让用户**坏掉且只能升级恢复**的一条）+ 守卫；2) F3+F5（都是"记下的话不是真的"）；3) F2（不再讲别人家的故事）；4) F6（决定重派生还是写成边界）；5) F4 裁决；6) F7–F11 文档收口 |
+
+### 159.6 一处要更正 §159.4 的话
+
+§159.4 写"`OWNERSHIP_REQUIRED`(7) 没有被实测"——那说的是**三个 agent 那一轮**没有构造出来。
+**代码路径本身是有测试覆盖的**：`cli/tests/test_cli_lifecycle.py::test_cli_uninstall_on_a_reference_is_refused_with_the_path`
+手工插一行 reference 再跑 `uninstall`，断言 exit 7 且证据里给出 `airoot forget …`。所以那一格应该是
+"agent 轮未观测到；套件覆盖着"，而不是"没有证据"。
+
+## 160. F1：`uninstall --dry-run` 必须什么都不改
+
+裁决见 **ADR-0059**。这是 §159 那份清单里第一条，也是唯一一条"会让用户坏掉、且只能靠升级版本恢复"的。
+
+### 160.1 修法
+
+`cmd_uninstall` 原来**无条件**先跑 `uninstall_target()`（它调 `retire()` 落盘），再判 `args.dry_run`。
+现在 `--dry-run` 分支在最前面，且**不碰 registry**：
+
+```text
+$ airoot --root <root> uninstall <instance> --dry-run --json
+exit=0  dry_run=true  lifecycle_status=active  payload_removed=false
+        plan=null  plan_file=null  would_retire=true
+        required_action="run `airoot tool retire <instance>` first: a gc plan can only be built
+                         for a retired instance, and nothing was changed here"
+```
+
+三处一起改：
+
+1. **分支顺序**：`if args.dry_run:` 移到 `uninstall_target()` 之前，并且**提前返回**。
+2. **不再谎报**：`--help` 从 `--dry-run  retire and print the plan` 改成
+   `report what uninstall would do and change nothing (a gc plan needs a retired instance)`。
+3. **删掉死代码**：分组路径里那两处 `... if args.dry_run else ...` 现在永远走同一支（dry run 已经返回），
+   改成字面值——**留着一个到不了的判断，就是留着一句关于代码的话**。
+
+**为什么不是"就把 retire 留着、只把文档改一改"**：`--dry-run` 这个拼写在本 CLI 里四处都是"什么都不改"
+（`plan --dry-run` 不落盘、`env persist --dry-run` 只写计划文件、`env forget --dry-run` 只报要还原什么），
+而这一处的副作用是**撤掉绑定**。一个名字在四个地方讲同一件事、在第五个地方讲另一件事，就是 §159 那份
+清单里反复出现的同一型缺陷。**没有采用的第三条路**（把该行为改名成 `--retire-and-plan`）会保留副作用，
+但多出一个只在这一条命令上存在的拼写，且历史文档里的 `uninstall … --dry-run` 会突然变成"未定义"。
+
+`uninstall <id>`（**不带** `--dry-run`、也不带 token）的行为**不变**：它照旧完成 retire 半场（那半场不删
+东西）并把 gc 计划写到盘上，然后以 `APPROVAL_REQUIRED`(4) 停在批准边界——那是 skill 教的**分级路径**里
+"显式 retire"那一步的合体写法，输出里也用 `required_action` 说清了下一步。
+
+### 160.2 守卫与验红
+
+新用例 `cli/tests/test_cli_lifecycle.py::test_cli_uninstall_dry_run_changes_nothing`：先取 `tool status` 基线，
+跑 `uninstall <id> --dry-run`，再断言 `dry_run=true`、`plan is None`、`required_action` 里点名 `tool retire`、
+**`lifecycle_status` 仍是 `active`**、payload 仍在盘上、并且随后 `tool gc --plan` 的 `collectable == 0`
+（"什么都没被半做成"）。
+
+**验红（一处合成变异）**：把 `if args.dry_run:` 改成 `if args.dry_run and False:`（即回到"先 retire 再判"）：
+
+```text
+FAILED test_cli_uninstall_dry_run_changes_nothing
+       assert 4 == 0    ← 它真的又去 retire 了（exit 4 = APPROVAL_REQUIRED）
+```
+
+另外 `test_l1_agent_read_fields.py` 里那条 lane 的记录方式从 `uninstall <id> --dry-run` 改成
+`uninstall <id>`（不带该 flag）：lane 的四个 `read` 路径（`retire`/`plan`/`required_action`/`reason_code`）
+描述的是调用方真正走的**分级路径**，而 dry run 现在给的是另一份文档（没有 plan、没有 retire）。
+
+### 160.3 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1410 → 1411**（+1：`test_cli_uninstall_dry_run_changes_nothing`；另改了一条既有用例的记录方式，不新增计数） |
+| 契约层 | **不动**（`uninstall` 的对外文档是 CLI 报告面，没有 schema 钉它；`gc-plan`/`plan` schema 都不涉及这条分支） |
+| 语料 | **不动** |
+| 真机 | 不需要新真机读数：这一条在临时 root 上可完整复现（§159.2 的读数 + 本条 160.2 的验红） |
+| 没有做 | F2/F3/F5/F6 与 F4 的裁决（各自后续阶段）；也没有给 `--dry-run` 加"预览 gc 会删掉哪些字节"这类新能力 |
 | 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |

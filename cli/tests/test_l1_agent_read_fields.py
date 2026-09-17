@@ -461,7 +461,10 @@ def test_every_read_path_resolves_in_the_document_the_cli_prints(
     # --- mutations last, so nothing above loses its precondition ------------------------------
     record("tool retire <instance-id>", "tool", "retire", owned)
     record("tool gc --plan", "tool", "gc", "--plan")
-    record("uninstall <instance-id>", "uninstall", owned, "--dry-run")
+    # §160: recorded **without** `--dry-run`, because that flag now changes nothing and produces a
+    # different document (no plan, no retire) — the lane's four `read` paths describe the graded path
+    # a caller actually follows: uninstall retires and stops at the approval boundary.
+    record("uninstall <instance-id>", "uninstall", owned)
     record("forget <external-id>", "forget", REFERENCE)
 
     problems: list[str] = []

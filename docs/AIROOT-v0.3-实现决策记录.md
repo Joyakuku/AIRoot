@@ -3144,5 +3144,65 @@ root 解析那条"**绝不回落到当前目录**"的规则没有被放宽。
 **状态：已裁决并已落地（A–E，草案 §157）**：五条新用例在 `cli/tests/test_cli.py`，三处合成变异各自
 只把自己那一半变红；`SKILL.md` 的第一步与命令地图各多一条出口；lane 36 → 37。
 
+## ADR-0059 — **`--dry-run` 在四条命令上是一个意思：什么都不改**（`uninstall` 是第五条）
+
+### 背景
+
+§159 的全表面真机测试量到（我在临时 root 上逐条复现）：
+
+```text
+$ airoot uninstall <owned instance> --dry-run --json
+exit=0  dry_run=true  payload_removed=false
+        lifecycle_status=retired        ← 绑定真的被撤了
+        plan={…}  plan_file=…           ← 而且计划也落盘了
+$ airoot where archive → NOT_FOUND (exit 1)
+```
+
+代码在 `cli.py` 的 `cmd_uninstall`：`uninstall_target()`（它调 `retire()`）在 `if args.dry_run` **之前**
+无条件执行；`--help` 写的是 `--dry-run  retire and print the plan`——**帮助文本描述的是"撤绑定并打印计划"，
+而 flag 的名字承诺的是"什么都不发生"，两者被当成了同一件事。**
+
+**恢复路径实测是断的**（四连败）：
+
+| 尝试 | 结果 |
+|---|---|
+| 同一份计划 + 同一 token | `INVALID_APPROVAL`（token 已消费） |
+| 同一份计划 + 新 token | `INSTANCE_CONFLICT` / `ROLLED_BACK` |
+| **同版本**的新计划 + 新 token | `INSTANCE_CONFLICT` / `ROLLED_BACK` |
+| **换一个版本**（9.9.10） | `FINALIZED`，`where` 恢复 |
+
+也就是说：一次"只想看一眼"的调用，代价是**必须装另一个版本**才能拿回可用绑定。
+
+### 决定
+
+**A —— `--dry-run` 必须先分支、且不碰 registry。** 输出 `dry_run=true`、`lifecycle_status`（原样）、
+`payload_removed=false`、`plan=null`、`would_retire=true`，并在 `required_action` 里点名
+**`airoot tool retire <id>`**：gc 计划是**从已 retired 的实例**建出来的，所以 dry run 给不出计划——
+给不出就如实说，而不是先替调用方把状态改掉再给。
+
+**B —— `--help` 跟着改**：新文案 `report what uninstall would do and change nothing (a gc plan needs a
+retired instance)`。**帮助文本与 flag 名不一致，本身就是这条缺陷的一半。**
+
+**C —— `uninstall <id>`（不带 `--dry-run`、不带 token）行为不变**：completed retire 半场 + 计划落盘 +
+`APPROVAL_REQUIRED`(4)。那是 skill 教的**分级路径**里"显式 retire"的合体写法，输出用 `required_action`
+说清下一步；"删除"仍然只发生在带 token 的 `--apply`。
+
+**D —— 不采用"改名成 `--retire-and-plan`"。** 它会保留副作用、新增一个只在这一条命令上存在的拼写，
+并让历史文档里所有 `uninstall … --dry-run` 变成未定义。**`--dry-run` 这个词在四处（`plan`、`env persist`、
+`env forget`、`tool gc --plan`）都是"什么都不改"**，把第五处对齐比给它开一个新名字便宜。
+
+### 代价
+
+- **`--dry-run` 不再给出 gc 计划**：想要计划的调用方必须多跑一步 `tool retire`。这正是分级路径本来的
+  形状（skill 就是这么教的），但它是**行为收紧**——按 ADR-0021 的四种例外处理：它挡的不是权限，是
+  **一次会静默撤绑定的副作用**（诚实规则）。
+- **没有做的**：给 `--dry-run` 加"预览会删掉什么"的新能力（那需要从实例反推 store 路径，属另一件事）；
+  F2/F3/F5/F6 与 F4 的裁决（各自阶段）。
+
+**状态：已裁决并已落地（A–D，草案 §160）**：新守卫 `test_cli_uninstall_dry_run_changes_nothing` 覆盖
+"什么都没改 + 没留下半成品"；一处合成变异（回到先 retire 再判）把它变红（`assert 4 == 0`）；
+`test_l1_agent_read_fields.py` 里 `uninstall` lane 的记录方式随之改为不带该 flag 的分级路径。
+
+
 
 
