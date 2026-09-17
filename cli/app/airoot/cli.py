@@ -1906,6 +1906,10 @@ def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str,
                 "payload_removed": False,
                 "plan": None,
                 "plan_file": None,
+                # §170: the same two fields the graded path reports, so "which half has happened" is
+                # readable in both directions instead of being the absence of a key.
+                "retired": False,
+                "binding_cleared": False,
                 "would_retire": True,
                 "reason_code": "SUCCESS",
                 "required_action": (
@@ -1934,22 +1938,49 @@ def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             # The grouped path when nobody approved the deletion yet: the retire half is done (it
             # deletes nothing) and the plan is on disk waiting for a token. `--dry-run` never reaches
             # here — it returned above without touching the registry.
+            #
+            # §170: the operation is **half done**, and the headline has to say so. Read as "exit 4 +
+            # required_action about the gc half", this document used to say "nothing happened, wait for
+            # approval" while the active binding, the stable entry and the lifecycle row had already
+            # changed — a machine-level binding was gone and only the `retire` block said it. The two
+            # facts are now top-level, so an agent does not have to find them, and `message` names both
+            # halves in one sentence.
+            retire = outcome["retire"]
+            instance_id = str(plan["target"]["instance_id"])
+            retired = str(retire.get("lifecycle_status")) == "retired"
+            # Read after the retire half committed: the claim is about the state of the registry, not
+            # about the fact that this command *called* retire.
+            binding_cleared = not any(
+                str(row["instance_id"]) == instance_id for row in registry.bindings(active_only=True)
+            )
             document = {
                 "schema_version": 1,
                 "operation": "uninstall",
-                "retire": outcome["retire"],
+                "retire": retire,
                 "plan": plan,
                 "plan_file": str(plan_file),
                 "payload_removed": False,
                 "dry_run": False,
+                # The retire half is finished: the active binding is cleared, the instance reads
+                # `retired` and its stable entry is gone. Only the payload deletion is pending.
+                "retired": retired,
+                "binding_cleared": binding_cleared,
+                "message": (
+                    f"{instance_id} is already retired: the active binding is cleared and its stable "
+                    "entry removed. Only the payload deletion is waiting for approval."
+                ),
                 "reason_code": "APPROVAL_REQUIRED",
-                "required_action": f"approve {plan['plan_hash']} and re-run with --token-file <token.json>",
+                "required_action": (
+                    f"approve {plan['plan_hash']} and re-run with --token-file <token.json> to delete "
+                    f"the payload at {plan['metadata'].get('store_path')}; nothing was deleted yet"
+                ),
             }
             _emit(
                 document,
                 as_json=args.json,
                 lines=[
-                    f"{plan['target']['instance_id']} retired; payload retained",
+                    f"{instance_id} retired; the active binding is cleared and its stable entry removed",
+                    "  the payload is retained; the deletion half still needs an approval",
                     f"  plan {plan['plan_id']} -> {plan_file}",
                     f"  hash {plan['plan_hash']}",
                     "  deletion needs an approval token (--token-file); there is no --force",

@@ -14422,3 +14422,51 @@ PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`，其中 `capabi
 | 代码 | `cli.py`（+190/−22）、`root.py`（+39/−1）、`schema_io.py`（+18：`field_errors`）、`registry/db.py`（+11/−1）、`caps/discovery.py`（+13/−1） |
 | 契约层 / 语料 | **不动**（没有新 schema、没有新 reason code、没有新动词；`APPROVAL_REQUIRED` 本来就有写者） |
 | 没有做 | §170（口径与匹配）与 §171（面与文档）的其余发现 |
+
+## 170. 第三轮全表面测试：口径与匹配
+
+裁决见 **ADR-0069**。这一节修的是"**判定读错了东西、标签写错了对象、头条说漏了半件事**"：
+项目清单判定把 TOML 的**节名**当依赖、离线计划的 `kind` 说自己是联网、`uninstall` 的头条读起来像"什么都没做"，
+外加两处**参考文档互相矛盾**。
+
+### 170.1 三条代码 + 两处文档
+
+| # | 修法前（实测） | 修法后 |
+|---|---|---|
+| **①** | 判定是 capability_id 的**子串**匹配：`pyproject.toml` 里只写了 `[build-system]` 这种**节名**，`scope decide build --project` 就报 `origin=project_manifest`、`manifest_hits=["build"]`，于是 data-root 安装**凭空多一道 `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4) 门**——直接打穿"简单的必须不问"那条设计约束；而 docstring 声称的 "plus the common alias forms" 在代码里根本不存在 | 只读**依赖声明**：`.json`/`.toml`/`Pipfile` 用标准库解析（`json`/`tomllib`），只取 `DEPENDENCY_CONTAINERS`（`dependencies`/`devDependencies`/`optional-dependencies`/`engines`/`requires`…）里的内容，映射的**键**算名字；其余清单按行读并去掉 `#` 注释；解析失败回落按行。匹配是**整个名字**等于 `capability_id` 或 `CAPABILITY_ALIASES` 里的一项（`build←cmake`、`node←npm`、`python←python3`、`java←javac`、`archive←7z/7za/7zr`，全部有 `capabilities.json`/白名单的出处）。`manifest_hits` 仍报 id，**新增** `ManifestHit(capability_id, manifest, line, declaration)` 让证据能说"`build <- 'cmake>=3.31' (pyproject.toml:2)`"。**docstring 与 alias 表由一条守卫互相钉住** |
+| **②** | 离线来源的计划里 `source.kind="https"`，而同一份文档里 `metadata.source_catalog.offline=true`、locator 是**本地路径**——`local_file` 这个取值事实上从没出现在任何被打印的文档里。根因是按 **backend 声明**（`network_access`）而不是**实际 locator** 判 | 新增 `tx/artifact.py::source_kind_for(locator)`：按 locator 判——`https://` → `https`，**其它 scheme 的 URL 一律 `INVALID_PLAN`**（不贴一个"差不多"的标签），盘符/路径 → `local_file`。**schema 未被触碰**（`common.schema.json#/$defs.source.kind` 本来就枚举了 `local_file`），golden **零变化**（语料里没有 fixture 由被改路径产生，重生实测无 diff） |
+| **③** | `uninstall <owned-id>` 无 token → exit 4，**顶层**只有 `required_action` 讲"要批准 gc 那半"，而同一个信封的 `retire` 块已经写着 `lifecycle_status:"retired"`、绑定已清、稳定入口已删、`where` 已 `NOT_FOUND` | 顶层新增 **`retired`** 与 **`binding_cleared`**（后者是 retire 落库**之后**读 active binding 得出的，不是硬编码）+ `message` 明说"已经 retired：绑定已清、入口已删，只有删 payload 那半在等批准"；`required_action` 补上 `nothing was deleted yet`。**retire/gc 的行为零改动**（ADR-0059 有意保留的"先完成 retire 半场再停在批准边界"不动），改的只是**报告** |
+| **④**（文档） | `references/confirmation.md` 写"**反方向**（自己收窄到项目内）不需要批准"，而 `references/reason-codes.md` 说"§154/§155 把另一个方向也接上了"——**两份参考文档互相矛盾**；实测站在后者一边（`plan node --scope project --target <dir>` → exit 4） | `confirmation.md` 订正：判定**不看升还是降**，而看"作答的 scope 与路由决定的是否一致"，不一致就 exit 4 并给 `requested_scope`/`decided_scope`；只有"路由自己也是 project"时才不需要批准 |
+| **⑤**（文档） | `references/reason-codes.md` §6 把九个码统一写成"**停止，先 `repair`**"，而实测：改名数据根之后 `doctor` 给 `remediation:"inspect"`，`repair` 返回 `{"action":"no_action","repaired":[]}`、**什么都不做**，复诊仍 broken | §6 按 §159 F3 / §161 / ADR-0060 的分法拆成两组：**`repair` 能修的**（journal 三个：`PENDING_TRANSACTION`/`RECOVERY_REQUIRED`/`JOURNAL_TRUNCATED`）与**这一版没有任何动词能修的**（marker/volume/registry/数据根两条），并给数据根那两条写清真正的出路（把目录放回去，或 `data-root forget` + 重新 `add`） |
+
+### 170.2 我自己的验收
+
+```text
+A  把"只读依赖声明"退回整份文件按行读                     → ① 的守卫 变红（读到藏在 script/project 名里的词）
+B  `"kind": source_kind_for(locator)` 退回按 backend 声明 → ② 的守卫 变红（kind 与 offline 的绑定断言）
+C  `"retired": retired` 改成 `False`                      → ③ 的两条守卫 变红（头条 + 与 retire 块一致）
+```
+
+三处都是字节级变异并按字节写回（跑完核对文件与改动前相同）。真机验收脚本我自己跑了：`closed loop:
+PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`（含 `scope decide` 的四条分支与
+`uninstall <reference>` 的 `OWNERSHIP_REQUIRED`）。
+
+### 170.3 已知边界（实现方如实列出，我照抄）
+
+- **"被清单声明"的候选集仍是白名单条目**，不是冻结能力清单——所以 `fake-tool`（没有发现谓词）永远不会成为
+  manifest hit。既有行为，本阶段不动。
+- **alias 表刻意最小**：`node` 只认 `npm`，清单里写 `nodejs` 不算命中。
+- 行式清单（`environment.yml`/lock）按行取词，所以 YAML 的 `name: cmake` 这类键值会算命中——对"包列表"
+  可接受，但它是一条真实边界。
+- `source_kind_for` 现在对任何非 https 的 URL scheme（含 `http://`）在 **plan 时**就报 `INVALID_PLAN`：
+  现有调用点都不会产生这种 locator，但手写的 resolution JSON 会比以前**更早**失败。
+
+### 170.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1481 → 1494**（+13：12 条 + 我补的 ADR 尾守卫 `test_the_decision_log_does_not_end_mid_sentence`） |
+| 代码 | `caps/planner.py`（+233/−46）、`cli.py`（+34/−3）、`tx/artifact.py`（+34/−2） |
+| 契约层 / 语料 | **不动**（schema 未被触碰；golden 重生后零 diff——被改的两条路径都不在语料里） |
+| 既有期望被取代 | **2 条**：`test_l1_planner.py::test_project_declaration_wins_and_is_never_asked` 的 fixture 由只靠子串才成立的 `"nodeenv\npython-dotenv\n"` 改成 `"python>=3.11\n"`（意图不变，负例另立）；`test_cli_uninstall_dry_run_changes_nothing` **只加断言**（`retired`/`binding_cleared` 为 false、`would_retire` 为真） |
+| 没有做 | §171 的其余发现（`where` 候选行的标签、`scope decide` 的 `unsupported`、`doctor` 没有 `reason_code`、`env persist` 的 "writes nothing"、白名单里过期的 `weak_reason` 文案、有 lane 却不教的子命令……） |

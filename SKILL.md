@@ -137,6 +137,11 @@ cancel             取消
 ## 批准
 
 - 需要批准的动作会以退出码 4 返回，并在 `required_action` 里给出要批准的 `plan_hash`。
+  **有的动词在说"需要批准"之前已经做完了一半**：`uninstall <instance>` 先完成 retire（清绑定、删它投影的
+  稳定入口，那半**不删**任何 payload），只有删除 payload 那半在等批准——信封顶层会用 `retired` 与
+  `binding_cleared` 两个字段说清已经发生的那半，`message` 也会写。**读 exit 4 时先看这两个字段**：
+  以为"什么都没发生"是错的，直接告诉用户"已经停了、什么都没动"也是错的。`--dry-run` 那条才是
+  "什么都不改"（`retired`/`binding_cleared` 都是 false、`would_retire` 为真）。
 - `airoot approve` 只**消费**批准，永远不会凭空制造它；你也不得把"我调用了 approve"
   解释成"用户批准了"。
 - 没有得到人工批准时，唯一正确的行为是停下来，把 plan 文件路径与 hash 交给用户。

@@ -11,9 +11,12 @@ from pathlib import Path
 
 import pytest
 
+from airoot.caps.discovery import load_whitelist
 from airoot.caps.planner import (
+    CAPABILITY_ALIASES,
     CONFIRMATION_OPTIONS,
     DEFAULT_SIZE_THRESHOLD_BYTES,
+    DEPENDENCY_CONTAINERS,
     PROJECT_MANIFESTS,
     SCOPE_DATA_ROOT,
     SCOPE_PROJECT,
@@ -21,8 +24,10 @@ from airoot.caps.planner import (
     SCOPE_UNSUPPORTED,
     ScopeRequest,
     TOOLING_MEMORY_RELATIVE,
+    declared_capabilities,
     decide_scope,
     manifest_fingerprint,
+    manifest_hits,
     manifest_paths,
     read_tooling_memory,
     tooling_memory_path,
@@ -73,7 +78,14 @@ def test_manifest_paths_only_reports_present_files(project: Path) -> None:
 
 
 def test_project_declaration_wins_and_is_never_asked(project: Path) -> None:
-    (project / "requirements.txt").write_text("nodeenv\npython-dotenv\n", encoding="utf-8")
+    """§170 moved this fixture onto a declaration the rule reads.
+
+    It used to declare ``nodeenv`` / ``python-dotenv`` and rely on a substring match reading
+    ``python`` inside ``python-dotenv``. The rule now compares whole names, so the fixture names the
+    capability it means; that ``python-dotenv`` is *not* a declaration is asserted separately below.
+    """
+
+    (project / "requirements.txt").write_text("python>=3.11\n", encoding="utf-8")
 
     decision = decide_scope(ScopeRequest(capability_id="python", project_root=project))
 
@@ -83,6 +95,152 @@ def test_project_declaration_wins_and_is_never_asked(project: Path) -> None:
     assert decision.reason_code == "SUCCESS"
     assert decision.options == ()
     assert "requirements.txt" in decision.evidence[1]["detail"]
+
+
+def test_a_toml_section_name_is_not_a_project_dependency(project: Path) -> None:
+    """§170: `[build-system]` is the table that carries `requires`; it is not a dependency on `build`.
+
+    Measured before this rule: a `pyproject.toml` holding **only** a `[build-system]` table was read
+    as "this project depends on cmake", so `scope decide build --project` answered
+    `origin=project_manifest / scope=project` with `manifest_hits=["build"]`, and
+    `plan build --scope data-root --target data-root:<id> --project <proj>` exited 4 with
+    `SCOPE_UPGRADE_REQUIRES_APPROVAL`. The cause was a plain substring match over the concatenated
+    manifest text, where the section name contains the capability id. A gate that fires on a section
+    name is exactly the noise that makes the confirmations that matter meaningless (draft §12.1).
+    """
+
+    (project / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["setuptools>=61.0", "wheel"]\n'
+        'build-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+
+    decision = decide_scope(ScopeRequest(capability_id="build", project_root=project))
+
+    assert decision.manifest_hits == ()
+    assert decision.origin != "project_manifest"
+    assert decision.scope == SCOPE_DATA_ROOT
+    assert decision.confirmation_required is False, "a single-file tool must not gain a confirmation gate"
+    assert [item["kind"] for item in decision.evidence] == ["query", "generic_tool"]
+
+
+def test_a_declared_dependency_is_still_a_project_dependency(project: Path) -> None:
+    """§170 non-vacuity: fixing the section-name reading must not turn every manifest into a miss.
+
+    One positive per declaration shape the rule reads — a TOML dependency array naming the
+    capability's **alias** (`cmake` for `build`, which is the case an alias table exists for), a TOML
+    array naming the id, a `package.json` dependency, its `engines` block, a `devDependencies` entry
+    naming node by its other common name, and a line in a `requirements.txt`.
+    """
+
+    cases = {
+        "pyproject-alias": ('pyproject.toml', '[build-system]\nrequires = ["cmake>=3.31"]\n', "build"),
+        "pyproject-id": ("pyproject.toml", 'dependencies = ["python"]\n', "python"),
+        "package-json-dependency": ("package.json", '{"dependencies": {"node": "^20"}}', "node"),
+        "package-json-engines": ("package.json", '{"engines": {"node": ">=18"}}', "node"),
+        "package-json-npm": ("package.json", '{"devDependencies": {"npm": "^10"}}', "node"),
+        "requirements-line": ("requirements.txt", "python3>=3.11\n", "python"),
+    }
+
+    for label, (name, content, capability) in sorted(cases.items()):
+        case = project / label
+        case.mkdir()
+        (case / name).write_text(content, encoding="utf-8")
+
+        decision = decide_scope(ScopeRequest(capability_id=capability, project_root=case))
+
+        assert decision.scope == SCOPE_PROJECT, label
+        assert decision.origin == "project_manifest", label
+        assert decision.manifest_hits == (capability,), label
+
+
+def test_a_name_that_only_contains_the_capability_is_not_a_declaration(project: Path) -> None:
+    """§170: whole names, not substrings — which is the property the section-name fix rests on.
+
+    `python-dotenv` is a dependency on dotenv, not on the interpreter, and reading it as `python` is
+    the same mistake as reading `[build-system]` as `build`. The pairing matters: the section-name
+    guard above would pass just as well if the whole classifier returned "no hit" always.
+    """
+
+    (project / "requirements.txt").write_text("nodeenv\npython-dotenv\n", encoding="utf-8")
+
+    assert declared_capabilities(project, load_whitelist()) == ()
+    decision = decide_scope(ScopeRequest(capability_id="python", project_root=project))
+    assert decision.origin != "project_manifest"
+
+
+def declare_for(project: Path, capability_id: str) -> tuple[str, ...]:
+    """The manifest hits a decision reports, or ``()`` when the routing did not come from a manifest."""
+
+    decision = decide_scope(ScopeRequest(capability_id=capability_id, project_root=project))
+    return decision.manifest_hits if decision.origin == "project_manifest" else ()
+
+
+def test_a_dependency_hidden_behind_a_script_or_project_name_is_not_read(project: Path) -> None:
+    """§170: only dependency *declarations* are read, not every key of a manifest.
+
+    `{"scripts": {"build": ...}}` is a task, and `{"name": "build"}` is what the project is called;
+    reading either as "this project depends on cmake" is the section-name mistake one level down.
+    """
+
+    (project / "package.json").write_text(
+        '{"name": "build", "scripts": {"build": "webpack"}, "dependencies": {"left-pad": "1.0.0"}}',
+        encoding="utf-8",
+    )
+
+    assert declare_for(project, "build") == ()
+    assert declare_for(project, "node") == ()
+
+
+def test_the_alias_table_is_what_the_rule_consults(project: Path) -> None:
+    """§170: the old docstring claimed "the common alias forms" while the code had none.
+
+    A claim in the source is worth what a test can read back, so this reads both directions. The
+    docstring and the table must agree about whether aliases exist at all — a table with a docstring
+    that denies it and a promise with no table are the two ways the §170 defect comes back — and every
+    alias the table declares has to produce a hit from a manifest that names it.
+    """
+
+    from airoot.caps import planner
+
+    docstring = declared_capabilities.__doc__ or ""
+    claims_aliases = "alias" in docstring.lower()
+    assert claims_aliases == bool(CAPABILITY_ALIASES), (
+        "the docstring and the alias table disagree: either the rule consults alias forms and says so, "
+        "or it consults none and claims none"
+    )
+    assert CAPABILITY_ALIASES, "an empty table under a docstring that promises aliases is the §170 defect"
+    whitelist = load_whitelist()
+    for capability_id, aliases in sorted(CAPABILITY_ALIASES.items()):
+        for alias in aliases:
+            case = project / f"alias-{capability_id}-{alias}"
+            case.mkdir()
+            (case / "requirements.txt").write_text(f"{alias}==1.0\n", encoding="utf-8")
+            assert capability_id in declared_capabilities(case, whitelist), (
+                f"{alias} is declared as an alias of {capability_id}, but the rule does not read it"
+            )
+    assert DEPENDENCY_CONTAINERS, "the rule reads dependency containers; the set cannot be empty"
+
+
+def test_every_hit_says_which_declaration_it_came_from(project: Path) -> None:
+    """§170: "referenced by a project manifest" has to be answerable, not just assertable.
+
+    The hit carries the file, the 1-based line and the text it was read from, and the routing evidence
+    repeats it, so a caller can check the claim instead of trusting it.
+    """
+
+    (project / "requirements.txt").write_text("left-pad\ncmake==3.31.6\n", encoding="utf-8")
+
+    hits = manifest_hits(project, load_whitelist())
+
+    assert [(hit.capability_id, hit.manifest, hit.line) for hit in hits] == [
+        ("build", "requirements.txt", 2)
+    ]
+    assert hits[0].declaration == "cmake==3.31.6"
+    assert "requirements.txt:2" in hits[0].describe()
+    decision = decide_scope(ScopeRequest(capability_id="build", project_root=project))
+    assert "requirements.txt:2" in decision.evidence[1]["detail"]
+    assert "cmake" in decision.evidence[1]["detail"]
 
 
 def test_a_manifest_without_the_capability_does_not_pull_it_into_the_project(project: Path) -> None:

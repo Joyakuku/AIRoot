@@ -138,6 +138,41 @@ def test_widening_is_reported_by_the_dry_run_too(capsys, cli_root: Path, project
     assert document["reason_code"] == "SCOPE_UPGRADE_REQUIRES_APPROVAL"
 
 
+def test_a_toml_section_name_does_not_raise_the_scope_gate(
+    capsys, cli_root: Path, data_root: str, tests_tmp: Path
+) -> None:
+    """§170: `[build-system]` is not a dependency on `build`, so there is nothing to widen.
+
+    Measured before the fix: this call answered `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4), because the
+    manifest classifier substring-matched the capability id against the whole file and the **section
+    name** contains it. The gate exists to stop a project-owned capability being widened without
+    approval; spending it on a section name is how "the obvious cases never ask" turns into noise
+    (draft §12.1). The positive direction is the neighbouring test, whose fixture declares
+    `build==3.31.6` and is still refused.
+    """
+
+    section_only = tests_tmp / "plan-project-section-name"
+    section_only.mkdir(parents=True, exist_ok=True)
+    (section_only / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["setuptools>=61.0", "wheel"]\n'
+        'build-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "build", "--scope", "data-root", "--target", f"data-root:{data_root}",
+        "--project", str(section_only), "--dry-run",
+    )
+
+    assert code == 0, document
+    routing = document["routing"]
+    assert routing["manifest_hits"] == []
+    assert routing["origin"] == "generic_tool"
+    assert routing["decided_scope"] == "data-root"
+    assert plan_files(cli_root) == [], "a dry run writes no plan"
+
+
 # --------------------------------------------------------------------------- #
 # confirmation: no plan file until the human answered
 # --------------------------------------------------------------------------- #

@@ -3258,7 +3258,9 @@ target.scope = "machine"
   需要给每条诊断登记一个结构化的"可否修复"，那是另一件事——**记下来，不假装做了**。
 - **没有做的**：F2（`extension status` 的身份错位）与 F6/F4（各要一次裁决）、F7–F11（文档收口）。
 
-**状态：已裁决并已落地（A、B，草案 §161）**
+**状态：已裁决并已落地（A、B，草案 §161）**：A 的守卫是
+`test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
+`assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 
 ## ADR-0061 — **`extension status` 回答的是它自己的实现，而编码前缀不是身份**
 
@@ -3727,9 +3729,69 @@ explain、doctor 四处一致）；没有索引 / 不覆盖 → `SEARCH_FALLBACK
 - **ADR-0051 的脚注被订正**（原文保留 + 指向本条）。
 
 **状态：已裁决并已落地（草案 §169）**：三处独立字节级变异（身份校验、缺 token 的批准分支、owner 判据）
-各自命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。：A 的守卫是
-`test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
-`assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
+各自命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。
+
+## ADR-0069 — **判定只读声明、标签描述 locator、头条要说清哪半已经发生**
+
+### 背景
+
+第三轮全表面测试里有一族缺陷是"**读错了对象**"（草案 §170 的读数）：
+
+- **项目清单判定是 capability_id 的**子串**匹配**。`pyproject.toml` 里只有 `[build-system]` 这种 TOML
+  **节名**，`scope decide build --project` 就报 `origin=project_manifest`，于是 data-root 安装凭空多一道
+  `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4)。这打穿了文档自称最重要的那条设计约束（"简单的必须不问……
+  否则确认会退化成噪音"），而那个函数的 docstring 还声称有 "common alias forms"——**代码里没有**。
+- **离线来源的计划把 `source.kind` 写成 `https`**，同一份文档里 `metadata.source_catalog.offline=true`、
+  locator 是本地路径。取值是按 **backend 的声明**（`network_access`）选的，而不是按**实际的 locator**，
+  所以 `field-values.md` 说"有写者"的 `local_file` 事实上从没出现在任何被打印的文档里。
+- **`uninstall <owned-id>` 的头条说漏了半件事**：exit 4 + `required_action` 只讲"要批准 gc 那半"，而 retire
+  那半**已经发生**（绑定清空、稳定入口删除、`where` 已经 `NOT_FOUND`）。行为是**有意**的（§160 /
+  ADR-0059），错的是报告：守规矩的 agent 会读 exit 4 然后说"什么都没发生、等批准"。
+- 两处**参考文档互相矛盾**：`confirmation.md` 说"自己收窄到项目内不需要批准"，而 `reason-codes.md` 说
+  "§154/§155 把另一个方向也接上了"（实测站在后者一边）；`reason-codes.md` §6 把九个码统一写成"停止，
+  先 `repair`"，而实测在数据根那两条上 `repair` 返回 `no_action`、**什么都不做**。
+
+### 决定
+
+**A —— 判定只读"依赖声明"。** `.json`/`.toml`/`Pipfile` 用标准库解析（`json`/`tomllib`），只取依赖容器
+（`dependencies`/`devDependencies`/`optional-dependencies`/`engines`/`requires`…）里的内容，映射的**键**
+算名字；其余清单按行读并去掉注释。匹配是**整个名字**等于 `capability_id` 或别名表里的一项，而别名表
+（`build←cmake`、`node←npm`、`python←python3`、`java←javac`、`archive←7z/7za/7zr`）每一项都有
+`capabilities.json`/白名单的出处。证据要能回答"凭什么说这是项目依赖"（`build <- 'cmake>=3.31'
+(pyproject.toml:2)`），并且**docstring 与别名表由一条守卫互相钉住**——"有 alias 逻辑"这句话曾经是假的，
+守卫让它不能再变成假的。
+
+**B —— `kind` 描述的是 locator，不是 backend 的声明。** `source_kind_for(locator)`：`https://` → `https`；
+**其它 scheme 的 URL 一律 `INVALID_PLAN`**（不贴一个"差不多"的标签）；盘符或路径 → `local_file`。
+**schema 未被触碰**（`$defs.source.kind` 本来就枚举了 `local_file`），golden 零变化。
+
+**C —— 报告的头条要说清"哪半已经发生"。** `uninstall` 的顶层新增 `retired` 与 `binding_cleared`
+（后者是 retire 落库**之后**读 active binding 得出的），`message`/`required_action` 都写明"绑定已清、
+payload 那半在等批准、**还没有删任何东西**"。**行为不动**——改的是那句话，不是那个动作。
+
+**D —— 两份参考文档的冲突以**实测**为准，并且把"同一个码的下一步不是同一个"写进码表。**
+`confirmation.md` 订正为"判定看**作答的 scope 与路由决定的是否一致**，不看升还是降"；`reason-codes.md` §6
+按 §159 F3 / §161 / ADR-0060 拆成"`repair` 能修的（journal 三个）"与"**这一版没有任何动词能修的**
+（marker/volume/registry/数据根两条）"，并为数据根那两条写清真正的出路。
+
+### 代价
+
+- **一处判定变宽**（节名不再算声明，`[build-system]` 不再触发那道 (4) 门，**一条既有 fixture 因此被取代**
+  ——它原来只靠子串才成立）与**一处变严**（非 https 的 URL scheme 在 plan 时就拒，手写的 resolution 会
+  比以前更早失败）。
+- **一处新增字段**：`uninstall` 的 `retired`/`binding_cleared`（`--dry-run` 那条两个都是 false，
+  所以"什么都没改"依旧可证）。
+- **一处 alias 表**：最小、有出处，而且**它的存在本身被守卫盯着**（表空掉而 docstring 仍声称有别名 → 红）。
+- **已知边界（照抄实现方的报告）**：候选集仍是白名单条目（`fake-tool` 永远不是 hit）；`node` 只认 `npm`；
+  行式清单会把 `name: cmake` 算命中；`http://` 现在在 plan 时失败。
+- **顺带修掉一处我自己的缺陷**：§162 追加本条日志时用 ADR-0060 的**状态前缀**当锚点，把它的后半句留成了
+  文件的最后一段，之后八次追加都没碰到它——**1493 项测试里没有任何一条在看"这份文档怎么结尾"**。
+  已把那半句接回 ADR-0060，并新增守卫 `test_the_decision_log_does_not_end_mid_sentence`。
+  **这条守卫的第一版是空对空的**（它问"末行是否以标点开头"，而那个残句以句号结尾，于是它对着自己
+  要防的缺陷通过了）；现在它问的是"有没有段落以标点开头"与"最后一段是不是状态段"，两条都有非空性。
+
+**状态：已裁决并已落地（草案 §170）**：三处独立字节级变异（声明解析、locator 判据、uninstall 头条）各自
+命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。
 
 
 

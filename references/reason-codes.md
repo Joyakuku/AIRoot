@@ -93,10 +93,22 @@ P1 没有 broker，所以 machine 级写入一定报 `PRIVILEGE_REQUIRED`；**�
 
 ## 6 — 需要恢复
 
-`ROOT_MARKER_MISSING`、`ROOT_MARKER_INVALID`、`VOLUME_IDENTITY_MISMATCH`、`REGISTRY_MISSING`、
-`DATA_ROOT_MISSING`、`DATA_ROOT_VOLUME_MISMATCH`、`PENDING_TRANSACTION`、
-`RECOVERY_REQUIRED`、`JOURNAL_TRUNCATED`。
-**停止**，先 `repair`；不要在身份不可证明的 root 上继续任何操作。
+这一组码说"**这个 root 现在不能安全地继续用**"，但它们的**下一步不是同一个**——先分辨是哪一类
+（§159 F3 / §161 / ADR-0060 把这件事拆开过一次，§170 又把数据根那两条按实测归位）：
+
+- **`repair` 能修**：`PENDING_TRANSACTION`、`RECOVERY_REQUIRED`、`JOURNAL_TRUNCATED`（journal 可回放）。
+  **停止**其余操作，先 `repair`；不要在身份不可证明的 root 上继续任何操作。
+- **这一版没有任何动词能修**（交给操作者）：`ROOT_MARKER_MISSING`、`ROOT_MARKER_INVALID`、
+  `VOLUME_IDENTITY_MISMATCH`、`REGISTRY_MISSING`、`DATA_ROOT_MISSING`、`DATA_ROOT_VOLUME_MISMATCH`。
+  `repair` 自己也要先解析出 root、也不重建权威数据库，所以**不要**建议对一个缺 marker / 缺 registry 的 root
+  跑它；`doctor` 给这几类的 `remediation` 是 `inspect`，而**下面的下一步是真的**：
+  - `ROOT_MARKER_*` / `VOLUME_IDENTITY_MISMATCH`：root 的身份不可证明，交给操作者（必要时 `root init`
+    一个**新** root，那是另起一个身份，不是修旧的）。
+  - `REGISTRY_MISSING`：权威数据库不在了，**不要自重建**（`rebuild` 永不重建权威）。
+  - `DATA_ROOT_MISSING` / `DATA_ROOT_VOLUME_MISMATCH`：**已声明的那个数据根**读不了或不在原来的卷上。
+    实测（§170）：改名数据根目录之后 `repair` 返回 `{"action":"no_action","repaired":[]}`，复诊仍 broken——
+    它**什么都不做**。操作者的动作是：把目录放回去，或者 `data-root forget <id>` 之后重新
+    `data-root add`；`discover` 会把是哪个数据根、为什么放进 `missing[]`。
 
 `discover` 报的 `DATA_ROOT_MISSING`（退出码 6）是一个**聚合**："某个已声明的数据根读不了"是**状态**问题，
 **具体原因**在 `missing[].reason_code`（每条还带 `data_root_id` 与 `detail`）——报的时候要说清是哪个数据根、
@@ -106,8 +118,7 @@ P1 没有 broker，所以 machine 级写入一定报 `PRIVILEGE_REQUIRED`；**�
 （message 是 `unknown data root: <id>`）是**调用方写错了**，`plan --scope data-root --target
 data-root:<id>`、`discover --data-root <id>`、`data-root forget <id>` 三条一律报
 `NOT_FOUND`(1)，证据是带标签的 `known data roots: [...]`。看到 6 先读 message 与证据：只有
-root / marker / volume / registry / journal / 数据根的**可读性**出现在里面时，才是"先 `repair`"；
-"id 拼错了"的下一步是 `data-root list`，不是 `repair`。
+journal 那三个词出现在里面时才是"先 `repair`"；"id 拼错了"的下一步是 `data-root list`，不是 `repair`。
 
 ## 7 — 计划/来源问题
 

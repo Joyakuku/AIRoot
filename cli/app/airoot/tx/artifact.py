@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..canon import file_manifest, file_manifest_digest, plan_hash, tree_digest
 from ..clock import Clock, SYSTEM_CLOCK
@@ -564,6 +565,37 @@ class ArtifactRunner:
         return tx
 
 
+def source_kind_for(locator: str) -> str:
+    """The ``source.kind`` a locator actually is (draft §170).
+
+    ``kind`` describes the **source**, so it is read from the locator and not from the backend's
+    network declaration. Until §170 it was ``"https" if declaration.network_access else "local_file"``,
+    which is a statement about the *backend*: ``portable_archive`` declares ``network_access=true``
+    because it can fetch over https, so planning an **offline** resolution with it produced one
+    document that said ``kind="https"``, ``locator="C:\\...\\cmake-...zip"`` and
+    ``metadata.source_catalog.offline=true`` at the same time.
+
+    A local artifact is a filesystem path; the only network source this build has is an https URL
+    (``caps/sources.py`` refuses everything else at resolve time, and ``https_artifact`` is HTTPS-only),
+    so any other URL scheme is refused here rather than mislabelled.
+    """
+
+    scheme = urlsplit(locator).scheme.lower()
+    if scheme == "https":
+        return "https"
+    if scheme and "://" in locator:
+        raise AirootError(
+            "INVALID_PLAN",
+            f"the source locator is not an https URL: {locator}",
+            evidence=[
+                f"scheme={scheme!r}",
+                "v1's only network source is https (draft §21), and a local artifact is a filesystem path",
+                "plan a local artifact by naming its path, not a URL of another scheme",
+            ],
+        )
+    return "local_file"
+
+
 def create_artifact_plan(
     registry: Any,
     backend: Any,
@@ -663,7 +695,7 @@ def create_artifact_plan(
             },
         ],
         "source": {
-            "kind": "https" if declaration.network_access else "local_file",
+            "kind": source_kind_for(locator),
             "locator": locator,
             "provenance": {"source_id": f"{declaration.backend_id}/{capability_id}", "publisher": requested_by},
             "integrity": {"artifact_digest": source_digest, "file_manifest_digest": source_digest},
@@ -687,4 +719,4 @@ def store_relative(root: Path, path: Path) -> str:
     return relative_to_root(path, root)
 
 
-__all__ = ["ArtifactRunner", "create_artifact_plan", "store_relative"]
+__all__ = ["ArtifactRunner", "create_artifact_plan", "source_kind_for", "store_relative"]

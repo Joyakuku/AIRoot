@@ -509,6 +509,91 @@ def test_a_real_artifact_plan_takes_its_version_from_the_resolution(
     assert artifact.is_file()
 
 
+def test_an_offline_resolution_plans_a_local_file_source(
+    capsys, registry, clock, root, offline_release, tmp_path: Path
+) -> None:
+    """§170: `source.kind` describes the **locator**, not what the backend is capable of.
+
+    Measured before the fix, in one document: `source.kind="https"` next to
+    `source.locator="C:\\...\\cmake-3.31.6-windows-x86_64.zip"`,
+    `metadata.source_catalog.offline=true` and `metadata.backend.network_access=true`. The kind was
+    read from the backend's declaration — and `portable_archive` declares `network_access=true`
+    because it *can* fetch over https — so `local_file`, the value `caps/sources.py` had been writing
+    for offline resolutions all along, never appeared in a printed plan.
+    """
+
+    artifact, checksums = offline_release
+    cli_root = Path(registry.path).parent.parent
+    source_file = tmp_path / "resolved.json"
+
+    code, resolved = run(
+        capsys, "--json", "--root", str(cli_root),
+        "source", "resolve", "build", "--version", "3.31.6", "--offline-checksum", str(checksums),
+        "--source-out", str(source_file),
+    )
+    assert code == 0, resolved
+    assert resolved["offline"] is True
+
+    code, plan = run(capsys, "--json", "--root", str(cli_root), "plan", "build", "--source-json", str(source_file))
+
+    assert code == 0, plan
+    assert plan["source"]["locator"] == str(artifact)
+    assert plan["source"]["kind"] == "local_file"
+    assert plan["metadata"]["backend"]["network_access"] is True, (
+        "the backend can fetch over https; that says nothing about where this artifact comes from"
+    )
+    # §170's invariant in one assertion: `kind` and `offline` are two statements about the same
+    # source, so they may never disagree.
+    assert (plan["source"]["kind"] == "local_file") is plan["metadata"]["source_catalog"]["offline"]
+
+
+def test_an_https_locator_plans_an_https_source(
+    capsys, registry, clock, root, offline_release, tmp_path: Path
+) -> None:
+    """§170, the other direction: a fetched source is `https`, and the same invariant holds.
+
+    The online resolution is produced through the injected fetcher `resolve_source` already takes, so
+    this needs no network — what is under test is the *kind of source a URL is*, not the download.
+    """
+
+    artifact, _checksums = offline_release
+    cli_root = Path(registry.path).parent.parent
+    online = resolve_source(
+        capability_id="build",
+        version="3.31.6",
+        fetch_text=lambda url: f"{sha256_file(artifact)[7:]}  {artifact.name}\n",
+    ).to_document()
+    assert online["offline"] is False
+    source_file = tmp_path / "resolved-online.json"
+    source_file.write_text(json.dumps(online), encoding="utf-8")
+
+    code, plan = run(capsys, "--json", "--root", str(cli_root), "plan", "build", "--source-json", str(source_file))
+
+    assert code == 0, plan
+    assert plan["source"]["locator"].startswith("https://github.com/Kitware/CMake/releases/download/")
+    assert plan["source"]["kind"] == "https"
+    assert (plan["source"]["kind"] == "local_file") is plan["metadata"]["source_catalog"]["offline"]
+
+
+def test_a_url_of_another_scheme_is_not_mislabelled(tmp_path: Path) -> None:
+    """§170: the mapping is total and honest — https or a path, and nothing else is invented.
+
+    `local_file` for an `http://` locator would be the old defect with the two words swapped, and
+    `https` for it would be a falsehood the `https_artifact` backend refuses one step later. The
+    schema's enum has no `http`, so the plan says so instead of picking the nearer lie.
+    """
+
+    from airoot.tx.artifact import source_kind_for
+
+    assert source_kind_for("https://example.invalid/tool.zip") == "https"
+    assert source_kind_for(str(tmp_path / "cmake-3.31.6-windows-x86_64.zip")) == "local_file"
+    assert source_kind_for("C:\\artifacts\\cmake.zip") == "local_file", "a drive letter is not a scheme"
+    with pytest.raises(AirootError) as caught:
+        source_kind_for("http://example.invalid/tool.zip")
+    assert caught.value.reason_code == "INVALID_PLAN"
+    assert "https" in caught.value.message
+
+
 def test_a_version_that_disagrees_with_the_resolution_is_refused(
     capsys, registry, clock, root, offline_release, tmp_path: Path
 ) -> None:

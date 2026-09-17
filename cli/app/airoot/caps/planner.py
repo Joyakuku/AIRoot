@@ -20,6 +20,7 @@ confirmations stop working too.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,50 @@ PROJECT_MANIFESTS: tuple[str, ...] = (
     "environment.yaml",
     "conda.yml",
 )
+
+# A capability_id is not the only name a manifest can use for the same tool, so the rule consults a
+# table instead of claiming one it does not have (draft §170: the docstring used to say "plus the
+# common alias forms" while the code had no alias logic at all). Every alias is a name this
+# repository's own policy already uses for that capability: `capabilities.json` names the entry
+# (`cmake.exe` for `build`) and the whitelist's `executable_name.any_of` lists the rest
+# (`7z`/`7za`/`7zr`, `python3`, `javac`). `npm` is the only addition — it is node's own package
+# manager, and the name a manifest actually carries for the node toolchain.
+CAPABILITY_ALIASES: dict[str, tuple[str, ...]] = {
+    "archive": ("7z", "7za", "7zr"),
+    "build": ("cmake",),
+    "java": ("javac",),
+    "node": ("npm",),
+    "python": ("python3",),
+}
+
+# Where a manifest declares what it depends on (draft §170). A **section name** is not one of these:
+# `[build-system]` is the table that *carries* `requires`, it is not a dependency on `build`, and a
+# `"scripts": {"build": ...}` entry is a task rather than a dependency. Only the contents of these
+# containers are read. Keys are compared lowercased because JSON spells them `devDependencies` while
+# `Pipfile` and `pyproject.toml` spell them `dev-packages` / `dev-dependencies`.
+DEPENDENCY_CONTAINERS: frozenset[str] = frozenset(
+    {
+        "dependencies",
+        "devdependencies",
+        "dev-dependencies",
+        "dev-packages",
+        "optionaldependencies",
+        "optional-dependencies",
+        "peerdependencies",
+        "bundleddependencies",
+        "engines",
+        "resolutions",
+        "overrides",
+        "packages",
+        "requires",
+    }
+)
+
+# Characters that cannot appear inside a dependency name, so splitting on them separates a name from
+# its version and from the punctuation around it (`cmake>=3.31`, `"cmake@^3.0":`, `- cmake=3.31`).
+# `.` `-` `_` `+` are deliberately **not** separators: they are part of a name, and that is what keeps
+# `build-backend`, `setuptools.build_meta` and `python-dotenv` from reading as `build` or `python`.
+_NAME_SEPARATORS = re.compile(r"[\s,;:\[\]\(\)\{\}\"'<>=!~^@*|/\\]+")
 
 # The three options are fixed (draft §12.2). They may not be renamed or extended.
 CONFIRMATION_OPTIONS: tuple[str, ...] = ("project-isolated", "data-root", "cancel")
@@ -119,16 +164,179 @@ def manifest_paths(project_root: Path) -> list[Path]:
     return [root / name for name in PROJECT_MANIFESTS if (root / name).is_file()]
 
 
-def manifest_text(project_root: Path) -> str:
-    """Concatenated text of every project manifest, or ``""`` when there is none."""
+@dataclass(frozen=True)
+class ManifestHit:
+    """One capability a project manifest declares, and the declaration that says so.
 
-    parts: list[str] = []
-    for path in manifest_paths(project_root):
+    The reading has to be *answerable*: "referenced by a project manifest" on its own cannot be
+    checked by the caller, so every hit carries the file, the line and the text it was read from
+    (draft §170). A hit that comes from a parsed value has no line — the parse does not keep one —
+    and says so with ``None`` instead of inventing a number.
+    """
+
+    capability_id: str
+    manifest: str
+    line: int | None
+    declaration: str
+
+    def describe(self) -> str:
+        where = self.manifest if self.line is None else f"{self.manifest}:{self.line}"
+        return f"{self.capability_id} <- {self.declaration.strip()!r} ({where})"
+
+
+def capability_names(capability_id: str) -> frozenset[str]:
+    """The names a manifest may use for this capability: its ``capability_id`` and its aliases."""
+
+    return frozenset({capability_id.lower(), *CAPABILITY_ALIASES.get(capability_id, ())})
+
+
+def _texts_in(value: Any) -> list[str]:
+    """The declaration texts one dependency container carries.
+
+    A mapping declares its dependencies by **key** (``{"dependencies": {"node": "^20"}}``), and its
+    values are recursed into so a nested constraint (``node = {version = "^20"}``) keeps its name.
+    A list declares them by element, and an element that is a mapping is a poetry.lock-style table
+    whose ``name`` is the dependency.
+    """
+
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for key, item in value.items():
+            if isinstance(key, str):
+                texts.append(key)
+            texts.extend(_texts_in(item))
+        return texts
+    if isinstance(value, list):
+        texts = []
+        for item in value:
+            name = item.get("name") if isinstance(item, dict) else None
+            if isinstance(name, str):
+                texts.append(name)
+            texts.extend(_texts_in(item))
+        return texts
+    return []
+
+
+def _container_texts(node: Any) -> list[str]:
+    """Every declaration text in a parsed manifest — the contents of the containers, and nothing else.
+
+    The recursion is what finds ``[project.optional-dependencies]`` and ``tool.poetry.dependencies``:
+    the section that *contains* a container is traversed, but a section or key that is not one of
+    :data:`DEPENDENCY_CONTAINERS` never contributes text of its own.
+    """
+
+    texts: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(key, str) and key.lower() in DEPENDENCY_CONTAINERS:
+                texts.extend(_texts_in(value))
+            else:
+                texts.extend(_container_texts(value))
+    elif isinstance(node, list):
+        for item in node:
+            texts.extend(_container_texts(item))
+    return texts
+
+
+def _declaration_lines(text: str) -> list[tuple[int, str]]:
+    """The non-comment lines of a manifest this build does not parse."""
+
+    lines: list[tuple[int, str]] = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            lines.append((number, line))
+    return lines
+
+
+def _parser_for(path: Path) -> str | None:
+    """Which parser reads this manifest, or ``None`` for the line-oriented ones.
+
+    The manifest *formats* this build parses rather than reads line by line. Everything else
+    (``requirements*.txt``, the lock files, ``environment.yml``) is line-oriented already, and a
+    structured file that fails to parse falls back to lines rather than counting as "no dependency".
+    """
+
+    if path.suffix.lower() == ".json" or path.name == "Pipfile.lock":
+        return "json"
+    if path.suffix.lower() == ".toml" or path.name == "Pipfile":
+        return "toml"
+    return None
+
+
+def _declarations(path: Path) -> list[tuple[int | None, str]]:
+    """``(line, text)`` for every declaration in one manifest (draft §170).
+
+    A structured manifest is parsed, because only a parse can tell a *declaration* from a section
+    name. A parse failure is not a verdict — the text is then read line by line, where a name still
+    has to stand on its own (``[build-system]`` tokenises to ``build-system``, so the section header
+    cannot be read as a dependency on ``build`` either way). ``requirements*.txt``, the lock files
+    and ``environment.yml`` have no structure to parse and are read that way from the start.
+    """
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    parser = _parser_for(path)
+    parsed: Any = None
+    if parser == "json":
         try:
-            parts.append(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-    return "\n".join(parts)
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+    elif parser == "toml":
+        try:
+            import tomllib
+
+            parsed = tomllib.loads(text)
+        except (ValueError, TypeError):
+            parsed = None
+    if isinstance(parsed, (dict, list)):
+        return [(None, item) for item in _container_texts(parsed)]
+    return _declaration_lines(text)
+
+
+def manifest_hits(project_root: Path, whitelist: Whitelist) -> tuple[ManifestHit, ...]:
+    """Which whitelisted capabilities the project's manifests **declare**, and where.
+
+    The rule is deliberately narrow (draft §170): a capability counts when one of its names appears
+    as a whole dependency name in a declaration. A name that merely *contains* it does not
+    (``python-dotenv`` is not ``python``), and neither does a section or key that happens to contain
+    it (``[build-system]`` is not a dependency on ``build``).
+    """
+
+    by_name: dict[str, str] = {}
+    for rule in whitelist.entries:
+        for name in sorted(capability_names(rule.capability_id)):
+            by_name.setdefault(name, rule.capability_id)
+
+    hits: list[ManifestHit] = []
+    seen: set[tuple[str, str]] = set()
+    for path in manifest_paths(project_root):
+        for line, text in _declarations(path):
+            tokens = {token for token in _NAME_SEPARATORS.split(text.lower()) if token}
+            for token in sorted(tokens):
+                capability_id = by_name.get(token)
+                if capability_id is None or (capability_id, path.name) in seen:
+                    continue
+                seen.add((capability_id, path.name))
+                hits.append(ManifestHit(capability_id, path.name, line, text))
+    return tuple(sorted(hits, key=lambda hit: (hit.capability_id, hit.manifest)))
+
+
+def declared_capabilities(project_root: Path, whitelist: Whitelist) -> tuple[str, ...]:
+    """Whitelisted capabilities the project's manifests actually reference.
+
+    A capability is referenced by **name** — its ``capability_id`` or one of its declared alias forms
+    (:data:`CAPABILITY_ALIASES`) — and only inside a dependency declaration, which
+    :func:`manifest_hits` reads and explains. The alias table is data, and a test reads it back, so
+    this sentence and the rule cannot drift apart (draft §170).
+    """
+
+    return tuple(sorted({hit.capability_id for hit in manifest_hits(project_root, whitelist)}))
 
 
 def manifest_fingerprint(project_root: Path) -> str | None:
@@ -142,34 +350,6 @@ def manifest_fingerprint(project_root: Path) -> str | None:
         for path in paths
     }
     return digest_bytes(canonical_bytes(records))
-
-
-def _mentions(text: str, capability_id: str) -> bool:
-    """Is the capability declared by the manifest text?
-
-    Deliberately conservative: a plain substring match on the capability id, plus the
-    common alias forms, and only inside manifest text we already read. A parse failure
-    never happens because we never parse — an unreadable manifest simply does not count.
-    """
-
-    if not text:
-        return False
-    lowered = text.lower()
-    needle = capability_id.lower()
-    if needle in lowered:
-        return True
-    return False
-
-
-def declared_capabilities(project_root: Path, whitelist: Whitelist) -> tuple[str, ...]:
-    """Whitelisted capabilities the project's manifests actually reference."""
-
-    text = manifest_text(project_root)
-    if not text:
-        return ()
-    return tuple(
-        sorted(rule.capability_id for rule in whitelist.entries if _mentions(text, rule.capability_id))
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -252,7 +432,14 @@ def decide_scope(
             ),
         }
     ]
-    manifest_hits = declared_capabilities(request.project_root, rules) if request.project_root else ()
+    hits = manifest_hits(request.project_root, rules) if request.project_root else ()
+    declared_ids = tuple(sorted({hit.capability_id for hit in hits}))
+    if hits:
+        # The grounds, not just the verdict: `manifest_hits` names the capabilities, and this names
+        # the file, the line and the text each one was read from (draft §170).
+        evidence.append(
+            {"kind": "project_manifest", "detail": "; ".join(hit.describe() for hit in hits)}
+        )
     fingerprint = manifest_fingerprint(request.project_root) if request.project_root else None
 
     def decision(
@@ -274,7 +461,7 @@ def decide_scope(
             size_estimate_bytes=request.declared_size_bytes,
             size_source="declared" if request.declared_size_bytes is not None else "unknown",
             threshold_bytes=threshold_bytes,
-            manifest_hits=manifest_hits,
+            manifest_hits=declared_ids,
             memory=remembered,
             evidence=tuple(evidence + list(extra_evidence or [])),
         )
@@ -311,14 +498,9 @@ def decide_scope(
             remembered=remembered,
         )
 
-    # 2. Referenced by the project's manifests → project-isolated, never ask.
-    if capability_id in manifest_hits:
-        evidence.append(
-            {
-                "kind": "project_manifest",
-                "detail": f"declared by {', '.join(path.name for path in manifest_paths(request.project_root))}",
-            }
-        )
+    # 2. Declared by the project's manifests → project-isolated, never ask. The evidence for *this*
+    #    answer was appended above, together with the declaration that carries it.
+    if capability_id in declared_ids:
         return decision(
             SCOPE_PROJECT, confirmation=False, origin="project_manifest", reason_code="SUCCESS"
         )
@@ -445,20 +627,25 @@ def import_scope_decision(
 
 
 __all__ = [
+    "CAPABILITY_ALIASES",
     "CONFIRMATION_OPTIONS",
     "DEFAULT_SIZE_THRESHOLD_BYTES",
+    "DEPENDENCY_CONTAINERS",
     "PROJECT_MANIFESTS",
     "SCOPE_DATA_ROOT",
     "SCOPE_PROJECT",
     "SCOPE_REFERENCE_ONLY",
     "SCOPE_UNSUPPORTED",
+    "ManifestHit",
     "ScopeDecision",
     "ScopeRequest",
     "TOOLING_MEMORY_RELATIVE",
+    "capability_names",
     "declared_capabilities",
     "decide_scope",
     "import_scope_decision",
     "manifest_fingerprint",
+    "manifest_hits",
     "manifest_paths",
     "memory_choice",
     "read_tooling_memory",

@@ -25,7 +25,11 @@ cancel             取消
 
 - `data-root` 是**权限提升**：项目目录里的 manifest 不能自己升级自己。显式请求它而策略结论是
   project 时，`plan` 返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码 4），**不落盘任何计划文件**。
-- 反方向（自己收窄到项目内）不需要批准。
+- **反方向也一样要批准**（§154/§155 / ADR-0056，§170 订正了这一句）：判定不看"升还是降"，而看
+  **作答的 scope 与路由决定的那个是否一致**——不一致就 `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4)，
+  message 是 `the answered scope '<x>' is not the scope <cap> routes to`，证据里给
+  `requested_scope` 与 `decided_scope`。实测：`plan node --scope project --target <dir>`（node 路由到
+  data-root）就是 exit 4。**只有收窄到"路由自己也是 project"时**才不需要批准。
 
 ## 批准的形状
 

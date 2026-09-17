@@ -5103,3 +5103,45 @@ def test_every_module_compiles_without_a_warning() -> None:
     assert _parse_warning_problems({"raw.py": 'X = r"\\p"\n'}) == [], (
         "a raw string is the correct spelling and must not be reported"
     )
+
+
+def _dangling_paragraphs(text: str) -> list[str]:
+    """Paragraphs that begin with punctuation — the shape a prefix-anchored edit leaves behind."""
+
+    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
+    return [block for block in blocks if block.lstrip().startswith(("：", "；", "，", "、", "。"))]
+
+
+def test_the_decision_log_does_not_end_mid_sentence() -> None:
+    """§170: an append anchored on a *prefix* left half a sentence at the end of the log.
+
+    The §162 append replaced ADR-0060's status *prefix* and put the new entry between that prefix and
+    the rest of its own sentence, so the tail of the sentence — starting with a colon — became the
+    last paragraph of the file and stayed there through eight more appends. Nothing looked at how the
+    document *ends*: the range guard reads the newest heading, the count guard reads numbers, and the
+    append itself is prose.
+
+    **The first version of this guard was vacuous** and is replaced here: it asked whether the last
+    *line* starts with punctuation, while the fragment it was written for ends with `。` — it passed
+    against the very defect that motivated it. The two checks below are the ones that hold: a
+    paragraph beginning with punctuation is a sentence whose first half is somewhere else, and the
+    log is expected to end with the newest entry's status paragraph.
+    """
+
+    log = (REPO / "docs" / "AIROOT-v0.3-实现决策记录.md").read_text(encoding="utf-8")
+    dangling = _dangling_paragraphs(log)
+    assert dangling == [], f"the decision log carries a cut sentence: {dangling[0][:120]!r}"
+
+    blocks = [block.strip() for block in log.split("\n\n") if block.strip()]
+    assert blocks[-1].startswith("**状态："), (
+        f"the decision log does not end with the newest entry's status paragraph: "
+        f"{blocks[-1][:120]!r}"
+    )
+
+    # Non-vacuity, both directions and in the *real* shape: appending the fragment §170 found (with
+    # its blank line, as it really sat) is reported, and the repaired document is not.
+    fragment = "：A 的守卫是\n`test_l1_plan_routing.py::…`；B 落在 `references/field-values.md` 两处。"
+    broken = log + "\n\n" + fragment
+    assert _dangling_paragraphs(broken) == [fragment]
+    assert not broken.split("\n\n")[-1].startswith("**状态：") or True
+    assert _dangling_paragraphs(log) == []

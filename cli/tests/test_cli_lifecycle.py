@@ -103,6 +103,61 @@ def test_cli_uninstall_stops_at_the_approval_boundary(
     assert (cli_root / "store" / installed).is_dir()
 
 
+def test_cli_uninstall_says_which_half_has_already_happened(
+    capsys, cli_root: Path, installed: str
+) -> None:
+    """§170: the headline of a half-finished `uninstall` has to name the half that is done.
+
+    §160 / ADR-0059 keep "a non-dry-run `uninstall` completes the retire half and stops at the
+    approval boundary" on purpose. What was wrong was the **report**: exit 4 plus a `required_action`
+    about the gc half reads as "nothing happened, wait for approval", while the machine-level binding,
+    the stable entry and the lifecycle row had already changed — and only the `retire` block said so.
+    An agent that relays the headline therefore told the operator the opposite of the state of the
+    machine.
+    """
+
+    code, document = run(capsys, "--json", "--root", str(cli_root), "uninstall", installed)
+
+    assert code == 4
+    # Machine-readable at the top level, so nothing has to be dug out of `retire`.
+    assert document["retired"] is True
+    assert document["binding_cleared"] is True
+    # ...and both halves of the operation are named in the headline and in the ask.
+    assert "retired" in document["message"] and "binding" in document["message"]
+    assert "payload deletion" in document["message"]
+    assert "token-file" in document["required_action"]
+    assert "nothing was deleted yet" in document["required_action"]
+    assert document["payload_removed"] is False
+
+    # The claim is true, not merely consistent: nothing resolves the capability any more.
+    assert not (cli_root / "cli" / "exposure" / "bin" / f"{CAPABILITY}.cmd").exists()
+    where_code, where = run(capsys, "--json", "--root", str(cli_root), "where", CAPABILITY)
+    assert where_code == 1 and where["reason_code"] == "NOT_FOUND"
+    assert where["found"] is False and where["candidates"] == []
+
+
+def test_the_uninstall_headline_and_the_retire_block_agree(
+    capsys, cli_root: Path, installed: str
+) -> None:
+    """§170: the summary and the record may not tell two different stories about the same fact.
+
+    The top-level fields exist so that an agent does not have to read `retire`; that is only worth
+    anything if they say the same thing `retire` does. This pins the pair (§166's pairing rule, one
+    report over).
+    """
+
+    code, document = run(capsys, "--json", "--root", str(cli_root), "uninstall", installed)
+
+    assert code == 4
+    retire = document["retire"]
+    assert document["retired"] == (retire["lifecycle_status"] == "retired")
+    assert document["binding_cleared"] is True and retire["launcher_removed"] is True, (
+        "the stable entry is the projection of the binding that was just cleared"
+    )
+    assert document["payload_removed"] is False and retire["payload_removed"] is False
+    assert document["plan"] is not None and document["plan"]["operation"] == "gc_apply"
+
+
 def test_cli_uninstall_dry_run_changes_nothing(
     capsys, cli_root: Path, installed: str, registry
 ) -> None:
@@ -125,6 +180,11 @@ def test_cli_uninstall_dry_run_changes_nothing(
     assert document["payload_removed"] is False
     assert document["plan"] is None, "a dry run must not build a gc plan it cannot honour"
     assert "tool retire" in document["required_action"], document["required_action"]
+    # §170: the two halves are reported in the negative as well, so "which half happened" is readable
+    # in both directions rather than being the absence of a key.
+    assert document["retired"] is False
+    assert document["binding_cleared"] is False
+    assert document["would_retire"] is True
 
     after = run(capsys, "--json", "--root", str(cli_root), "tool", "status", installed)[1]
     assert before["instance"]["lifecycle_status"] == "active"
