@@ -251,7 +251,7 @@ AIROOT 的边界现在足够明确：它维护能力协议、状态、权限、�
   （ADR-0046）→ `install` 报 `FINALIZED`，落进 store 的就是那 **12 721 664 字节**、digest 与上游逐字节
   相同；**§118 又执行了它**（`rustup-init.exe -y --no-modify-path --profile minimal`，19.1 秒，
   rustc/cargo 1.98.1 真编译过）。所以这一条今天要分成两半读：**下载与验证**是随时可复现的实测，
-  **stage/commit** 是"做过、但每次都需要一次显式的本地签发"——没有 CLI 动词会替你签；
+  **stage/commit** 是"做过、但每次都需要一次显式的本地签发"——没有 CLI 动词会替你签；**§148 又把另一条后端在真机上走完**：真实上游的 `cmake-3.31.6-windows-x86_64.zip`（`portable_archive`）下载 → 上游校验和 → **解压 8146 个条目** → 绑定 → 真跑（`cmake version 3.31.6`）→ `retire` → `gc --apply` **真的删掉**（`payload_removed=true`）；读数在草案 §148，而 `--online` 里那个新 phase 的成功路径**尚未**被观察到 PASS；
 - `file_search` 的 **USN 常驻索引器**：属 P2（初始全量枚举需要 broker）；协议面与受控 crawl 已可用；
 - `reconcile`、`path backup|restore`、`root adopt|relocate`：已按命令路径登记为未实现，并且
   **每条都写明了"为什么"与"什么才能解锁它"**——`agents\airoot.json` 的 `deferred` 分三类

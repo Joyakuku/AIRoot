@@ -12640,3 +12640,105 @@ assert 'fake-tool/fake-tool/1.0.0/win-x64' == 'fake-tool/fake-tool/9.0.0/win-x64
 | 契约层 | 不动：没有 schema、没有枚举、没有退出码、没有 reason code；`evidence[].kind` 多一个**由代码自由写**的标签 `payload`，它的权威在 `references/field-values.md`（那一节的两个方向都查） |
 | 语料 | **0 个 fixture 变化**——但这不是"没碰过"：第一版报告让 `where_healthy` 红过，收窄口径之后才是 0（§147.5） |
 | 没有做 | `health` 仍然**没有"重新观测并记录"的写者**。那是 P5 的下一刀，而它先要一个裁决：**谁有权写 `health`**——`where` 会按它选择，所以它不是一次无害的缓存刷新 |
+## 148. 真实上游的归档装得进去：P4 的下载 → 校验 → 解压 → 真跑 → gc 在真机走完（守卫第四十一组）
+
+P4 缺的那一半一直是同一句话：**对真实上游字节走完 stage/commit/gc**。§59 只做到 fetch + verify（单文件
+`rustup-init.exe`），§117 走完了 stage/commit（同样是那个单文件），而 **`.zip` 那条路只有手工造的夹具**
+（§144/§145 的 zip 是测试里现造的）。这一轮网络通了，于是它第一次撞上真实字节。
+
+### 148.1 先量：一次真实的归档，走完整条链
+
+在**临时 root**（`%TEMP%\airoot-p4c-*`，跑完即删）上，用 CLI 动词逐步走：
+
+| 步骤 | 读数 |
+|---|---|
+| `source resolve build --version 3.31.6` | `offline=False`、`backend_id=portable_archive`、`expected_digest=sha256:d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836`（来自上游发布的 `cmake-3.31.6-SHA-256.txt`，**不是**自己算的） |
+| `plan build --source-json` | `plan/build/3.31.6/9fe6d0594619`，`plan_hash=sha256:ded6f06b70a3b857…` |
+| `issue --provision` + `approve` | 都 `SUCCESS`（**这个临时 root 自己的**签发方） |
+| `install` | **`FINALIZED`**，`instance_id=build/cmake-3.31.6-windows-x86_64/3.31.6/win-x64` |
+| 载荷 | `store/build/cmake-3.31.6-windows-x86_64/3.31.6/win-x64`：**8146 个条目**，`bin/cmake.exe` 在、**12 029 392 字节**，`artifact_digest=sha256:d39294467e3a104b…` |
+| `tool verify` | `verified=true`、`problems=[]` |
+| `run --capability build -- --version` | 退出 0，子进程输出 **`cmake version 3.31.6`** —— 真跑的是 AIROOT 装进去的那一份 |
+| `tool retire` | `payload_removed=false`（retire 保留载荷） |
+| `tool gc --plan` | `collectable=1` |
+| `tool gc --apply` | **`payload_removed=true`**，store 里只剩三级父目录 |
+| `tool list` | 行还在，`collected_at` 有值、`lifecycle_status=retired`、`entrypoints` 保留 |
+
+**这就是 P4 那条判据的实测**。它同时是 §145 的收获：`expose` 排出来的入口点是
+`bin/cmake.exe`（**相对路径**），而 ADR-0052 正是为它放宽的。
+
+### 148.2 期间真红过一次：`INSTALL_IO_FAILED`
+
+第一次跑，`install` 报 `state=ROLLED_BACK`、`reason_code=INSTALL_IO_FAILED`（退出码 2），随后
+`tool list` **空**、`gc --plan` `collectable=0`、store 干净。把它对到代码上一遍：
+
+- `_classified_failure` 按 `tx["state"]` 分流，`{PROPOSED, APPROVED, FETCHED, VERIFIED}` 走 `_fail`；
+- `stage`（解压 8000 个文件）执行时状态还是 `VERIFIED`，于是**一条传输/文件系统层的 `OSError` 在这里被
+  转成 `INSTALL_IO_FAILED`**，走 `FAILED → ROLLED_BACK`，实例行根本没建、store 里什么都没有。
+
+**所以这不是缺陷**，而且它早就被离线守住：`cli/tests/test_l2_backends.py` 注入 "No space left on device"
+量过同一条路（§62），连"raw `OSError` 曾经把事务留在非终态"那一条都在那里。真实字节上的这次只是**同一
+条设计行为的实测**。
+
+**这里有一处我自己的失误要记下来**：当时那个驱动脚本把失败文档截断到 400 字符，于是**证据没有被留下
+来**，我一开始只能靠推断。产品的证据是留着的（`journal.advance(..., failure={"evidence": …})`），
+丢的是我的读数方式。记在这里，免得下次把"我没截到"读成"产品没给"。
+
+### 148.3 把它变成可重跑的一步：`real_machine_acceptance.py` 的 `online_install()`
+
+读数停在临时脚本里等于没有——项目的真机证据只有一处归宿，就是 `real_machine_acceptance.py`。新增
+phase `online_install()`：`source resolve` → `plan` → `issue --provision` → `approve` → `install` →
+`tool verify` → `run --capability` → `retire` → `gc --plan` → `gc --apply`，并在同一套宿主快照隔离审计
+之下。
+
+**顺带改掉一段与代码矛盾的注释。** 原来 `--online` 块写着它不能在 stage/commit 处往下走，理由是签发
+"not anything this script may do on the operator's behalf"。这句话与**同一个文件**矛盾：几百行以下的
+`closed_loop()` 用 `issue --provision` 给**它自己的 scratch root** 签了名，还断言
+`permission_proof is False`。两个 phase 真正守的边界比那句话窄，而且是更要紧的那条：**密钥属于本次运行
+创建并删除的 scratch root**——所以操作者的批准一条都不会被伪造，操作者的东西一个字节都没被签。真正要
+拒绝的是"在**操作者的** root 里 provision 一把密钥"，那不是这两个 phase 做的事（§48 那类：文档不得继续
+声称代码没有做的事）。
+
+### 148.4 守卫与验红：这一阶段的红是**操作性的**
+
+`cli/tests/` 里**没有**新用例：套件必须自足（网络不进 `pytest`），这一阶段改的是真机验收脚本。所以它的
+"验红"不是断言红了，而是**三个状态各自被观察到**：
+
+| 场景 | 观察到的读数 |
+|---|---|
+| 不传 `--online` | `real artifact install (archive, online)   not run (pass --online)`；其余全绿；`isolation: PASS` |
+| 上游不可达（**真发生了**） | `PROVENANCE_FAILED could not fetch the checksum file …`，evidence 里是传输层原文（`WinError 10060`）；**隔离审计仍然跑完并 PASS** |
+| 上游可达 + 全链 | **尚未观察到 PASS**（见下） |
+
+**第一版 phase 在这一步犯了错，值得记**：`source resolve` 失败之后它继续往下走，用不存在的
+`resolved.json` 去 `plan --source-json`，`FileNotFoundError` **穿过了隔离审计**——于是那一次宿主没被量。
+两处修正：解析失败就**停下并报告**（连 `evidence` 一起打），以及**任何异常都变成一条 check**。脚本自己
+早就写着这条规矩："an acceptance run reports, it does not explode"。
+
+**诚实标注**：`online_install()` 的**成功路径还没有被观察到 PASS**。它调用的每一步都在 §148.1 里单独真
+跑过（同一台机器、同一条上游、同一批动词），但"整个 phase 报 PASS"这件事我**没有**测到——两次重跑都在
+`source resolve` 上撞了网。等链路允许时要补这一次，并且**在补到之前不要把它说成已验**。
+
+### 148.5 为什么这次不能读成"产品坏了"
+
+同一时刻的读数：
+
+| 探法 | 结果 |
+|---|---|
+| `socket.getaddrinfo("github.com")` | 只有 `AF_INET 20.205.243.166`（没有 AAAA） |
+| raw TCP connect 到它 | **超时**（6 秒、12 秒各一次，`TimeoutError`） |
+| PowerShell 对同一个 checksum URL | **200** |
+| `urllib.request.getproxies()` / WinINET `ProxyEnable` | `{}` / `0`（没有代理参与） |
+
+所以是**这台机器到 GitHub 的链路时通时断**（§148.1 那一轮就在通的那个窗口里），不是产品缺陷。产品在
+这种情况下的行为是对的：报 `PROVENANCE_FAILED`，把传输层原文放进 `evidence`，不猜、不重试到假装成功。
+
+### 148.6 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 不动**（这一阶段不加 pytest 用例；套件保持离线自足） |
+| 契约层 | **不动**：没有 schema、没有枚举、没有退出码、没有 reason code |
+| 语料 | **不动** |
+| 真机 | §148.1 那张表：真实上游 + 真实归档 + **8146 个真实文件** + `gc` 真实删除；§148.4 的三种状态 |
+| 没有做 | phase 的 PASS 路径本身（§148.4 已标注）；`--online --token-file` 那种"操作者自己签发"的更严格形态；`rust-toolchain` 的 fetch+verify 块保持不变 |

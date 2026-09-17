@@ -46,6 +46,11 @@ OBJECT = DATA_ROOT / "java"
 #: Opt-in. See the draft §59 block at the end of `main_run` for why the network is not the default.
 ONLINE = "--online" in sys.argv
 
+#: The version asked of `build` (CMake) for the real-archive phase. Unlike `rust-toolchain` this one
+#: is a **version-templated `.zip`**, which is what makes it the case that exercises `portable_archive`
+#: against real upstream bytes rather than a fixture.
+BUILD_VERSION = "3.31.6"
+
 #: The version asked of `rust-toolchain`. Its artifact URL is not version-templated (`rustup-init.exe`
 #: is the rolling installer), so this only labels the resolution; the digest is what identifies it.
 RUST_VERSION = "1.83.0"
@@ -472,14 +477,20 @@ def main_run() -> int:
     # When it is not requested it says so rather than passing quietly, because "not checked" and
     # "checked and fine" must not look alike (draft §50's lesson, applied to a real machine).
     #
-    # It stops **before** stage/commit on purpose. Those live behind the transaction's approval token,
-    # and since ADR-0046 that token comes from an **explicit local signing step** (`airoot.tx.issuer`:
-    # provision this root's key, then issue) rather than from anything this script may do on the
-    # operator's behalf. An acceptance run that provisioned a key and signed for you would erase exactly
-    # the record an approval exists to be, so the boundary is reported rather than faked. (Draft §117 did
-    # run the whole path on this machine once, deliberately: plan -> explicit issuance -> install
-    # FINALIZED, 12 721 664 bytes, digest identical to the published checksum.) Download and verification
-    # are separate units that need no approval, and those are what this step proves.
+    # It stops **before** stage/commit, and this step proves the two halves that need no approval:
+    # resolution and verification. Draft §117 did run the whole path on this machine once by hand
+    # (plan -> explicit issuance -> install FINALIZED, 12 721 664 bytes, digest identical to the
+    # published checksum).
+    #
+    # The install half now has a phase of its own -- `online_install()` below -- and the note that
+    # used to stand here was wrong about why it could not: it said signing is "not anything this
+    # script may do on the operator's behalf", while `closed_loop()` a few hundred lines down signs
+    # for its own scratch root with `issue --provision` and asserts `permission_proof is False`. The
+    # boundary both phases actually keep is narrower and is the one that matters: **the key belongs
+    # to a scratch root this run creates and deletes**, so no approval of the operator's is invented
+    # and nothing of theirs is signed. A run that provisioned a key in the *operator's* root would
+    # erase exactly the record an approval exists to be; that is what is refused, and it is not what
+    # either phase does (§148).
     if not ONLINE:
         print(f"{'online acquisition (draft 59)':<46} not run (pass --online)")
     else:
@@ -743,6 +754,182 @@ def closed_loop() -> int:
     return failures
 
 
+def online_install() -> int:
+    """The archive backend against **real upstream bytes**: download, verify, extract, run, gc (§148).
+
+    The `--online` block inside `main_run` proves resolution and verification, which need no approval.
+    This phase proves the three things a hand-made fixture cannot about a real release archive: that the
+    published checksum verifies the **downloaded** bytes, that `portable_archive` extracts a real
+    8 000-file tree, and that `gc` really deletes it afterwards.
+
+    The token comes from this scratch root's own signer, exactly as `closed_loop()` does it, and the
+    root is deleted with the phase: nothing of the operator's is signed and no approval record of theirs
+    is invented. Skipped without `--online`, and it says so rather than passing quietly.
+    """
+
+    if not ONLINE:
+        print(f"{'real artifact install (archive, online)':<46} not run (pass --online)")
+        return 0
+
+    failures = 0
+
+    def check(label: str, condition: bool) -> None:
+        nonlocal failures
+        print(f"  [{'ok ' if condition else 'FAIL'}] {label}")
+        if not condition:
+            failures += 1
+
+    root = Path(tempfile.mkdtemp(prefix="airoot-online-install-")) / "root"
+    shutil.rmtree(root, ignore_errors=True)
+    init_root(root, root_instance_id="root-online-install", machine_id="host-online-install")
+    Registry.initialize(
+        root, machine_id="host-online-install", root_instance_id="root-online-install"
+    ).close()
+    resolved_path = root.parent / "resolved.json"
+
+    def call(*argv: str) -> tuple[int, dict]:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = main(["--json", "--root", str(root), *argv])
+        text = buffer.getvalue().strip()
+        return code, (json.loads(text) if text.startswith("{") else {"raw": text})
+
+    print("\nreal artifact install (archive backend, real upstream, scratch root)")
+
+    try:
+        code, resolved = call(
+            "source",
+            "resolve",
+            "build",
+            "--version",
+            BUILD_VERSION,
+            "--source-out",
+            str(resolved_path),
+        )
+        show(
+            "source resolve (real upstream)",
+            code,
+            resolved,
+            ("offline", "backend_id", "expected_digest"),
+        )
+        if code != 0 or not resolved_path.is_file():
+            # A transport failure is a real answer, not a silent skip: say what failed and stop here
+            # rather than building a plan from a file that was never written. Measured once for real --
+            # the checksum fetch timed out (`WinError 10060`) and the phase carried on into
+            # `plan --source-json` with no file, which raised `FileNotFoundError` straight through the
+            # isolation audit. An acceptance run reports; it does not explode (§148).
+            print(f"    the resolution failed: {resolved.get('reason_code')} {resolved.get('message')}")
+            for item in resolved.get("evidence", []) or []:
+                print(f"      evidence: {item}")
+            check("the real upstream was reachable and its checksum file was read", False)
+            return failures
+
+        check("resolution is online, not against a local file", resolved.get("offline") is False)
+        check("a .zip template resolves to the archive backend", resolved.get("backend_id") == "portable_archive")
+        check(
+            "the expected digest came from the published checksum file",
+            str(resolved.get("expected_digest", "")).startswith("sha256:"),
+        )
+
+        code, plan = call("plan", "build", "--version", BUILD_VERSION, "--source-json", str(resolved_path))
+        plan_file = str(plan.get("plan_file") or "")
+        show("plan (real artifact)", code, plan, ("plan_id", "plan_hash"))
+        check("a real artifact plan was built", code == 0 and Path(plan_file).is_file())
+        if not plan_file:
+            return failures
+
+        token = root / "state" / "approvals" / "online-token.json"
+        code, issued = call("issue", plan_file, "--out", str(token), "--provision")
+        show("issue --provision (scratch root)", code, issued, ("permission_proof", "reason_code"))
+        check("the scratch root's own signer issued a token", code == 0 and token.is_file())
+        check("and says what it is worth", issued.get("permission_proof") is False)
+
+        call("approve", plan_file, "--token-file", str(token))
+        code, installed = call("install", plan_file, "--token-file", str(token))
+        show("install (real download + extract)", code, installed, ("state", "instance_id", "reason_code"))
+        instance = str(installed.get("instance_id") or "")
+        check(
+            "the real archive installs and FINALIZEs",
+            installed.get("state") == "FINALIZED" and bool(instance),
+        )
+        if not instance:
+            return failures
+
+        code, listed = call("tool", "list")
+        row = next(
+            (item for item in listed.get("instances", []) if item.get("instance_id") == instance), None
+        )
+        check("the instance is registered with its entrypoints", row is not None and bool(row.get("entrypoints")))
+        if row:
+            payload = root / str(row["store_path"])
+            entries = sum(1 for _ in payload.rglob("*"))
+            first = payload / str(row["entrypoints"][0])
+            show(
+                "payload on disk",
+                0,
+                {"entries": entries, "entrypoint": row["entrypoints"][0], "size": first.stat().st_size if first.is_file() else 0},
+                ("entries", "entrypoint", "size"),
+            )
+            check("a real tree was extracted, not a stub", entries > 1000)
+            check("the declared entrypoint is really there", first.is_file())
+            check("and it is a real binary", first.is_file() and first.stat().st_size > 1_000_000)
+
+        code, verified = call("tool", "verify", instance)
+        show("tool verify", code, verified, ("verified", "problems"))
+        check("the extracted tree verifies against its registered digest", verified.get("verified") is True)
+
+        code, ran = call("run", "--capability", "build", "--", "--version")
+        show("run --capability", code, ran, ("exit_status", "persisted", "reason_code"))
+        check("the installed tool really starts", ran.get("exit_status") == 0)
+        check(
+            "and it is the upstream tool that answered",
+            "cmake version" in str(ran.get("stdout", "")).lower(),
+        )
+
+        code, retired = call("tool", "retire", instance)
+        show("tool retire", code, retired, ("payload_removed", "reason_code"))
+        check("retiring clears the binding and keeps the payload", retired.get("payload_removed") is False)
+
+        code, gc_plan = call("tool", "gc", "--plan")
+        plans = gc_plan.get("plans") or []
+        gc_file = str(plans[0].get("plan_file") or "") if plans else ""
+        show("tool gc --plan", code, gc_plan, ("collectable", "reason_code"))
+        check("the real payload is collectable", gc_plan.get("collectable") == 1 and bool(gc_file))
+
+        gc_token = root / "state" / "approvals" / "online-gc-token.json"
+        if gc_file:
+            call("issue", gc_file, "--out", str(gc_token))
+            code, applied = call("tool", "gc", "--apply", "--token-file", str(gc_token))
+            show("tool gc --apply", code, applied, ("payload_removed", "reason_code"))
+            check("gc really deletes the real payload", applied.get("payload_removed") is True)
+            payload_dir = root / "store" / instance
+            check("and it is gone from the store", not payload_dir.exists())
+
+        code, after = call("tool", "list")
+        kept = next(
+            (item for item in after.get("instances", []) if item.get("instance_id") == instance), None
+        )
+        check(
+            "the registry keeps the binding history with collected_at",
+            kept is not None
+            and bool(kept.get("collected_at"))
+            and kept.get("lifecycle_status") == "retired",
+        )
+    except Exception as exc:  # noqa: BLE001 - an acceptance run reports, it does not explode
+        # The same rule the fetch+verify block uses, and this phase needs it for the same reason: the
+        # operator still has to learn whether the host was left alone, and an escaping exception skips
+        # the isolation audit entirely.
+        check(f"the phase could not complete: {type(exc).__name__}: {exc}", False)
+    finally:
+        shutil.rmtree(root.parent, ignore_errors=True)
+
+    print(f"real artifact install: {'PASS' if not failures else f'FAIL ({failures} check(s))'}")
+    return failures
+
+
 # --- the isolation contract -----------------------------------------------------------------------
 #
 # This script is the only part of the project that runs against the real machine, so "it does not touch
@@ -999,7 +1186,14 @@ if __name__ == "__main__":
     # the empty one created at import) behind.
     try:
         before = host_state()
-        failures = main_run() | closed_loop() | isolation_report(before, host_state())
+        failures = (
+            main_run()
+            | closed_loop()
+            # `online_install` is the only phase that reaches an upstream, and it reports itself as
+            # not-run unless `--online` was passed (see its own note).
+            | online_install()
+            | isolation_report(before, host_state())
+        )
     finally:
         if ROOT is not None:
             shutil.rmtree(ROOT.parent, ignore_errors=True)
