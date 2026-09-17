@@ -304,66 +304,6 @@ def _launcher_for(selected: _Candidate | None, query: WhereQuery, root: Path) ->
     return str(path) if path.is_file() else None
 
 
-def _launcher_for(selected: _Candidate | None, query: WhereQuery, root: Path) -> str | None:
-    """The stable entry for the selected payload, **if this build actually wrote one** (ADR-0050).
-
-    Three conditions, each with its reason: only an owned machine-level binding gets a launcher (a
-    reference's stable entry is the user's own environment, and a session/project binding lives in
-    Zone W/P, which never enters the machine PATH); and the path is reported only when the file is
-    there — `where` must not name an entry point that does not exist. `path verify` is the verb that
-    reports its absence as drift.
-    """
-
-    if selected is None or selected.slot != "machine" or selected.management != "managed":
-        return None
-    try:
-        path = launcher_path(Path(root), query.capability_id)
-    except AirootError:
-        # An identifier that cannot be a file name simply has no stable entry; `where` still answers.
-        return None
-    return str(path) if path.is_file() else None
-
-
-def _launcher_for(selected: _Candidate | None, query: WhereQuery, root: Path) -> str | None:
-    """The stable entry for the selected payload, **if this build actually wrote one** (ADR-0050).
-
-    Three conditions, each with its reason: only an owned machine-level binding gets a launcher (a
-    reference's stable entry is the user's own environment, and a session/project binding lives in
-    Zone W/P, which never enters the machine PATH); and the path is reported only when the file is
-    there — `where` must not name an entry point that does not exist. `path verify` is the verb that
-    reports its absence as drift.
-    """
-
-    if selected is None or selected.slot != "machine" or selected.management != "managed":
-        return None
-    try:
-        path = launcher_path(Path(root), query.capability_id)
-    except AirootError:
-        # An identifier that cannot be a file name simply has no stable entry; `where` still answers.
-        return None
-    return str(path) if path.is_file() else None
-
-
-def _launcher_for(selected: _Candidate | None, query: WhereQuery, root: Path) -> str | None:
-    """The stable entry for the selected payload, **if this build actually wrote one** (ADR-0050).
-
-    Three conditions, each with its reason: only an owned machine-level binding gets a launcher (a
-    reference's stable entry is the user's own environment, and a session/project binding lives in
-    Zone W/P, which never enters the machine PATH); and the path is reported only when the file is
-    there — `where` must not name an entry point that does not exist. `path verify` is the verb that
-    reports its absence as drift.
-    """
-
-    if selected is None or selected.slot != "machine" or selected.management != "managed":
-        return None
-    try:
-        path = launcher_path(Path(root), query.capability_id)
-    except AirootError:
-        # An identifier that cannot be a file name simply has no stable entry; `where` still answers.
-        return None
-    return str(path) if path.is_file() else None
-
-
 def _candidate_document(candidate: _Candidate) -> dict[str, Any]:
     return {
         "path": candidate.path or "",

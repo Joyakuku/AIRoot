@@ -97,7 +97,7 @@ found by running the pipe rather than by reasoning about it, and each is also as
 7. **A pipe's name is not exclusive, and the default DACL is not safe.** `FILE_FLAG_FIRST_PIPE_INSTANCE`
    only makes *this* create fail (err 5) when the name is already held — a later process creating a
    plain instance of the same name succeeds, and names are case-insensitive in both the leaf and the
-   `\pipe\` component — so it is squat detection and never exclusivity. And omitting the SDDL does not
+   `\\pipe\\` component — so it is squat detection and never exclusivity. And omitting the SDDL does not
    fall back to something safe: the DACL then comes from the creating token's default, measured at
    **5 ACEs including `Everyone` and `ANONYMOUS LOGON` with read/execute**. Hence the explicit SDDL and
    the fail-closed err 5 above: **the DACL cannot make the name exclusive against a same-user

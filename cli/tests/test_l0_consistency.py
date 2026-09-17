@@ -4924,3 +4924,182 @@ def test_the_tree_carries_no_fingerprint_of_this_host() -> None:
     assert _fingerprint_problems(planted, fingerprints), "a planted fingerprint was not reported"
     assert _fingerprint_problems(files, []) == [], "an empty fingerprint set must report nothing"
 
+# --- Guard group 38: one module defines a name once (draft §146) --------------------------------
+#
+# `caps/runtime.py`, `caps/where.py` and `cli.py` each carried the **same function four times**,
+# byte-identical, all three introduced by one commit (`288e178`, the stable-entry stage). Python
+# resolves a repeated top-level definition by keeping the last one, so nothing misbehaved, nothing was
+# reported, and the suite was green at 1382 tests while nine of those definitions were unreachable
+# code that looked exactly like the code being maintained. That is the real cost: a later fix applied
+# to the first copy changes nothing and looks like a fix, and a reader counting call sites finds one
+# caller and four definitions and has to work out which one is live.
+#
+# Why the check is *narrow* rather than broad. It looks only at **direct body children**. A definition
+# under a module-level `if`/`try`, or a method under a conditional in a class body, is a legitimate
+# pattern whose branches Python itself treats as exclusive — reporting those would make this a
+# spelling test rather than a structural one, so they are exempt and the exemption is asserted below.
+# Definitions nested inside a function body are also left out, for the same reason (their lexical
+# scope includes definitions under `if`/`try` inside the function, so a correct check would have to
+# reproduce that scoping); that shape measured **0** occurrences across all 134 modules and is named
+# here as uncovered rather than silently assumed.
+
+
+def _duplicate_definition_problems(sources: dict[str, str]) -> list[str]:
+    """Names a body defines twice, where the later definition silently wins."""
+
+    def repeated(body: list[ast.stmt]) -> list[str]:
+        counts: dict[str, int] = {}
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                counts[node.name] = counts.get(node.name, 0) + 1
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        counts[target.id] = counts.get(target.id, 0) + 1
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                counts[node.target.id] = counts.get(node.target.id, 0) + 1
+        return sorted(f"{item} x{count}" for item, count in counts.items() if count > 1)
+
+    problems: list[str] = []
+    for name, text in sorted(sources.items()):
+        try:
+            tree = ast.parse(text)
+        except SyntaxError as error:
+            problems.append(f"{name} does not parse: {error}")
+            continue
+
+        for item in repeated(tree.body):
+            problems.append(f"{name}: defined {item} at module level; the last definition wins")
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                for item in repeated(node.body):
+                    problems.append(f"{name}: class {node.name} defines {item} in one body")
+
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+            ):
+                try:
+                    values = [str(item) for item in ast.literal_eval(node.value)]
+                except (ValueError, SyntaxError):
+                    continue
+                seen: set[str] = set()
+                repeats: list[str] = []
+                for item in values:
+                    if item in seen:
+                        repeats.append(item)
+                    seen.add(item)
+                for item in sorted(set(repeats)):
+                    problems.append(f"{name}: __all__ lists {item} twice")
+    return problems
+
+
+def test_no_module_defines_the_same_name_twice() -> None:
+    """A pasted definition is invisible to every behavioural test, so it needs a structural one."""
+
+    modules = {
+        name: data.decode("utf-8")
+        for name, data in _walked_text_files().items()
+        if name.startswith("cli/") and name.endswith(".py")
+    }
+    assert len(modules) > 100, (
+        f"the walk found {len(modules)} modules under cli/; this guard is about nothing"
+    )
+
+    problems = _duplicate_definition_problems(modules)
+    assert problems == [], (
+        "a module may define a top-level name once: the later definition silently wins, so a change "
+        "made to an earlier copy does nothing while looking like a change: " + "; ".join(problems)
+    )
+
+    # Non-vacuity, on synthetic input. A clean tree is the normal case, and a scan that never reports
+    # anything would be indistinguishable from it, so each shape it claims to cover is planted.
+    planted = {
+        "dup_function.py": "def f():\n    pass\n\ndef f():\n    pass\n",
+        "dup_class.py": "class C:\n    pass\n\nclass C:\n    pass\n",
+        "dup_method.py": "class C:\n    def m(self):\n        pass\n    def m(self):\n        pass\n",
+        "dup_assignment.py": "X = 1\nX = 2\n",
+        "dup_all.py": '__all__ = ["a", "a"]\n',
+        "dup_syntax.py": "def f(:\n",
+    }
+    for name, source in planted.items():
+        assert _duplicate_definition_problems({name: source}), f"{name} was not reported"
+
+    # And the conditional form must stay unreported, in both places it can legally appear. A guard
+    # that flagged these would be enforcing a spelling, and the branches are the reason the narrow
+    # reading above is the correct one.
+    exempt = {
+        "conditional_module.py": (
+            "import sys\n\nif sys.platform == 'win32':\n    def f():\n        pass\n"
+            "else:\n    def f():\n        pass\n"
+        ),
+        "conditional_class.py": (
+            "class C:\n    if True:\n        def m(self):\n            pass\n"
+            "    else:\n        def m(self):\n            pass\n"
+        ),
+        "nested.py": "def outer():\n    def inner():\n        pass\n    def inner():\n        pass\n",
+    }
+    for name, source in exempt.items():
+        assert _duplicate_definition_problems({name: source}) == [], (
+            f"{name} is a legitimate shape and must not be reported"
+        )
+# --- Guard group 39: every module compiles without a warning (draft §146) -------------------------
+#
+# Found by the same sweep as group 38, from the scan's own side effect: `broker/pipe.py` carries
+# `` `\p` `` inside a non-raw module docstring, so **compiling it emits a warning**. Nothing caught it
+# because an import-time warning is not a failure — the suite imports that module on every run and
+# prints the warning into its summary, where it reads as noise rather than as a defect. On Python 3.12
+# an invalid escape is a `SyntaxWarning`, and the trajectory is a `SyntaxError`, at which point the
+# module stops importing and every test in this suite fails at once.
+#
+# So the question asked here is "does this compile cleanly", over the same module population as the
+# guard above, and the fix for the one real case was a doubled backslash in the source — the rendered
+# docstring text is unchanged, which is the point: this is about what Python reads, not what a reader
+# sees. Raw strings are unaffected and are asserted below, because a guard that flagged `r"\p"` would
+# be failing a correct file.
+
+
+def _parse_warning_problems(sources: dict[str, str]) -> list[str]:
+    """What Python says while compiling each module, other than silence."""
+
+    import warnings
+
+    problems: list[str] = []
+    for name, text in sorted(sources.items()):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                ast.parse(text)
+            except SyntaxError as error:
+                problems.append(f"{name} does not parse: {error}")
+        for item in caught:
+            problems.append(f"{name}: {item.category.__name__}: {item.message}")
+    return problems
+
+
+def test_every_module_compiles_without_a_warning() -> None:
+    """A module that compiles with a warning is a module that will stop compiling."""
+
+    modules = {
+        name: data.decode("utf-8")
+        for name, data in _walked_text_files().items()
+        if name.startswith("cli/") and name.endswith(".py")
+    }
+    assert len(modules) > 100, (
+        f"the walk found {len(modules)} modules under cli/; this guard is about nothing"
+    )
+
+    problems = _parse_warning_problems(modules)
+    assert problems == [], (
+        "every module must compile silently; a warning here is a future SyntaxError: "
+        + "; ".join(problems)
+    )
+
+    # Non-vacuity, on synthetic input: the escape form that exists in the tree, plus the syntax error
+    # the `try` above handles. And the raw spelling must stay silent — it is the fix, not a defect.
+    planted = {"invalid_escape.py": 'X = "\\p"\n', "broken.py": "def f(:\n"}
+    for name, source in planted.items():
+        assert _parse_warning_problems({name: source}), f"{name} was not reported"
+    assert _parse_warning_problems({"raw.py": 'X = r"\\p"\n'}) == [], (
+        "a raw string is the correct spelling and must not be reported"
+    )
