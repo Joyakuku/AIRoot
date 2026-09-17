@@ -23,7 +23,7 @@ from .clock import SYSTEM_CLOCK
 from .exits import AirootError, EXIT_DEGRADED, EXIT_RECOVERY, EXIT_SUCCESS, exit_code_for
 from .ext.fake import FakeExtension
 from .ext.hosts import hosted_here, unhostable_evidence
-from .ext.manifest import load_manifests
+from .ext.manifest import declared_operations, load_manifests
 from .posture import SECURITY_MODE, enforcement_for
 from .registry import Registry
 from .root import open_root, resolve_root
@@ -36,6 +36,16 @@ from .tx.simulate import SimulationRunner
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+
+#: How many entries of a long evidence list are *shown*: the human-readable half prints this many
+#: evidence lines, and the `exec` PATH-search refusal lists this many searched directories before it
+#: counts the rest. One number rather than two, because both answer the same question — "what is the
+#: head of this list, the part a caller can act on?" — and two copies of it would drift apart.
+EVIDENCE_HEAD_LIMIT = 8
+
+#: Why the `exec` PATH search has the order it has, appended to that refusal however it was cut:
+#: the reference's own directories come first, so the head of the list is also the actionable part.
+CHILD_PATH_ORDER = "the child's PATH is this reference's entries first, then this process's"
 
 
 def _emit(document: dict[str, Any], *, as_json: bool, lines: list[str] | None = None) -> None:
@@ -1412,6 +1422,73 @@ def cmd_env_forget(args: argparse.Namespace, context: Context) -> tuple[dict[str
     return document, EXIT_SUCCESS
 
 
+def _resolve_child_command(command: list[str], child_path: str) -> list[str]:
+    """Resolve a bare program name against the PATH **this child will see** (draft §167).
+
+    ``path_prepend`` writes the capability's directories into the child's environment, but Windows
+    resolves a bare name in ``CreateProcess`` against the **caller's** PATH and not the child's — so
+    ``exec <ref> -- cmake`` failed for a ``cmake`` the reference itself exposes, while the identical
+    name behind ``cmd /c`` ran (both measured, §167 defect ②). Resolving here, against the prepended
+    PATH, is what makes the documented ``exec <id> -- <command>`` spelling work for the capability's
+    own tools: the absolute path is what gets started.
+
+    A name carrying a directory part is left exactly as given. It is already a path, and
+    ``subprocess`` either finds it or raises the ``OSError`` that ``cmd_exec`` reports.
+
+    A bare name that resolves nowhere is refused **here** rather than handed to the OS. The event is
+    the same one — nothing to start — but the evidence is not: the caller gets the directories that
+    were searched instead of ``WinError 2``, because "the tool is not on the PATH this capability
+    exposes" and "the operating system could not find a file" have different next moves.
+    """
+
+    import os
+    import shutil
+
+    name = command[0]
+    # `shutil.which` draws the same line (`os.path.dirname(cmd)`), so the rule is taken from it
+    # rather than restated as a hand-kept list of separators that could drift.
+    if os.path.dirname(name):
+        return list(command)
+
+    # `shutil.which` searches the current directory first on Windows, which is the order
+    # `CreateProcess` itself uses — so `searched` below is the list that really was searched
+    # rather than a description of it.
+    searched = [os.curdir]
+    seen = {os.path.normcase(os.curdir)}
+    for item in child_path.split(os.pathsep):
+        key = os.path.normcase(item)
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        searched.append(item)
+
+    found = shutil.which(name, path=child_path)
+    if found is None:
+        # The directory list is **bounded**, because the caller's next move needs the head of it and
+        # nothing else: a mistyped name used to print 68 directories, and the actionable half — the
+        # directories this reference itself exposes — is at the head of the search order by
+        # construction. `searched` is still built in full, so the count, the order and "how many were
+        # left out" stay honest; only the printing is cut.
+        shown = searched[:EVIDENCE_HEAD_LIMIT]
+        remaining = len(searched) - len(shown)
+        raise AirootError(
+            "CHILD_PROCESS_FAILED",
+            f"the child could not be started: {name} is not on the PATH this reference exposes",
+            evidence=[
+                f"searched {len(searched)} director{'y' if len(searched) == 1 else 'ies'}, in this order:",
+                *[f"  {item}" for item in shown],
+                (
+                    f"and {remaining} more from this process's PATH ({CHILD_PATH_ORDER})"
+                    if remaining
+                    else CHILD_PATH_ORDER
+                ),
+            ],
+        )
+    if not os.path.isabs(found):
+        found = os.path.abspath(found)
+    return [found, *command[1:]]
+
+
 def cmd_exec(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """Run one child process with a reference's environment injected into it."""
 
@@ -1449,28 +1526,51 @@ def cmd_exec(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
 
     child_environment = dict(os.environ)
     child_environment.update(variables)
+    path_variable = next((name for name in ("Path", "PATH") if name in child_environment), "Path")
     if entries:
-        key = next((name for name in ("Path", "PATH") if name in child_environment), "Path")
-        child_environment[key] = ";".join(entries) + ";" + child_environment.get(key, "")
+        child_environment[path_variable] = (
+            ";".join(entries) + ";" + child_environment.get(path_variable, "")
+        )
+
+    # The PATH the child will actually see — this reference's entries first. It is not only an
+    # environment value: it is what a bare program name has to be resolved against (§167 defect ②).
+    child_path = child_environment.get(path_variable, "")
+    command = _resolve_child_command(list(args.child_command), child_path)
 
     # `--json` is machine mode: the child's output must not be interleaved with the
     # document, or the caller cannot parse its own tool's reply. Without `--json` the
     # child inherits this process's streams, which is what an interactive caller wants.
     capture = bool(args.json)
-    completed = subprocess.run(
-        args.child_command,
-        env=child_environment,
-        check=False,
-        capture_output=capture,
-        text=capture,
-        encoding="utf-8" if capture else None,
-        errors="replace" if capture else None,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            env=child_environment,
+            check=False,
+            capture_output=capture,
+            text=capture,
+            encoding="utf-8" if capture else None,
+            errors="replace" if capture else None,
+        )
+    except OSError as error:
+        # The same verdict `run` gives a payload this machine refused to start, for the same reason
+        # (draft §62): a bare `OSError` escaping as a traceback tells the caller nothing. `exec`
+        # reports a child in a *document*, so a child that never started has to be one too.
+        raise AirootError(
+            "CHILD_PROCESS_FAILED",
+            f"the child could not be started: {command[0]}",
+            evidence=[
+                f"{type(error).__name__}: {error}",
+                f"errno={getattr(error, 'errno', None)} winerror={getattr(error, 'winerror', None)}",
+                f"the file exists: {Path(command[0]).is_file()}",
+                f"the command handed to the operating system: {command[0]}",
+            ],
+        ) from error
     document: dict[str, Any] = {
         "schema_version": 1,
         "external_id": target.external_id,
         "scope": "session",
         "command": list(args.child_command),
+        "resolved_command": command,
         "exit_status": completed.returncode,
         "variables": sorted(variables),
         "path_prepend": entries,
@@ -2310,7 +2410,31 @@ def cmd_extension_status(args: argparse.Namespace, context: Context) -> tuple[di
             evidence=unhostable_evidence(manifest),
         )
     extension = FakeExtension(manifest, clock=context.clock)
-    document = extension.run(args.operation or "status")
+    operation = args.operation or "status"
+    # `--operation` selects *which* declared operation to run; this CLI has no flag that carries an
+    # operation's own input. Asking the extension what that operation needs — rather than letting the
+    # handler raise a `TypeError` out of the process — is what turns "this build cannot drive it from
+    # here" into an answer (draft §167 defect ③). The code is `NOT_IMPLEMENTED`(1): the manifest
+    # really does declare `invoke` (so not `EXTENSION_OPERATION_UNKNOWN`(9)) and `status`/`probe`
+    # really do run (so not `EXTENSION_UNAVAILABLE`(9) either). It is the same family as a
+    # declared-absent verb (ADR-0027): this build says it has the operation and has no surface that
+    # can supply what the operation requires.
+    missing_inputs = extension.required_inputs(operation)
+    if missing_inputs:
+        raise AirootError(
+            "NOT_IMPLEMENTED",
+            f"this build cannot drive {extension.extension_id}.{operation}: it needs "
+            f"{', '.join(missing_inputs)}, and no flag on `extension status` supplies it",
+            evidence=[
+                f"{extension.extension_id} declares: {sorted(declared_operations(manifest))}",
+                f"required input(s) with no flag to carry them: {', '.join(missing_inputs)}",
+                "the surface here has one option, --operation, and it names the operation rather "
+                "than carrying its payload",
+            ],
+            details={"operation": operation, "extension_id": extension.extension_id,
+                     "missing_inputs": ", ".join(missing_inputs)},
+        )
+    document = extension.run(operation)
     _emit(document, as_json=args.json, lines=[f"{document['extension_id']} {document['operation']}: {document['status']}"])
     return document, EXIT_SUCCESS
 
@@ -4144,5 +4268,5 @@ def _report_error(error: AirootError, *, as_json: bool) -> None:
         print(json.dumps(document, indent=2, sort_keys=True))
     else:
         print(f"error: {error.reason_code}: {error.message}", file=sys.stderr)
-        for item in document["evidence"][:8]:
+        for item in document["evidence"][:EVIDENCE_HEAD_LIMIT]:
             print(f"  - {item}", file=sys.stderr)

@@ -14242,3 +14242,63 @@ tool status <被取代的 9.9.9> → exit 2 / reason_code=DEGRADED
 | 文档 | `references/field-values.md` 的 `$defs.lifecycle` 那一格补上"读出来的值由代码派生、记录值在 `recorded_lifecycle_status`"；`AGENTS.md` 图谱里 `caps/toolstate.py` 的描述补一句 |
 | 既有期望被取代 | **0 条**（实现方逐条审计过：既有断言要么断言的是持有绑定的实例、要么断言的是注册表行/投影，都不受影响） |
 | 没有做 | 回写被取代那一行（要动枚举 + 迁移）；给这三个读侧报告**新增 golden fixture**——那是"44 个 fixture"这个计数的一个决定，我没有擅自做，**记在这里** |
+
+## 167. 第三轮全表面测试：三处"崩溃且没有信封"
+
+这一节来自**又一次全表面测试**（三个只读执行体各走一条链：能力链含真实上游下载 / 管家域与暴露面 /
+搜索与扩展与三方对账），合计 36 条发现，按主题排成 §167–§171。**§167 只做最重的一类**：一个调用会
+**崩掉、且拿不到任何信封**——那不是"答错了"，那是"根本没有答案"。
+
+### 167.1 三处缺陷（两处由两个执行体各自独立量到，证据更强）
+
+| # | 形状 | 修法前 | 修法后 |
+|---|---|---|---|
+| **①** | `exec` 起的子进程不存在：`subprocess.run` 的 `OSError` 逃到顶层 | `exec <ref> -- no-such-tool-xyz --version --json` → **exit 1、stdout 空**、stderr 是 `FileNotFoundError: [WinError 2]` 的完整 traceback | exit **2**、可解析信封、`CHILD_PROCESS_FAILED`、证据带 `winerror`/`errno`/`the file exists`/实际交给 OS 的 argv |
+| **②** | `path_prepend` 对**裸命令名**不起作用：Windows 的 `CreateProcess` 用**调用方**的 PATH 解析裸名，而 prepend 只进了子进程环境 | `exec <ref> -- cmake --version` → ① 的 traceback；同一个名字写成 `cmd /c cmake` 却能跑 | 新增 `_resolve_child_command`：裸名字按**子进程将会看到的 PATH** 解析（`shutil.which(name, path=…)`），交给 OS 的是绝对路径；解析不到就**就地**报结构化失败，证据是**搜过的目录**而不是 WinError。信封新增 `resolved_command`（实际交给 OS 的 argv），`command` 仍是调用方写的原样 |
+| **③** | `extension status <id> --operation invoke`：CLI 调 `run(op)` 不传 kwargs，而 `invoke` 必须收 `echo` | exit 1、stdout 空、`TypeError: FakeExtension.invoke() missing 1 required keyword-only argument: 'echo'` | exit **1**、`NOT_IMPLEMENTED`、消息点名缺的那个输入（`echo`）、`details.missing_inputs`；`status`/`probe` 仍 exit 0，未知 operation 仍是 argparse 的 `INVALID_INPUT`(8)（**取值没删**，所以它从来不是"拼写错误"答案） |
+
+②的修法附带一次**扩宽**（如实记录）：继承 `shutil.which` 的 Windows 语义意味着"当前目录优先 + 认
+`PATHEXT`"，于是**以前只会得到 WinError 2 的 `.cmd`/`.bat` 裸名现在能跑起来**。这是 ADR-0021 的默认方向
+（放宽），但它超出了字面要求，所以写在这里而不是埋在 diff 里。
+
+### 167.2 一条结构性守卫：**失败信封**的表
+
+新模块 `cli/tests/test_l1_failure_envelopes.py`：一张"已知会失败的调用"表（8 行），逐行断言
+`main([...])` **返回而不是抛**、退出码等于该行自己的、**stdout 可解析**、**必有 `reason_code`**、
+且 `reason_code != SELF_VALIDATION_FAILED`（那是"实现缺陷"的码，调用方能凭空构造出来的失败绝不是它）；
+表自己还拒绝 `--help` 形状的行（argparse 会用 exit 0 回答，那会让断言空对空）。
+
+**为什么这是一种新的守卫**：1450 项套件里每一条都在问"这个动词做得对不对"，**没有一条**在问"一次
+*失败*的调用打印了什么"——所以这两个崩溃活过了整套测试。表把"加一行就覆盖一个新的失败面"变成一次
+一行成本的事。
+
+### 167.3 我自己的验收
+
+三处**独立**字节级变异（备份 → 改一行 → 跑守卫 → 按字节写回，逐一核对文件字节与改动前相同）：
+
+```text
+A  `except OSError as error:` → `except ValueError`        → 表守卫 + ① 的守卫 变红
+B  `shutil.which(name, path=child_path)` → `which(name)`   → ② 的守卫 变红（裸名解析不到）
+C  `shown = searched[:EVIDENCE_HEAD_LIMIT]` → `= searched` → 证据有界的两条守卫 变红
+```
+
+真机验收脚本我自己跑了：`closed loop: PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`
+（含 `exec … -- cmd /c echo` 与 `exec --env <id> …` 两条检查点）。全套 1457 项里唯一红的是计数守卫。
+
+### 167.4 一处"收成有界"的裁决（我把实现中途的选择改掉了）
+
+第一次实现让"搜过的目录"在证据里**全量**列出（本机 68 行）。我改成有界：**1 行计数 + 前 8 个目录 +
+一行余数**（本 reference 自己暴露的目录永远排在第 2 行，那才是可操作的那半），并让**人类可读输出的
+上限与这条证据的上限指向同一个常量**。守卫也随之改：断言"**本 reference 的目录在证据里** + 行数有界
++ 余数计数自洽"，**删掉**"68 个必须一个不少"——后者正是要被收掉的东西。理由：一个 agent 每次打错命令名
+都要吃下 70 行 JSON，而真正有用的信息在头几行。
+
+### 167.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1450 → 1457**（+7：新模块 `test_l1_failure_envelopes.py`，含表 + 表覆盖度 + 每缺陷一条 + 合成 PATH 那一条） |
+| 代码 | `cli.py`（+138/−14）、`ext/fake.py`（+38/−2：`handlers()` 与从签名推导的 `required_inputs()`——dispatcher 与"能驱动什么"读同一张表） |
+| 契约层 / 语料 | **不动**（`exec` 与 `extension` 的报告面都没有 schema 钉；`resolved_command` 是**新增**字段，没有断言键集的测试） |
+| 既有期望被取代 | **0 条** |
+| 没有做 | 另外 30+ 条发现按主题排进 §168–§171（诊断与搜索说错话 / 根与身份的守卫 / 口径与匹配 / 面与文档） |

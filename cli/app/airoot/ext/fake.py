@@ -7,6 +7,7 @@ Undeclared operations are refused, and nothing here writes registry or store.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from ..clock import Clock, SYSTEM_CLOCK
@@ -91,6 +92,42 @@ class FakeExtension:
 
     # -------------------------------------------------------------- dispatch #
 
+    def handlers(self) -> dict[str, Any]:
+        """``operation`` -> the callable implementing it, in one place.
+
+        The dispatcher and the "what can this build actually drive" question below have to read the
+        same mapping; a second copy of it is how the two would drift apart, and the drift would be
+        invisible until someone called the operation that only one of them knew about.
+        """
+
+        return {"probe": self.probe, "status": self.self_test, "invoke": self.invoke}
+
+    def required_inputs(self, operation: str) -> list[str]:
+        """The inputs ``operation`` needs that a dispatcher holding no kwargs cannot supply.
+
+        Measured from the handler's own signature rather than from a hand-kept list of which
+        operations take arguments, so an operation added later with a required keyword shows up here
+        without anyone remembering to update a table. A caller reads this to answer honestly — "this
+        build's surface names the operation and carries nothing for it" — instead of calling the
+        handler and dying on a `TypeError` out of the dispatcher (draft §167 defect ③).
+
+        An operation with no handler in :meth:`handlers` needs nothing: an empty list means "nothing
+        to report here", and ``run`` still refuses whatever the manifest does not declare at all.
+        """
+
+        handler = self.handlers().get(operation)
+        if handler is None:
+            return []
+        # `inspect.signature` of a *bound* method already drops `self`, so what remains is exactly
+        # the caller's own arguments.
+        return [
+            name
+            for name, parameter in inspect.signature(handler).parameters.items()
+            if parameter.default is inspect.Parameter.empty
+            and parameter.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        ]
+
     def run(self, operation: str, **kwargs: Any) -> dict[str, Any]:
         """Dispatch, refusing anything the manifest does not declare (exit code 9)."""
 
@@ -100,8 +137,7 @@ class FakeExtension:
                 f"{self.extension_id} does not declare operation {operation}",
                 evidence=sorted(declared_operations(self.manifest)),
             )
-        handlers = {"probe": self.probe, "status": self.self_test, "invoke": self.invoke}
-        handler = handlers.get(operation)
+        handler = self.handlers().get(operation)
         if handler is None:
             return failure_envelope(
                 self.extension_id,

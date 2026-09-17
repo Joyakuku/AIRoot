@@ -3557,7 +3557,66 @@ declared/historical 权威，投影是它的镜像。
 **状态：已裁决并已落地（草案 §166）**：守卫是 `cli/tests/test_f12_projected_lifecycle.py`（15 条，含
 "四个报告面都不许把原列当报告"的源码守卫、gc 的两条、"推导只扫一次绑定表"、以及"观察不写任何东西"）；
 实现方逐条做了 9 个字节级变异，第四处（gc 候选）的守卫由我补并自己验红；`real_machine_acceptance.py`
-在改动后重跑：`closed loop: PASS` / `isolation: PASS`。：A 的守卫是
+在改动后重跑：`closed loop: PASS` / `isolation: PASS`。
+
+## ADR-0066 — **一次失败的调用必须**回答**：`exec` 按子进程的 PATH 解析裸名，`--operation invoke` 说清它缺什么**
+
+### 背景
+
+第三轮全表面测试（三个只读执行体，36 条发现）里最重的一类不是"答错了"，而是**根本没有答案**：
+两个动词在一条用户能凭空构造出来的输入上抛 Python 异常，stdout 一个字节都没有、退出码是 1
+（§167 的三条读数）：
+
+- `exec <ref> -- no-such-tool-xyz --version --json` → 裸 `FileNotFoundError: [WinError 2]` traceback；
+- 同一个函数的**另一条**入路：`path_prepend` 把能力的目录写进了子进程环境，而 Windows 的
+  `CreateProcess` 解析**裸程序名**用的是**调用方**的 PATH——于是 `SKILL.md:62` 教的
+  `airoot exec <id> -- <cmd>` 对"这个能力自己暴露的工具"必然失败，而同一个名字写成 `cmd /c <name>` 却能跑；
+- `extension status <id> --operation invoke` → `TypeError: invoke() missing 1 required keyword-only
+  argument: 'echo'`（`cli.py` 调 `run(op)` 不传 kwargs，而 CLI 里没有任何 flag 能提供 `echo`）。
+
+**它们为什么活过了 1450 项测试**：那 1450 条每一条都在问"这个动词做得对不对"，**没有一条**在问
+"一次*失败*的调用打印了什么"。这不是漏测一个分支，而是少了一种**提问方式**。
+
+### 决定
+
+**A —— 失败必须是一份文档，`exec` 的两条入路都是。** `subprocess.run` 的 `OSError` 被捕获并报
+`CHILD_PROCESS_FAILED`(2)，证据是 OS 自己的话（`winerror`/`errno`/`the file exists`/实际交给 OS 的
+argv），照 `cmd_run` 对"OS 拒绝启动一个 payload"的既有做法。**裸程序名按子进程将会看到的 PATH 解析**
+（`shutil.which(name, path=child_path)`，交绝对路径给 OS），解析不到就**就地**拒绝并给出**搜过的目录**
+——"这个工具不在能力暴露的 PATH 上"与"操作系统找不到文件"的下一步不是同一件事。
+**档位选 `CHILD_PROCESS_FAILED`(2) 而不是 `NOT_FOUND`(1)**：退出码描述的是 **AIROOT 这次操作**，
+AIROOT 该做的做了（它把子进程的 PATH 拼对了），是环境没有提供那个工具；区别放在 `message`/证据里。
+**这次修法附带一次扩宽**（如实记录）：继承 `CreateProcess` 的顺序（当前目录优先）与 `PATHEXT` 的结果是
+**以前只会得到 WinError 2 的 `.cmd`/`.bat` 裸名现在能跑起来**——ADR-0021 的默认方向是放宽，保留它。
+
+**B —— `--operation invoke` 报 `NOT_IMPLEMENTED`(1)，并点名缺的那个输入。** 不用
+`EXTENSION_OPERATION_UNKNOWN`（manifest 确实声明了 `invoke`），也不用 `EXTENSION_UNAVAILABLE`
+（`status`/`probe` 确实能跑）：这是 ADR-0027 同一族——**这个 build 说它有这个操作，而没有能供给它所需
+输入的界面**。因此 `--operation` 的三个取值**一个都不删**（删掉会把答案变成 argparse 的"拼写错误"，
+那正是 ADR-0027 反对的），未知取值仍走 `INVALID_INPUT`(8)。
+
+**C —— 加一条新的守卫形状：失败信封的表。** `cli/tests/test_l1_failure_envelopes.py` 用一张
+"已知会失败的调用"表断言：`main()` 返回而不是抛、退出码是该行自己的、stdout **可解析**、必有
+`reason_code`、且它不是 `SELF_VALIDATION_FAILED`（"实现缺陷"的码，调用方能构造的失败永远不该是它）。
+**加一行就覆盖一个新的失败面**——这一类缺陷的下一个不会再靠人想起来。
+
+**D —— 证据要有界。** 实现中途那条"搜过的目录"是全量打印（本机 68 行）；改成 **1 行计数 + 前 8 个 +
+1 行余数**（能力自己的目录永远排在最前面，那才是可操作的那半），人类可读输出的上限与它**指向同一个
+常量**。守卫相应改成断言"**能力自己的目录在证据里** + 行数有界 + 余数自洽"，而不是"一个目录都不许少"。
+
+### 代价
+
+- **一处对外字段新增**：`exec` 的信封多了 `resolved_command`（实际交给 OS 的 argv），`command` 仍是调用方
+  写的原样。没有 schema 钉 `exec` 的报告面，也没有测试断言它的键集，所以是纯增量。
+- **一次行为扩宽**：`.cmd`/`.bat` 裸名与"当前目录优先"（上面 A 的末段）。它是这条修法的后果，不是顺手改的。
+- **`ext/fake.py` 的小重构**：`handlers()` 让 dispatcher 与"能驱动什么"读同一张表，
+  `required_inputs()` 从处理器签名推导（`inspect.signature` 对绑定方法已经去掉 `self`），于是将来多一个
+  必填 kwarg 的处理器会**自动**变成结构化拒绝，不需要有人记得改表。
+- **没有做的**：其余 30+ 条发现按主题排进 §168–§171；这一阶段**不动**任何别的动词的文案或行为。
+
+**状态：已裁决并已落地（草案 §167）**：三处独立字节级变异（`except OSError`、`shutil.which(path=…)`、
+证据上限）各自命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` /
+`isolation: PASS`；全套 1457 项里唯一红的是计数守卫（文档同步后转绿）。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 
