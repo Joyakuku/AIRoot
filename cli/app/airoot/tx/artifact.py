@@ -16,6 +16,8 @@ Two digest meanings are kept separate on purpose:
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -596,6 +598,81 @@ def source_kind_for(locator: str) -> str:
     return "local_file"
 
 
+#: The published id shape (``common.schema.json#/$defs/id``), and the two rules a *fragment* of a
+#: derived id has to satisfy. Only the fragment that **starts** the whole id has to begin with
+#: `[a-z0-9]`; a later one follows a `/`, so `.cmake-3.31.6` is a perfectly legal middle piece.
+#: Blaming a fragment that is not the culprit would be its own small lie, so the two rules are
+#: separate here rather than one pattern applied to all three inputs.
+_ID_SHAPE = r"^[a-z0-9][a-z0-9._/-]{0,127}$"
+_ID_PATTERN = re.compile(_ID_SHAPE)
+_FRAGMENT_TEXT = re.compile(r"^[a-z0-9._/-]+$")
+_FRAGMENT_START = re.compile(r"^[a-z0-9]")
+
+
+def derive_artifact_ids(
+    *, capability_id: str, locator: str, version: str, plan_id: str | None = None
+) -> tuple[str, str]:
+    """The ids a real artifact plan carries, **checked where they are derived** (draft §171).
+
+    An artifact's file name is not an id. The release archives this build's catalog admits happen to
+    be id-shaped (``cmake-3.31.6-windows-x86_64``), which is why the derivation looked harmless — but
+    a file named ``cmake-3.30.5-MISSING.zip`` yields an id with upper-case letters, and the plan then
+    failed the **published shape of its own field**. The core reported that as
+    ``SELF_VALIDATION_FAILED``, whose meaning is "this build produced a document it cannot read" — an
+    implementation defect. It was not one: the caller's resolution is a legal document, and the
+    illegal string was invented *here*, out of inputs a caller is free to choose (the artifact's file
+    name and the version). So the refusal lives here instead, is ``INVALID_INPUT``(8) — the code for
+    "your input cannot be used" — and names the input that could not become an id.
+
+    ``SELF_VALIDATION_FAILED`` keeps its single meaning: a document *this build* produced is invalid.
+    Nothing a caller can construct may reach it through this path any more, which is what the
+    parametrized guard asserts.
+    """
+
+    stem = Path(locator).stem
+    instance_id = f"{capability_id}/{stem}/{version}/win-x64"
+    derived_plan_id = plan_id or f"plan/{capability_id}/{version}/{uuid.uuid4().hex[:12]}"
+    inputs = (
+        ("the capability id", capability_id),
+        ("the artifact file name", stem),
+        ("the version", version),
+    )
+    names = [("target.instance_id", instance_id)]
+    if plan_id is None:
+        # An explicit `plan_id` is the caller's own string, not something derived from these inputs.
+        names.append(("plan_id", derived_plan_id))
+
+    problems: list[str] = []
+    for name, value in names:
+        if _ID_PATTERN.match(value):
+            continue
+        blamed = [
+            f"{label} {text!r}"
+            for index, (label, text) in enumerate(inputs)
+            if not _FRAGMENT_TEXT.match(text) or (index == 0 and not _FRAGMENT_START.match(text))
+        ]
+        if blamed:
+            problems.append(f"{name}: {' and '.join(blamed)} cannot appear in an id")
+        else:
+            problems.append(
+                f"{name}: the derived id is {len(value)} characters long, and the shape allows 128"
+            )
+    if problems:
+        raise AirootError(
+            "INVALID_INPUT",
+            "this artifact cannot be planned: it does not make a valid instance id",
+            evidence=[
+                *problems,
+                f"derived instance id: {instance_id}",
+                f"expected shape: {_ID_SHAPE} (common.schema.json#/$defs/id)",
+                "the id is derived from the artifact's file name, the version and the capability id, "
+                "so one of them has to change: resolve a source whose artifact name is id-shaped "
+                "(lower-case, no spaces) or plan a version that is",
+            ],
+        )
+    return instance_id, derived_plan_id
+
+
 def create_artifact_plan(
     registry: Any,
     backend: Any,
@@ -614,7 +691,6 @@ def create_artifact_plan(
 ) -> dict[str, Any]:
     """A canonical plan for a real artifact, with the backend recorded in ``metadata``."""
 
-    import uuid
     from datetime import timedelta
 
     from ..clock import isoformat, parse_timestamp
@@ -633,10 +709,15 @@ def create_artifact_plan(
             evidence=[f"source_digest={source_digest!r}", "v1 does no signature checks, so the digest is the proof"],
         )
     created_at = clock.timestamp()
-    instance_id = f"{capability_id}/{Path(locator).stem}/{version}/win-x64"
+    # The ids are derived from the artifact, so they are refused *here* when an input cannot make one
+    # (draft §171): a plan that fails the shape of its own `target.instance_id` is the caller's
+    # document being blamed for a name this function invented.
+    instance_id, plan_id_derived = derive_artifact_ids(
+        capability_id=capability_id, locator=locator, version=version, plan_id=plan_id
+    )
     plan: dict[str, Any] = {
         "schema_version": 1,
-        "plan_id": plan_id or f"plan/{capability_id}/{version}/{uuid.uuid4().hex[:12]}",
+        "plan_id": plan_id_derived,
         "plan_hash": "sha256:" + "0" * 64,
         "operation": "install_tool" if kind == "managed_tool" else "install_runtime",
         "root_instance_id": registry.root_instance_id,
@@ -719,4 +800,4 @@ def store_relative(root: Path, path: Path) -> str:
     return relative_to_root(path, root)
 
 
-__all__ = ["ArtifactRunner", "create_artifact_plan", "source_kind_for", "store_relative"]
+__all__ = ["ArtifactRunner", "create_artifact_plan", "derive_artifact_ids", "source_kind_for", "store_relative"]

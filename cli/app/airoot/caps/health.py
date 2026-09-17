@@ -77,6 +77,22 @@ class PayloadObservation:
         }
 
 
+def _entrypoint_findings(directory: Path, names: list[str]) -> tuple[list[str], list[str]]:
+    """Which of the declared entrypoints are there, and which are not.
+
+    The one implementation of that question: the store observer and the reference observer below
+    both ask it, so "the recorded entrypoint is missing" cannot mean two things in two readers
+    (the rule ``caps/layout.py`` states for the payload-marker scan, draft §71).
+    """
+
+    present: list[str] = []
+    missing: list[str] = []
+    for name in names:
+        target = directory / Path(name)
+        (present if target.is_file() else missing).append(name)
+    return present, missing
+
+
 def observe_payload(*, root: Path, store_path: str, entrypoints: list[Any]) -> PayloadObservation:
     """Look at the payload and say what is there. A missing payload is a finding, never a raise.
 
@@ -89,8 +105,6 @@ def observe_payload(*, root: Path, store_path: str, entrypoints: list[Any]) -> P
     names = [str(item) for item in entrypoints]
     in_store = is_store_path(store_path)
     problems: list[dict[str, str]] = []
-    present: list[str] = []
-    missing: list[str] = []
 
     try:
         store_dir = from_root_relative(store_path, Path(root))
@@ -110,14 +124,14 @@ def observe_payload(*, root: Path, store_path: str, entrypoints: list[Any]) -> P
             }
         )
         observed = DRIFTED
+        present, missing = [], []
     elif not payload_present:
         if not problems:
             problems.append({"code": "PAYLOAD_MISSING", "detail": f"{store_path} does not exist"})
         observed = BROKEN
+        present, missing = [], []
     else:
-        for name in names:
-            target = store_dir / Path(name)
-            (present if target.is_file() else missing).append(name)
+        present, missing = _entrypoint_findings(store_dir, names)
         if missing:
             problems.append(
                 {
@@ -141,4 +155,48 @@ def observe_payload(*, root: Path, store_path: str, entrypoints: list[Any]) -> P
     )
 
 
-__all__ = ["BROKEN", "DRIFTED", "HEALTHY", "PayloadObservation", "observe_payload"]
+def observe_reference(*, path: str, entrypoints: list[Any]) -> PayloadObservation:
+    """The same on-disk question, asked of an **external reference**'s object root (draft §171).
+
+    A reference points at something the user already had, so it lives outside ``store/`` **by
+    contract** — which is why :func:`observe_payload` cannot answer for it: ``in_store`` is False by
+    construction and the store resolver refuses an absolute path, so every healthy reference would
+    come back ``drifted``. What the two share is the entrypoint check, and they share it through
+    :func:`_entrypoint_findings` rather than each spelling their own.
+
+    A row that declares **no** entrypoint has nothing this can check, so it stays ``healthy``: a
+    registry-only reader cannot tell "the object is gone" apart from "nothing was ever put there",
+    which is the same narrowing ``where`` already applies to owned payloads (draft §147.4).
+    """
+
+    root = Path(path)
+    names = [str(item) for item in entrypoints]
+    present, missing = _entrypoint_findings(root, names)
+    problems: list[dict[str, str]] = []
+    if missing:
+        problems.append(
+            {
+                "code": "PAYLOAD_MISSING",
+                "detail": f"declared entrypoints are missing from the object: {', '.join(missing)}",
+            }
+        )
+    return PayloadObservation(
+        store_path=path,
+        in_store=False,
+        payload_present=root.is_dir(),
+        entrypoints=names,
+        present=present,
+        missing=missing,
+        observed_health=BROKEN if missing else HEALTHY,
+        problems=problems,
+    )
+
+
+__all__ = [
+    "BROKEN",
+    "DRIFTED",
+    "HEALTHY",
+    "PayloadObservation",
+    "observe_payload",
+    "observe_reference",
+]

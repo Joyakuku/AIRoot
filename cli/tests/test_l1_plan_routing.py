@@ -351,6 +351,58 @@ def test_an_unanswered_plan_records_no_requested_scope(capsys, cli_root: Path, d
     assert low_risk["target"]["scope"] == low_risk["routing"]["decided_scope"] == "data-root"
 
 
+def test_the_dry_run_target_scope_is_always_the_routers_answer(
+    capsys, cli_root: Path, project: Path, tests_tmp: Path
+) -> None:
+    """§171 ⑤: §161.1's rule is unconditional, and this is the case that made the gap visible.
+
+    §161.1 says the dry run's `target.scope` is the scope **the router decided**; the code honoured
+    that only when nobody had answered (`reported_scope = scope if answered else decision.scope`), so
+    a caller who wrote anything got their own word back. `--scope machine` shows it worst: `decide_scope`
+    can never return `machine` at all (its vocabulary is project / data-root / reference-only /
+    unsupported), so the document said `target.scope: "machine"` beside `decided_scope: "data-root"`.
+    `--scope project` on a generic tool is the same gap one step smaller, and the case where the two
+    agree is here too so the rule is not vacuous in either direction.
+
+    The `target` block answers two questions on purpose: `scope` is the router's destination class,
+    while `path`/`data_root_id` name the destination the caller pointed at. The split is asserted
+    below, and `requested_scope` beside `decided_scope` is where the difference is read — which is why
+    `--scope machine` stays accepted (ADR-0021: accepted input is not quietly narrowed) even though it
+    no longer reaches `target.scope`.
+    """
+
+    plain = tests_tmp / "s171-plain-destination"
+    plain.mkdir(parents=True, exist_ok=True)
+
+    cases = [
+        # (what the caller wrote, capability, argv, exit code) — the exit code is part of the case:
+        # a refused answer still gets a dry-run document, and it has to be honest too.
+        ("machine", "archive", ["--scope", "machine", "--dry-run"], 0),
+        ("project", "archive", ["--scope", "project", "--target", str(plain), "--dry-run"], 0),
+        ("project", "build", ["--scope", "project", "--project", str(project), "--dry-run"], 0),
+        ("machine", "node", ["--scope", "machine", "--target", str(plain), "--dry-run"], 4),
+    ]
+    for requested, capability, argv, expected_code in cases:
+        code, document = run(capsys, "--json", "--root", str(cli_root), "plan", capability, *argv)
+        assert code == expected_code, (capability, argv, document)
+        routing = document["routing"]
+        assert routing["requested_scope"] == requested, "the caller's own words are still recorded"
+        assert document["target"]["scope"] == routing["decided_scope"], (
+            f"{capability} --scope {requested}: the dry run reports the router's destination, "
+            f"not the caller's word"
+        )
+
+    # The two-question block, spelled out: the caller's destination is still named, and the router's
+    # answer is still the router's.
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "archive", "--scope", "project", "--target", str(plain), "--dry-run",
+    )
+    assert code == 0, document
+    assert document["target"]["path"] == str(plain), "the destination the caller named is still named"
+    assert document["target"]["scope"] == document["routing"]["decided_scope"] == "data-root"
+
+
 def test_an_unknown_capability_never_gets_a_plan(capsys, cli_root: Path) -> None:
     code, document = run(capsys, "--json", "--root", str(cli_root), "plan", "not-a-capability")
 

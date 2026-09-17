@@ -41,6 +41,47 @@ DECLARATION = BackendDeclaration(
 )
 
 
+def fetch_local_artifact(
+    *, locator: str, destination: Path, backend_id: str = BACKEND_ID
+) -> Artifact:
+    """Read an existing local file as the artifact — the one implementation of "a local source".
+
+    ``portable_archive`` admits a local ``.zip`` as well (draft §144/§145: a ``.zip`` is a payload
+    *tree*, so the suffix picks that backend), and it used to borrow this backend's ``fetch``
+    wholesale. That made its refusal say ``portable_file takes an existing local file as its
+    source`` while the plan it was refusing recorded ``backend_id=portable_archive`` — the message
+    named a backend that was not doing the reading (draft §171). So the reader takes the name of the
+    backend that is actually running, and every caller passes its own: a refusal has to be about the
+    thing that refused.
+    """
+
+    source = Path(locator)
+    if not source.is_file():
+        raise AirootError(
+            "NOT_FOUND",
+            f"the artifact does not exist: {source}",
+            evidence=[f"{backend_id} takes an existing local file as its source"],
+        )
+    assert_script_free(source)
+    size = source.stat().st_size
+    if size == 0:
+        raise AirootError("INVALID_INPUT", f"the artifact is empty: {source}")
+    if size > MAX_ARTIFACT_BYTES:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"the artifact is larger than this backend accepts ({size} bytes)",
+            evidence=[f"limit={MAX_ARTIFACT_BYTES}"],
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return Artifact(
+        path=destination,
+        digest=sha256_file(destination),
+        size=size,
+        fetched_from=str(source),
+    )
+
+
 class PortableFileBackend:
     """Fetch = read a local file; commit = move it into the immutable store."""
 
@@ -65,31 +106,7 @@ class PortableFileBackend:
     def fetch(self, *, locator: str, destination: Path) -> Artifact:
         """Read the artifact. The source is only ever read — never moved or deleted."""
 
-        source = Path(locator)
-        if not source.is_file():
-            raise AirootError(
-                "NOT_FOUND",
-                f"the artifact does not exist: {source}",
-                evidence=["portable_file takes an existing local file as its source"],
-            )
-        assert_script_free(source)
-        size = source.stat().st_size
-        if size == 0:
-            raise AirootError("INVALID_INPUT", f"the artifact is empty: {source}")
-        if size > MAX_ARTIFACT_BYTES:
-            raise AirootError(
-                "INVALID_INPUT",
-                f"the artifact is larger than this backend accepts ({size} bytes)",
-                evidence=[f"limit={MAX_ARTIFACT_BYTES}"],
-            )
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return Artifact(
-            path=destination,
-            digest=sha256_file(destination),
-            size=size,
-            fetched_from=str(source),
-        )
+        return fetch_local_artifact(locator=locator, destination=destination)
 
     def verify(self, artifact: Artifact, *, expected_digest: str) -> VerifyResult:
         digest = sha256_file(artifact.path)

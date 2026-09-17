@@ -13,7 +13,7 @@
       "machine_discoverable": true,
       "management": "unmanaged",
       "path": "<BASE>\\unmanaged_only\\root\\tools\\fake-tool.bin",
-      "source": "path",
+      "source": "registry",
       "usable": false
     }
   ],

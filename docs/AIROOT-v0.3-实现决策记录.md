@@ -3793,6 +3793,66 @@ payload 那半在等批准、**还没有删任何东西**"。**行为不动**—
 **状态：已裁决并已落地（草案 §170）**：三处独立字节级变异（声明解析、locator 判据、uninstall 头条）各自
 命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。
 
+## ADR-0070 — **一个 build 不许接受它承载不了的东西，也不许让一行说自己不信的话**
+
+### 背景
+
+第三轮全表面测试的最后一批发现（草案 §171 的读数）是两条同族的老毛病：
+
+- **怪自己**：`plan --source-json` 从 artifact 的**文件名**派生 `instance_id`，文件名带大写或版本里有空格
+  就派生出不合 schema 的 id，然后报 **`SELF_VALIDATION_FAILED`(8)**——`reason-codes.md` 把这个码定义为
+  "**实现缺陷**，不是用户错误"，而调用方给的 source 文档完全合法。另一处：`portable_archive` 拒绝了，
+  证据却说自己是 `portable_file`。
+- **同一行自己打自己**：`where` 的候选行同时说 `health:"healthy"` 与"入口点不见了"，而它被选中以后
+  `executable` 指向一个**不存在的文件**——`run` 与 `tool verify` 都拒绝那个文件，只有"可选中"这一个读者
+  不同意。它的 `source` 还把一个已登记的外部引用报成 `path`，而"在 PATH 上找到的"**这一版没有任何分支产生**。
+
+还有一处是**报告与它自己的裁决不一致**：`plan --dry-run` 的 `target.scope` 报的是**调用方写的那个**，
+而 §161.1 的裁决说它应当是**路由器决定的**那个；`--scope machine` 甚至是 `_resolve_plan_target` 的兜底值，
+`decide_scope` **永不返回**它——写它唯一的效果是宣布"我作答了"。
+
+### 决定
+
+**A —— 派生出不合法的东西，要在派生点报成输入问题。** 新增 `tx/artifact.py::derive_artifact_ids()`，
+证据点名是**文件名**还是**版本**哪一段越界、给出派生出来的 id 与期望形状（`common.schema.json#/$defs/id`
+的 pattern）。**`SELF_VALIDATION_FAILED` 从此只留给"这个 build 自己产出的文档不合法"**——调用方能凭空
+构造出来的输入永远不该报它。**每个后端要说出自己的名字**，不许复用另一个后端的拒绝语。
+
+**B —— 一行里的两个字段必须是同一个事实。** `where` 的候选行在**观测决定性**时让 `health` 跟随观测
+（复用 `caps/health.py`，新增 `observe_reference`，与 `observe_payload` 共用抽出的 `_entrypoint_findings`
+——**没有第二套"在不在"判据**），`usable` 跟随该行的 `health`。于是入口点被删的 payload 报 `broken`、
+**不再被选中**，答案是 `BROKEN`(3) 而不是 exit 0 指向一个不存在的文件。
+**这是一处接受的行为变化**：没有任何原本能用的东西变得不能用（文件本来就已经不在），而它让 `where`
+与那三个真正动 payload 的动词一致。**§147.4 的窄化原样保留**：不声明入口点的 reference、以及"整个载荷
+目录不见了"，仍由**登记值**回答——"登记值能不能被磁盘推翻"是**另一个裁决**，本阶段不扩。
+
+**C —— 候选行说它真正的来源。** 已登记的外部引用报 `registry`（它确实是**从注册表读出来的**；owned 与
+reference 由同一行的 `management` 区分）。**顶层 `source` 是已发布 schema 枚举的，一个字不动**；
+`path` 在取值表里打 † 并写明这一版没有写者，并由一条**扫全 app** 的守卫证明那句 † 是真话——
+**"给没有写者的值打 †" 与 "让行说真话" 是同一条规则的两半**。
+
+**D —— dry run 报的目的地，无条件等于路由器的答案。** `reported_scope = decision.scope`：
+`target.scope` = 路由器决定的**目的地种类**，`target.path`/`data_root_id` = **调用方命名的目的地**；
+两者可能不同，而那正是 `routing.requested_scope` 与 `decided_scope` 要**一起读**的原因。
+`--scope machine` 仍被接受（ADR-0021：不主动收紧已接受的输入）。
+
+### 代价
+
+- **一处行为变化**（B：入口点不见了的 payload 不再被 `where` 选中，报 `BROKEN`(3)），**一条既有期望随之被取代**
+  ——并把"为什么是修正不是回归"写进了那条用例的 docstring。
+- **一处码的变化**（A：`plan` 对派生不出的 id 由 `SELF_VALIDATION_FAILED` 改报 `INVALID_INPUT`，退出码同为 8）。
+- **语料变了 3 个 fixture、5 行**（候选行与顶层的 `source`），在同一个改动里重生；**schema 未被触碰**，
+  一个新取值都没加。
+- **顺带订正我在 §170 写下的一句过头话**：`confirmation.md` 原写"作答的 scope 与路由决定的不一致就 exit 4"，
+  实测只在**需要确认的能力**上成立（`node --scope project` 是 4，`archive --scope project` 是 0 而 decided 是
+  data-root）。现在收窄了，并写明两者不同**不等于有人违规**。
+- **没有做的**：`where` 对"没有入口点声明的 reference"与"目录整个不见了"仍用登记值（见 B 的末段）。
+
+**状态：已裁决并已落地（草案 §171）**：三处独立字节级变异（候选行的 `source`、`health` 跟随观测、
+`reported_scope`）各自命中它该命中的守卫（其中候选行那条会**同时**红掉取值表的 † 守卫——代码与文档
+互相钉住）；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`。
+**第三轮 36 条发现到此全部收口。**
+
 
 
 

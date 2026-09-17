@@ -738,3 +738,132 @@ def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
     assert code == 0, where
     assert where["found"] is True
     assert where["version"] == "3.31.6"
+
+
+# --------------------------------------------------------------------------- #
+# §171 ①: the id a real artifact plan derives, refused where it is derived
+# --------------------------------------------------------------------------- #
+
+#: Artifact file names a caller may legitimately put in a resolution, none of which can appear in an
+#: instance id: the published shape is `^[a-z0-9][a-z0-9._/-]{0,127}$` and the stem goes into it
+#: verbatim. The names are the point — the defect was that a *derived* string failed the plan's own
+#: field and the core blamed itself for it.
+#:
+#: `_` is **not** in this list on purpose, although it reads like it should be: the published class
+#: carries it (`[a-z0-9._/-]`), and the real release name `cmake-3.31.6-windows-x86_64` needs it.
+#: Neither is a leading `.`: only the fragment that starts the whole id has to begin with `[a-z0-9]`,
+#: and a file name is never the first one.
+NAMES_THAT_CANNOT_BE_IDS = (
+    "cmake-3.30.5-MISSING.zip",  # upper case
+    "cmake 3.30.5.zip",  # a space
+    "cmake+3.31.6.zip",  # a character outside the published class
+    "cmake@3.31.6.zip",  # same, and the one a package-style locator tends to carry
+)
+
+
+@pytest.mark.parametrize("name", NAMES_THAT_CANNOT_BE_IDS)
+def test_a_file_name_that_cannot_be_an_id_is_refused_where_the_id_is_derived(name: str) -> None:
+    """§171 ①: no malformed file name may reach `SELF_VALIDATION_FAILED`.
+
+    That code means "this build produced a document it cannot read" — an implementation defect — and
+    the caller's resolution is a legal document here. What is illegal is the id *this build* invents
+    out of the file name, so the refusal is `INVALID_INPUT`(8), which is the code for "your input
+    cannot be used", and it names the input.
+    """
+
+    from airoot.tx.artifact import derive_artifact_ids
+
+    with pytest.raises(AirootError) as caught:
+        derive_artifact_ids(
+            capability_id="build", locator=rf"C:\dropped\{name}", version="3.31.6"
+        )
+    assert caught.value.reason_code == "INVALID_INPUT", caught.value.evidence
+    assert caught.value.reason_code != "SELF_VALIDATION_FAILED"
+    evidence = " ".join(caught.value.evidence)
+    assert "artifact file name" in evidence, evidence
+
+
+def test_the_version_is_named_too_when_it_is_what_cannot_be_an_id() -> None:
+    """The same guard, from the other input: a legal version string is not automatically an id part."""
+
+    from airoot.tx.artifact import derive_artifact_ids
+
+    with pytest.raises(AirootError) as caught:
+        derive_artifact_ids(
+            capability_id="build", locator=r"C:\dropped\cmake-3.31.6-windows-x86_64.zip",
+            version="3.3 1.5",
+        )
+    assert caught.value.reason_code == "INVALID_INPUT"
+    evidence = " ".join(caught.value.evidence)
+    assert "the version '3.3 1.5'" in evidence, evidence
+
+
+def test_a_file_name_that_is_too_long_to_be_an_id_is_refused_too() -> None:
+    """The other half of the shape: every fragment can be legal and the whole id still too long."""
+
+    from airoot.tx.artifact import derive_artifact_ids
+
+    with pytest.raises(AirootError) as caught:
+        derive_artifact_ids(
+            capability_id="build",
+            locator=rf"C:\dropped\cmake-{'a' * 140}.zip",
+            version="3.31.6",
+        )
+    assert caught.value.reason_code == "INVALID_INPUT"
+    evidence = " ".join(caught.value.evidence)
+    assert "characters long" in evidence, evidence
+    assert "artifact file name" not in evidence, "no fragment is illegal; the length is what is"
+
+
+def test_an_id_shaped_file_name_still_derives_the_id_it_always_did() -> None:
+    """Non-vacuity: the guard must not catch the path the release archives actually take."""
+
+    from airoot.tx.artifact import derive_artifact_ids
+
+    instance_id, plan_id = derive_artifact_ids(
+        capability_id="build",
+        locator=r"C:\dropped\cmake-3.31.6-windows-x86_64.zip",
+        version="3.31.6",
+    )
+    assert instance_id == "build/cmake-3.31.6-windows-x86_64/3.31.6/win-x64"
+    assert plan_id.startswith("plan/build/3.31.6/")
+
+
+def test_a_resolution_whose_file_name_is_not_an_id_is_refused_as_input(
+    capsys, registry, clock, root, tmp_path: Path
+) -> None:
+    """The same defect through the verb an operator actually runs (§171 ①)."""
+
+    cli_root = Path(registry.path).parent.parent
+    artifact = tmp_path / "cmake-3.30.5-MISSING.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("cmake-3.30.5-MISSING/bin/cmake.exe", b"MZ not a real image\n")
+    source_file = tmp_path / "resolved.json"
+    source_file.write_text(
+        json.dumps(
+            {
+                "capability_id": "build",
+                "version": "3.30.5",
+                "artifact_url": str(artifact),
+                "expected_digest": sha256_file(artifact),
+                "backend_id": "portable_archive",
+                "offline": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "build", "--source-json", str(source_file)
+    )
+
+    assert code == 8, document
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert document["reason_code"] != "SELF_VALIDATION_FAILED", (
+        "the resolution is a legal document; the illegal id is derived from it, so this build may "
+        "not report its own defect"
+    )
+    evidence = " ".join(document["evidence"])
+    assert "cmake-3.30.5-MISSING" in evidence and "artifact file name" in evidence, evidence
+    plans = cli_root / "state" / "plans"
+    assert not plans.is_dir() or list(plans.iterdir()) == [], "a refused plan left a file behind"

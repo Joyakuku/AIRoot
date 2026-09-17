@@ -155,9 +155,12 @@ class PortableArchiveBackend:
         """A local path is read; anything else goes through the https backend unchanged."""
 
         if "://" not in locator:
-            from .portable_file import PortableFileBackend
+            from .portable_file import fetch_local_artifact
 
-            return PortableFileBackend().fetch(locator=locator, destination=destination)
+            # This backend's own name, because this backend is the one refusing (draft §171).
+            return fetch_local_artifact(
+                locator=locator, destination=destination, backend_id=BACKEND_ID
+            )
         return self._https().fetch(locator=locator, destination=destination)
 
     def verify(self, artifact: Artifact, *, expected_digest: str) -> VerifyResult:

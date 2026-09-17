@@ -19,7 +19,7 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `source` | `registry` / `path` / `project`† / `search`† / `null` | 这个候选是从哪儿来的：`registry` 是有绑定的实例，`path` 是在 PATH 上找到的。`null` 表示**没找到**（`reason_code` 说明为什么，通常是 `NOT_FOUND`(1) 或 `VERSION_UNSATISFIED`(1)），不是"找到了但不知道从哪来" | `caps/where.py` |
+| `source` | `registry` / `path`† / `project`† / `search`† / `null` | 这个候选是从哪儿来的：`registry` 是**从注册表读出来的**候选——owned 实例（有绑定）或**已登记的外部引用**，两者用同一行的 `management` 区分。`null` 表示**没找到**（`reason_code` 说明为什么，通常是 `NOT_FOUND`(1) 或 `VERSION_UNSATISFIED`(1)），不是"找到了但不知道从哪来"。**`path` 这一版没有写者**（§171 实测："在 PATH 上找到的东西"没有任何分支产生，reference 候选此前被错报成它） | `caps/where.py` |
 
 `where` 的候选行还带 `zone`（见 `common`）与 `machine_discoverable`（= `zone != "W"`）：**Zone W 的候选不会被机器级发现**（ADR-0022），要它就用 `--project` / 显式激活。
 
@@ -294,6 +294,8 @@
 | `forget_reference_persist` | `env forget <ref>`：还原一个能力写过的环境 | `caps/exposure.py` |
 | `forget_all_persist` | `env forget --all`：还原 AIROOT 写过的**全部**环境 | `caps/exposure.py` |
 
+**`search rebuild` 的信封也报 `refresh`**（它就是这个操作的协议拼写，见 `AGENTS.md` §6）：`operation` 命名的是**操作**，不是 argv 里的那个词。
+
 ### `origin`（**两个意思，别混**）
 
 这个名字在两种文档里各有一个意思：
@@ -340,6 +342,17 @@
 | `failed` | 这一步失败了（细节在 `errors`/`reason_code` 里） | `tx/journal.py` |
 
 ---
+
+## 没有 schema 的两处小词表（§171）
+
+这两处的**权威是代码**，不是任何已发布 schema；列在这里是因为它们的取值会出现在 agent 读的文档里。
+
+| 字段 | 取值 | 含义 | 谁写出 |
+|---|---|---|---|
+| `scope decide` 的 `scope` | `project` / `data-root` / **`unsupported`** | 路由结论。`unsupported` 表示**没有这条能力**（同一次调用同时给 `CAPABILITY_NOT_DECLARED`(9)）——它不是「我决定不了」，是「清单里没有这个名字」。`plan` 的 `metadata.routing.decided_scope` 不会出现这个值 | `caps/planner.py` |
+| `extension list` 的 `registered` | `true` / `false` | 这条 manifest 是否**登记过**（注册表里有没有它）。`false` **不**表示它不能用：`airoot-native-search-extension` 在全新 root 上就是 `false`，而 `search` 正在用它 | `cli.py` |
+
+`scope memory` 的 `memory` 也是一个没有 schema 的形状（`present`/`writable`/`memory`/`memory_path`）：它只读地回答「项目记忆在哪、能不能写」，**不**写任何东西。
 
 ## 不在这张表里的 schema
 

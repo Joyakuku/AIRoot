@@ -50,24 +50,25 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 |---|---|---|
 | "这台机器还没装过 AIROOT / 第一次用" | `airoot root init <目录> --root-instance-id <id> --machine-id <id> --json` | 不猜目录：它只在新**建或空**目录里建，且两个身份是**入参**（P1 不替你编身份）；不指望它写 PATH 或要提权 |
 | "这台电脑上有没有 X / 在哪" | `airoot where X --json` | 不用 `where` 之外的命令去猜；不递归 `shell` 搜索 |
-| "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足 |
+| "有没有 X 且版本满足 …" | `airoot where X --version ">=1.2" --json` | 不替用户放宽版本约束；版本未知就是不满足。**候选只有「当前 active binding 的那个」与 reference**：AIROOT 装过但**不是当前绑定**的版本不在候选里，所以 `VERSION_UNSATISFIED` 不等于「这台机器上没有那个版本」——**要看「我装过哪些」就查 `airoot tool list --json`**（它列出每个已登记实例，含非活跃的）|
 | "这台机器上都有什么" | `airoot inventory --class … --json` | 不把 `unmanaged` 说成"AIROOT 管的" |
 | "帮我装 X / 准备环境" | `airoot plan X --scope … --target … --dry-run --json` 然后按需要批准（需要本机签一次：见《批准》） | 不直接 `install`；不在未确认时落盘计划 |
 | "这次改动我批了，你去执行" | `airoot issue <plan.json> --out <token.json> --provision --json` 签出 token，再按《批准》那一节交回消费侧（需要本机签一次：见《批准》） | 不把签发当授权：`permission_proof` 是 `false`，批准是**账本**不是许可（ADR-0046）；已有密钥时不为省事删掉重签 |
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
 | "这个目录（D:\env 之类）交给 AIROOT 看着" | `airoot data-root add <path> --id <data_root_id> --role <runtime\|tool\|mixed> --json` | **注册不写任何文件**（`files_touched` 是 0）；这是管家域的第一步：没有数据根，`discover`/`adopt` 无事可做 |
-| "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件。**数据根是"注册点"不是"存储位置"**：AIROOT 自己装的东西落在这个 root 的 `store\` 里，数据根目录本身**一个文件都不会被写**（`files_touched=0` 就是这条） |
+| "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | **`adopt` 只吃目录**（给文件是 `INVALID_INPUT`，证据会点名它的父目录），而且那个目录要先被**白名单**认出来（否则 `CAPABILITY_NOT_DECLARED`(9)）——用 `airoot capability check` 确认。`adopt` 的第三个 mode `recreate` 这一版会拒（`UNSUPPORTED_BACKEND`(7)，等 P5 runtime）。不 `adopt` 数据根之外的路径；数据根内不删任何文件。**数据根是"注册点"不是"存储位置"**：AIROOT 自己装的东西落在这个 root 的 `store\` 里，数据根目录本身**一个文件都不会被写**（`files_touched=0` 就是这条） |
 | "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
-| "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json`，或按**当前绑定**跑 `airoot run --capability <id> -- <args> --json`（稳定入口用的就是后者） | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（退出码在 `exit_status`，`reason_code` 是 `SUCCESS`/`CHILD_PROCESS_FAILED`）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
+| "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json`，或按**当前绑定**跑 `airoot run --capability <id> -- <args> --json`（稳定入口用的就是后者） | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（真的起了子进程才有 `exit_status`；操作系统拒绝启动时报 `CHILD_PROCESS_FAILED` 且**没有** `exit_status`——那种情况下没有子进程状态可报）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
 | "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json`，**要真删才** `airoot tool gc --apply --token-file <token>`（需要本机签一次：见《批准》） | **对 reference 一律拒绝**：那不是 AIROOT 的东西。`--apply` 是**全链唯一会真删东西的一步**（必须带 token，没有 `--force`）；`--plan` 只列可回收项。`retire` 清绑定**也清它自己投影的那一个稳定入口**（入口是绑定的投影，ADR-0064）；删不掉时报 `DEGRADED`(2) 并点名路径，再跑一次即可 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
+| "AIROOT 认哪些能力 / 我持久化过哪些变量" | `airoot capability list --json`（**冻结能力清单**：能 `plan`/`adopt` 的就是这些名字）、`airoot env list --json`（AIROOT 写过的持久化环境） | `capability list` 是「这个名字能不能用」的前置（`CAPABILITY_NOT_DECLARED` 就是拿它比对）；`env list` 只列 AIROOT 写过的，不是这台机器的全部环境变量 |
 | "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（需要本机签一次：见《批准》） |
-| "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致）；**缺了或漂了**就 `airoot path repair --json`（只补写/重写稳定入口，一个文件都不删，不越过授权边界） | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题。`path repair` 报 `orphans` 时退出码是 2（有入口、没有绑定——那是**再跑一次 `tool retire`** 的事，不是手工删文件）|
+| "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致）；**缺了或漂了**就 `airoot path repair --json`（只补写/重写稳定入口，一个文件都不删，不越过授权边界）。**它读的是注册表里持久化的 PATH，不是你这个进程当前的 PATH**——所以手里 PATH 很脏的调用方跑它也会得到「一切正常」 | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题。`path repair` 报 `orphans` 时退出码是 2（有入口、没有绑定——那是**再跑一次 `tool retire`** 的事，不是手工删文件）|
 | "某个文件在哪 / 它叫什么名字" | `airoot search <query> --json` | **`search` 不是 `where`**：前者定位文件，后者解析能力。要按名搜一个叫 `status` 的文件用 `airoot search --query status --json` |
 | "搜得太慢 / 想要它快点" | `airoot search refresh --json` 建一次索引（crawl 建的，**不是 USN 索引**），之后查询走索引 | 不声称它是 Everything 级性能；`freshness.state=current` 只表示"上次遍历是最近做的" |
 | "这个索引是什么状态 / 为什么报了 stale" | `airoot search status --json`、`airoot search explain <query> --json` | `stale` 只说明索引比 `--max-staleness-ms` 旧：refresh 或放宽约束，不要说它"坏了" |
@@ -204,7 +205,7 @@ airoot root adopt|relocate   # copy/verify/switch 规则已由 ADR-0025 决定�
   声明状态变化过之后它会报 `SESSION_STATE_STALE`（退出码 2），而不是假装成功。
 - `exec` 是**唯一会派生子进程**的命令：`--` **之后**的一切原样交给子进程，**之前**的选项属于
   AIROOT（`--json`、`--root` 写在外部引用 id 之后也会被正确识别）。子进程非零退出不会污染
-  AIROOT 自己的退出码——它会以 `CHILD_PROCESS_FAILED`（退出码 2）返回，真实状态在 `exit_status`。
+  AIROOT 自己的退出码——它会以 `CHILD_PROCESS_FAILED`（退出码 2）返回，真实状态在 `exit_status`。**裸命令名按子进程将看到的那条 PATH 解析**（`path_prepend` 因此真的可用），解析不到或 OS 拒绝启动时同样报 `CHILD_PROCESS_FAILED`，证据里给搜过的目录或 OS 自己的话。
 
 ## 看到不认识的取值（详见 references/field-values.md）
 
@@ -234,7 +235,7 @@ airoot root adopt|relocate   # copy/verify/switch 规则已由 ADR-0025 决定�
 4 需要批准                                    9 能力未冻结 / 扩展不可用
 ```
 
-`reason_code` 永远比退出码更精确：**先读 `reason_code`，再读退出码**。
+`reason_code` 永远比退出码更精确：**先读 `reason_code`，再读退出码**。**一个例外**：`doctor` 的信封**没有** `reason_code`（`doctor-response` 那份契约里没有这个字段）——它用 `status`（`healthy`/`degraded`/`broken`/`recovery_required`）加**每条** `diagnostics[].code` 说同一件事；而 `doctor` 正是这张表让你跑的第一条命令，所以别拿「没有 `reason_code`」当成它答得不好。
 
 `6` 只在 message/证据里真的出现 root / marker / volume / registry / journal（或数据根的**可读性**）时才是
 "需要恢复"。一个**没注册**的数据根 id（`unknown data root: <id>`）不是状态坏了：`plan`、`discover

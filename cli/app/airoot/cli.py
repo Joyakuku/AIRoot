@@ -2699,7 +2699,21 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
         # one was requested; a dry run still reports the scope the router decided, because that is
         # where the plan would go.
         requested_scope: str | None = scope if answered else None
-        reported_scope = scope if answered else decision.scope
+        # §171 ⑤: the dry run's `target.scope` is the **router's** answer, unconditionally — which is
+        # what §161.1 says it is ("dry run 报的目的地应当等于路由器决定的那个"). It used to report
+        # whatever the caller had written whenever the caller had written anything, so `--scope machine`
+        # produced `target.scope: "machine"` beside `decided_scope: "data-root"` — and `decide_scope`
+        # can never return `machine` at all (its vocabulary is project / data-root / reference-only /
+        # unsupported). `--scope project` on a generic tool showed the same gap one step smaller.
+        #
+        # The `target` block answers two questions on purpose, and this is the one place where that has
+        # to be said: `scope` is the **destination class the router decided**, while `path` and
+        # `data_root_id` are the **destination the caller named**. They may differ — a caller may point
+        # at a directory while the router says data-root — and when they do, `routing.requested_scope`
+        # beside `routing.decided_scope` is where the difference is read. `--scope machine` stays
+        # accepted (ADR-0021: accepted input is not narrowed on the quiet); its effect is now exactly
+        # the difference between those two keys.
+        reported_scope = decision.scope
         routing = {
             "requested_scope": requested_scope,
             "decided_scope": decision.scope,

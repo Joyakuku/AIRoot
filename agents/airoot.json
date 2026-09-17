@@ -55,11 +55,12 @@
       "question": "what is declared on this machine",
       "command": ["inventory", "--class", "<managed_tool|runtime|external_reference|unmanaged>"],
       "read": ["instances", "external_references", "bindings[].binding_key", "bindings[].zone"],
-      "notes": "`bindings[].zone` is R/W/P; a machine-scope binding in Zone W is declared but will never be machine-discoverable (see where's `machine_discoverable`)",
+      "notes": "`bindings[].zone` is R/W/P; a machine-scope binding in Zone W is declared but will never be machine-discoverable (see where's `machine_discoverable`). **`--class` does not filter**: the document is the whole `registry-projection` (every instance, reference and binding) — read the class you asked for out of it",
       "document_schema": "registry-projection"
     },
     {
       "question": "what is actually inside the data roots (read-only scan)",
+      "notes": "with `--record`, `counts` counts every candidate the scan saw while `recorded` counts the ones this verb actually wrote down (unmanaged and quarantined observations; an adoptable candidate is reported, not recorded) — the two numbers are different questions, not a bug",
       "command": ["discover"],
       "read": [
         "reports[].candidates",
@@ -195,7 +196,7 @@
       "question": "persist environment variables (needs approval)",
       "command": ["env", "persist", "<external-id>"],
       "read": ["plan_hash", "plan_file", "required_action", "reason_code"],
-      "notes": "without --token-file this stops at exit 4 and writes nothing; with one it needs an approval, and since ADR-0046 an approval is an explicit local signing step -- provision the root's key first (airoot.tx.issuer), otherwise the command refuses with 'no approval keyring is installed in this root; provision a signing key first'. The approval is an audit record, not a proof of permission (a same-user process can read the key and could sign anyway). The document is the self-validated `reference-plan` **plus** `plan_file` / `required_action` / `reason_code`; those three are deliberately not part of the plan contract (the approvable artifact is the file, and it is the one whose hash this document carries), so no single schema describes what is printed -- measured, not assumed (draft §94)",
+      "notes": "without --token-file this stops at exit 4 and writes the plan file (that file is the approvable artifact) while persisting nothing; with one it needs an approval, and since ADR-0046 an approval is an explicit local signing step -- provision the root's key first (airoot.tx.issuer), otherwise the command refuses with 'no approval keyring is installed in this root; provision a signing key first'. The approval is an audit record, not a proof of permission (a same-user process can read the key and could sign anyway). The document is the self-validated `reference-plan` **plus** `plan_file` / `required_action` / `reason_code`; those three are deliberately not part of the plan contract (the approvable artifact is the file, and it is the one whose hash this document carries), so no single schema describes what is printed -- measured, not assumed (draft §94)",
       "document_schema": null
     },
     {
@@ -436,7 +437,7 @@
   },
   "unmapped_verbs": {
     "scope": {
-      "why_not_mapped": "`scope decide` is the routing decision surfaced on its own; the command map's `plan` row already routes *and* plans (`--scope`/`--target`/`--dry-run`), so teaching both would present one decision twice. Its lane stays because it answers without producing a plan.",
+      "why_not_mapped": "`scope decide` is the routing decision surfaced on its own, and `scope memory` (the project-memory probe) is read-only and answers a question `plan` does not ask; the command map's `plan` row already routes *and* plans (`--scope`/`--target`/`--dry-run`), so teaching both would present one decision twice. Its lane stays because it answers without producing a plan.",
       "unblocked_by": null
     },
     "uninstall": {

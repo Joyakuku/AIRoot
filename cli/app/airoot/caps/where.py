@@ -37,7 +37,7 @@ from ..paths import from_root_relative
 from ..registry.entities import is_store_path, load_json
 from ..schema_io import validate_self
 from .effective import effective_state, machine_path, process_path, user_path
-from .health import HEALTHY, observe_payload
+from .health import HEALTHY, observe_payload, observe_reference
 from .launcher import launcher_path
 from .selection import SelectionPolicy, load_selection_policy
 from .version import satisfies
@@ -132,29 +132,30 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
             identity_match = query.session_id is not None and query.session_id == _session_id_of(str(row["binding_key"]), scope)
         if query.scope and scope != query.scope:
             identity_match = False
-        healthy = str(instance["health"]) == "healthy"
         executable = _executable_path(root, str(instance["store_path"]), entrypoints)
         # A payload outside `store/` is never selectable, however healthy its row claims to be
         # (draft §66): `store` is the only payload storage (冻结契约 §5.3), so a declaration pointing
         # elsewhere cannot be honoured. It is still *reported* as a candidate — skipping it in silence
         # is the failure mode ADR-0022 already legislated against for Zone W.
+        #
         # The on-disk facts come from the one definition of that question (caps/health.py, draft
-        # §147), and here they are **reported rather than decisive**. `where` is a registry-only
-        # decision, and the first attempt at this stage made `usable` depend on the payload
-        # being on disk — which reddened `test_project_binding_wins_over_machine`, whose rows
-        # are hand-added: the simulated transaction never materialises a payload. That is the
-        # tightened reading of a fact that admits both, and ADR-0021 says the relaxed one wins
-        # (it is not a layer-2 contract, an honesty rule, a steward invariant or an audit
-        # guard). So the recorded `health` still decides, and what this adds is the report: a
-        # candidate whose payload was deleted by hand used to be presented with `health=healthy`
-        # and no hint at all, because nothing re-derives it (§147.1). Re-observing a payload and
-        # acting on it is `doctor`'s and `tool status`'s job; deciding where to *look* is this
-        # one's, and a passed-over candidate is reported for the same reason ADR-0022 requires
-        # Zone W to be reported rather than dropped in silence.
+        # §147), and they are **reported**, in the narrow case §147.4 settled: the payload directory
+        # is there and a declared entrypoint is not. The relaxed reading is why nothing else is
+        # decided from disk — the first attempt at this stage made `usable` depend on the payload
+        # directory, which reddened `test_project_binding_wins_over_machine`, whose rows are
+        # hand-added because the simulated transaction materialises no payload; a registry-only
+        # reader cannot tell "the directory is gone" from "nothing was ever put there". What §171
+        # changed is only that the *row* may not contradict itself: where the observation is
+        # decisive it is what the row reports, and the row is then not usable either (the file the
+        # binding points at is not there). Re-observing a payload and *acting* on it is `doctor`'s,
+        # `tool status`'s and `tool verify`'s job; deciding where to *look* is this one's.
         observation = observe_payload(
             root=root, store_path=str(instance["store_path"]), entrypoints=entrypoints
         )
         in_store = observation.in_store
+        decisive = bool(in_store and observation.payload_present and observation.missing)
+        recorded_health = str(instance["health"])
+        health = observation.observed_health if decisive else recorded_health
         candidates.append(
             _Candidate(
                 binding_key=str(row["binding_key"]),
@@ -162,12 +163,11 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                 scope=scope,
                 zone=zone,
                 version=str(instance["version"]),
-                health=str(instance["health"]),
+                health=health,
                 management="managed",
                 source="registry",
                 path=executable,
-                # Registry-only on purpose: see the note above this block (ADR-0021).
-                usable=healthy and in_store,
+                usable=health == HEALTHY and in_store,
                 version_ok=_version_ok(str(instance["version"]), query.version),
                 identity_match=identity_match,
                 slot=scope,
@@ -176,7 +176,12 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                     {"kind": "binding", "detail": f"{row['binding_key']} active at generation {row['generation']}"},
                     {
                         "kind": "registry",
-                        "detail": f"lifecycle={instance['lifecycle_status']} health={instance['health']}",
+                        "detail": (
+                            f"lifecycle={instance['lifecycle_status']} health={instance['health']}"
+                            if health == recorded_health
+                            else f"lifecycle={instance['lifecycle_status']} recorded health={recorded_health} "
+                            "(the payload on disk disagrees; see the payload evidence)"
+                        ),
                         "path": executable,
                         "digest": instance["artifact_digest"],
                     },
@@ -207,7 +212,7 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                     # always done so.
                     *(
                         []
-                        if not (in_store and observation.payload_present and observation.missing)
+                        if not decisive
                         else [
                             {
                                 "kind": "payload",
@@ -240,7 +245,7 @@ def _reference_candidates(registry: Any, query: WhereQuery) -> list[_Candidate]:
         management = str(row["management"])
         if management not in {"external_reference", "unmanaged", "quarantined"}:
             continue
-        healthy = str(row["health"]) == "healthy"
+        recorded_health = str(row["health"])
         version = _reference_version(row)
         reference_like = management == "external_reference"
         version_ok = _version_ok(version, query.version)
@@ -267,18 +272,34 @@ def _reference_candidates(registry: Any, query: WhereQuery) -> list[_Candidate]:
         # `executable` must name the entry actually run, not the object directory: the field
         # feeds `effective_state`, which compares the executable's **parent** against PATH.
         # Pointing it at the object root would report "not on PATH" for `...\bin\java.exe`.
+        #
+        # §171 ④: the same on-disk question `where` already asked here (`candidate_path.is_file()`)
+        # now goes through the one definition of it (`caps/health.py`'s `observe_reference`), and the
+        # row's `health` follows it — a row used to say `health:"healthy"` **and** "the recorded
+        # entrypoint ffmpeg.exe is missing" at once, which is the contradiction this closes. Only the
+        # declared-entrypoint case is observed: a row that declares none has no file this can check,
+        # and the record is then the only answer there is (draft §147.4's narrowing).
         entrypoints = [str(item) for item in load_json(row["entrypoints_json"], [])]
         resolved_path = str(row["path"])
-        entrypoint_exists = True
+        observation = observe_reference(path=str(row["path"]), entrypoints=entrypoints)
+        entrypoint_exists = observation.observed_health == HEALTHY
+        health = recorded_health
+        if recorded_health == HEALTHY and not entrypoint_exists:
+            # The row's own `usable` already said no, so the headline has to say the same thing.
+            health = observation.observed_health
         if entrypoints:
             candidate_path = Path(str(row["path"])) / entrypoints[0]
             resolved_path = str(candidate_path)
-            entrypoint_exists = candidate_path.is_file()
             if not entrypoint_exists:
                 evidence.append(
                     {
                         "kind": "external_reference",
-                        "detail": f"the recorded entrypoint {entrypoints[0]} is missing; the object is stale",
+                        "detail": (
+                            f"the recorded entrypoint {observation.missing[0]} is missing; the object is stale"
+                            if len(observation.missing) == 1
+                            else "recorded entrypoints are missing: "
+                            f"{', '.join(observation.missing)}; the object is stale"
+                        ),
                         "path": resolved_path,
                     }
                 )
@@ -313,11 +334,20 @@ def _reference_candidates(registry: Any, query: WhereQuery) -> list[_Candidate]:
                 scope="machine",
                 zone="R",
                 version=version,
-                health=str(row["health"]),
+                health=health,
                 management=management,
-                source="path",
+                # §171 ③: the candidate's `source` says where the candidate came from, and this one
+                # came out of the registry — the `external_references` table — exactly like the owned
+                # rows come out of the bindings table. It used to say `path`, which the field table
+                # defines as "found on PATH": this build has **no** branch that finds a capability by
+                # scanning PATH, so that label was false for every reference row, and the document a
+                # reader consults (references/field-values.md) has no value meaning "an external
+                # reference" — the top-level enum is published and frozen. `management` on the same
+                # row is what distinguishes an owned instance from a registered reference, and it has
+                # done so all along.
+                source="registry",
                 path=resolved_path,
-                usable=healthy and reference_like and entrypoint_exists,
+                usable=health == HEALTHY and reference_like,
                 version_ok=version_ok,
                 identity_match=True,
                 slot="steward" if reference_like else None,

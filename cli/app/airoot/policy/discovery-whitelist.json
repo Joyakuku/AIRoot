@@ -86,7 +86,7 @@
       "capability_id": "build",
       "kind": "tool",
       "weak_evidence": true,
-      "weak_reason": "cmake ships builds whose version resource is not consistently populated; the executable name plus a PE image is the strongest available static evidence in P2 (capability itself is not yet frozen).",
+      "weak_reason": "cmake ships builds whose version resource is not consistently populated; the executable name plus a PE image is the strongest available static evidence in P2. The capability itself *is* frozen (policy/capabilities.json `cap-4`); what is weak here is the **recognition** evidence, not the capability's existence.",
       "evidence_all": [
         { "type": "executable_name", "any_of": ["cmake.exe"] },
         { "type": "pe_static", "field": "is_pe", "equals": true }

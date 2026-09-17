@@ -25,11 +25,16 @@ cancel             取消
 
 - `data-root` 是**权限提升**：项目目录里的 manifest 不能自己升级自己。显式请求它而策略结论是
   project 时，`plan` 返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码 4），**不落盘任何计划文件**。
-- **反方向也一样要批准**（§154/§155 / ADR-0056，§170 订正了这一句）：判定不看"升还是降"，而看
-  **作答的 scope 与路由决定的那个是否一致**——不一致就 `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4)，
-  message 是 `the answered scope '<x>' is not the scope <cap> routes to`，证据里给
-  `requested_scope` 与 `decided_scope`。实测：`plan node --scope project --target <dir>`（node 路由到
-  data-root）就是 exit 4。**只有收窄到"路由自己也是 project"时**才不需要批准。
+- **反方向也一样**（§154/§155 / ADR-0056，§170 订正了这一句、§171 收窄了这一句）：判定不看"升还是降"，
+  而看**作答的 scope 与路由决定的那个是否一致**——**在需要确认的那些能力上**不一致就
+  `SCOPE_UPGRADE_REQUIRES_APPROVAL`(4)，message 是 `the answered scope '<x>' is not the scope <cap>
+  routes to`，证据里给 `requested_scope` 与 `decided_scope`。
+  实测两个方向：`plan node --scope project --target <dir>`（node 是 high_risk，要确认）→ exit 4；
+  而 `plan archive --scope project --target <dir>`（archive 是通用工具，本来就不问）→ exit 0，
+  `decided_scope` 是 data-root——**作答与路由不一致也不拦**，因为那道门只对"必须问"的能力存在
+  （`confirmation_required`；§171 实测）。
+  所以 `routing` 块里 `requested_scope` 与 `decided_scope` 要**一起读**：它们不同不等于有人违规，
+  只等于"调用方命名了一个地方，路由器决定的是另一个"。
 
 ## 批准的形状
 

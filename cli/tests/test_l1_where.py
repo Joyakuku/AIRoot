@@ -249,6 +249,86 @@ def test_unmanaged_only_is_reported_without_selection(registry, root) -> None:
     assert document["candidates"][0]["usable"] is False, "unmanaged is never a default executable result"
 
 
+# --------------------------------------------------------------------------- #
+# candidate provenance: what `source` says (draft §171 ③)
+# --------------------------------------------------------------------------- #
+
+
+def add_reference(registry, root, *, external_id: str, management: str = "external_reference") -> None:
+    """A registered external reference, as `adopt --mode reference` would record one."""
+
+    with registry.write(expected_generation=registry.generation) as connection:
+        connection.execute(
+            """
+            INSERT INTO external_references (external_id, capability_id, path, management, health,
+                                             observed_digest, observed_at, payload_json)
+            VALUES (?, ?, ?, ?, 'healthy', NULL, '2024-01-01T00:00:00Z', '{}')
+            """,
+            (external_id, CAPABILITY, str(root.path / "tools" / "fake-tool.bin"), management),
+        )
+
+
+def test_a_reference_candidate_says_where_it_actually_came_from(registry, root) -> None:
+    """§171 ③: an external reference came out of the registry; `path` means "found on PATH".
+
+    The field table defines `path` as the value for an object found by scanning PATH, and this build
+    has **no** branch that finds a capability that way — so every reference row carried a false label
+    about its own origin. The value that would say "external reference" does not exist in the
+    published top-level enum (`where-response.schema.json`), and an enum is not widened without a new
+    schema id, so the honest value is the one that is true: the candidate was read out of the
+    registry, exactly like an owned row is. What the object *is* was never `source`'s job — the same
+    row's `management` has always said `external_reference`, and it still does.
+    """
+
+    add_reference(registry, root, external_id="external/tools-fake-tool")
+
+    document = run(registry, root)
+    assert document["found"] is True and document["management"] == "external_reference"
+    # The top-level `source` **is** a published enum, and nothing here may widen it: the value has to
+    # be one the schema already allows, which is the whole reason the candidate's label moved.
+    schema_io.validate_self("where-response", document)
+    row = document["candidates"][0]
+    assert row["source"] == "registry"
+    assert document["source"] == row["source"], "the headline and the selected row are one answer"
+    assert row["source"] != "path", "nothing in this build finds a capability by scanning PATH"
+    assert row["management"] == "external_reference", "`management` is still what says which kind"
+
+
+def test_owned_candidates_still_say_registry_and_both_kinds_agree(registry, clock, root) -> None:
+    """Non-vacuity for §171 ③: the owned rows were `registry` before and must stay so."""
+
+    commit_version(registry, clock, root, "1.0.0")
+    add_reference(registry, root, external_id="external/tools-fake-tool")
+
+    document = run(registry, root)
+    assert {row["management"] for row in document["candidates"]} == {"managed", "external_reference"}
+    assert {row["source"] for row in document["candidates"]} == {"registry"}, document["candidates"]
+
+
+def test_the_source_value_the_field_table_daggers_has_no_writer_in_the_app() -> None:
+    """§171 ③: `path`† is a claim about the code, and a claim needs a reader.
+
+    `test_l1_field_values.py` checks that dagger against the files the table names for that row; this
+    asks the same question of every module in the app, so the answer cannot depend on which producers
+    the table happened to list. Both spellings a writer could take are probed, and each probe is shown
+    to match the real spelling before its silence is believed.
+    """
+
+    import re
+
+    app = Path(__file__).resolve().parents[1] / "app" / "airoot"
+    patterns = (r"\bsource\s*=\s*[\"']path[\"']", r"[\"']source[\"']\s*:\s*[\"']path[\"']")
+    text = "".join(path.read_text(encoding="utf-8") for path in sorted(app.rglob("*.py")))
+
+    for pattern in patterns:
+        assert re.search(pattern, 'source="path"; {"source": "path"}'), (
+            f"{pattern!r} does not even match the plain spelling, so its silence proves nothing"
+        )
+        assert re.search(pattern, text) is None, (
+            f"{pattern!r} is written somewhere in {app.name}, and the field table says `path` has no writer"
+        )
+
+
 def test_effective_state_distinguishes_current_and_new_process(registry, clock, root) -> None:
     plan = commit_version(registry, clock, root, "1.0.0")
     store = Path(root.path) / "store" / plan["target"]["instance_id"]

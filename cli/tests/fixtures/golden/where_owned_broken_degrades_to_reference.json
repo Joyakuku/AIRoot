@@ -33,7 +33,7 @@
       "machine_discoverable": true,
       "management": "external_reference",
       "path": "<BASE>\\catalogue\\root\\tools\\fake-tool.bin",
-      "source": "path",
+      "source": "registry",
       "usable": true
     }
   ],
@@ -69,7 +69,7 @@
   "schema_version": 1,
   "scope": "machine",
   "selection_reason": "CURRENT_SOURCE_DEGRADED",
-  "source": "path",
+  "source": "registry",
   "usable": true,
   "version": null,
   "zone": "R"

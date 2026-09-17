@@ -14470,3 +14470,74 @@ PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`（含 `scope dec
 | 契约层 / 语料 | **不动**（schema 未被触碰；golden 重生后零 diff——被改的两条路径都不在语料里） |
 | 既有期望被取代 | **2 条**：`test_l1_planner.py::test_project_declaration_wins_and_is_never_asked` 的 fixture 由只靠子串才成立的 `"nodeenv\npython-dotenv\n"` 改成 `"python>=3.11\n"`（意图不变，负例另立）；`test_cli_uninstall_dry_run_changes_nothing` **只加断言**（`retired`/`binding_cleared` 为 false、`would_retire` 为真） |
 | 没有做 | §171 的其余发现（`where` 候选行的标签、`scope decide` 的 `unsupported`、`doctor` 没有 `reason_code`、`env persist` 的 "writes nothing"、白名单里过期的 `weak_reason` 文案、有 lane 却不教的子命令……） |
+
+## 171. 第三轮全表面测试收口：面与文档
+
+裁决见 **ADR-0070**。这是第三轮那 36 条发现的最后一节：把**报告面**与**文档面**上剩下的说错话的地方收干净。
+它同时改了四处代码（两处"怪自己"、两处"同一行自相矛盾"）与十来处文档。
+
+### 171.1 四条代码
+
+| # | 修法前（实测） | 修法后 |
+|---|---|---|
+| **①** | `plan --source-json` 从 artifact 的**文件名**派生 instance_id：文件名里带大写（`cmake-3.30.5-MISSING`）或版本里有空格 → 派生出的 id 不合 schema → **`SELF_VALIDATION_FAILED`(8)**（`reason-codes.md` 明确定义为"**实现缺陷**，不是用户错误"），而调用方给的 source 文档是**合法的** | 在**派生点**判死：新增 `tx/artifact.py::derive_artifact_ids()`，证据点名**是文件名还是版本**哪一段越界、给出派生出来的 id、期望形状（`common.schema.json#/$defs/id` 的 pattern）与出路（换一个 id 形状的来源、或换版本）；码改为 **`INVALID_INPUT`(8)**。实现中途还收窄了两条**我自己写错**的边界：`_` 是合法字符（真名 `cmake-3.31.6-windows-x86_64` 靠它），文件名以 `.` 开头也不该拒 |
+| **②** | `portable_archive` 的失败信息说自己是 `portable_file`（`failure.evidence[0]`） | 让每个后端说出**自己的**名字（`portable_file.py` 抽出模块级 `fetch_local_artifact(..., backend_id=...)`，archive 的本地分支传自己的 id）；非空性：`portable_file` 自己仍说自己 |
+| **③** | `where` 的**候选行**把已登记的外部引用报成 `source:"path"`——而 `path` 在 `field-values.md` 里被解释成"在 PATH 上找到的"，**这一版没有任何分支产生它** | 候选行报它**真正的**来源 `registry`（owned 实例或已登记引用，同一行的 `management` 区分两者）。**顶层 `source` 是已发布 schema 枚举的，一个字不动**；`path` 在取值表里打上 † 并写明"这一版没有写者"，并由一条**扫全 app** 的守卫证明那句 † 是真话 |
+| **④** | `where` 的候选行同时说 `health:"healthy"` 与"入口点不见了"，而它选中之后 `executable` 指向一个**不存在的文件**（`run` 与 `tool verify` 都拒绝那个文件，只有"可选中"这一个读者不同意） | 行内的 `health` 在**观测决定性**时跟随观测（复用 `caps/health.py`，新增 `observe_reference`，与 `observe_payload` 共用抽出的 `_entrypoint_findings`——**没有第二套"在不在"判据**），`usable` 跟随该行的 `health`。于是入口点被删的 payload 报 `broken`、**不再被选中**，答案是 `BROKEN`(3) 而不是 exit 0 指向一个不存在的文件。**这是接受的行为变化**：没有任何原本能用的东西变得不能用（那个文件本来就已经不在了），而它让 `where` 与那三个真正动 payload 的动词一致 |
+
+### 171.2 `plan --dry-run` 的 `target.scope`：无条件等于路由器的答案
+
+`--scope machine` 是 `_resolve_plan_target` 的**兜底值**——`caps/planner.py` 的 `decide_scope` **永不返回
+`machine`**，所以写它唯一的效果是把 `routing.answered` 变真（= 对 §12.1 那道门宣布"我答了"），
+而 `plan --dry-run` 报的 `target.scope` 却是**调用方写的那个**。§161.1 的裁决说"dry run 报的 `target.scope`
+改用**路由器决定的**那个 scope"，代码只兑现了"没人作答"那一半。
+
+现在 `reported_scope = decision.scope`（**无条件**）：`target.scope` = 路由器决定的**目的地种类**，
+`target.path`/`data_root_id` = **调用方命名的目的地**，两者可能不同——而那正是
+`routing.requested_scope` 与 `decided_scope` 要**一起读**的原因。`--scope machine` 仍被接受
+（ADR-0021：不主动收紧已接受的输入）。
+
+**顺带订正了我在 §170 写下的一句过头话**：我把 `confirmation.md` 改成"作答的 scope 与路由决定的不一致就
+exit 4"，而实测只在**需要确认的能力**上成立——`plan node --scope project`（high_risk）是 exit 4，
+`plan archive --scope project`（通用工具，本来就不问）是 exit 0 而 `decided_scope` 是 data-root。
+§171 把这句话收窄了，并写明 `requested_scope` 与 `decided_scope` 不同**不等于有人违规**。
+
+### 171.3 文档面（一处一改，全部实测过）
+
+- **SKILL**：`doctor` 是唯一**没有 `reason_code`** 的报告面（`doctor-response` 契约里没有那个字段，
+  它用 `status` + 每条 `diagnostics[].code`）；`exit_status` **只在真的起了子进程时才有**（OS 拒绝启动时报
+  `CHILD_PROCESS_FAILED` 而没有它）；`path verify` 读的是**注册表里持久化的** PATH，**不是进程 PATH**
+  （所以手里 PATH 很脏的调用方也会得到"一切正常"）；`adopt` **只吃目录**、目录要先被白名单认出来、
+  `recreate` 这一版会拒；`where --version` 的候选**只有当前绑定与 reference**（装过但未激活的版本不在候选里，
+  要问"我装过哪些"用 `tool list`）；并把两条**有 lane 却没人教**的命令补进命令地图（`capability list` / `env list`）。
+- **`field-values.md`**：`where-response::source` 的 `path` 打 †（③）；新增一节《没有 schema 的两处小词表》
+  （`scope decide` 的 `scope` 含 `unsupported`、`extension list` 的 `registered`——后者 `false` **不**表示不能用）；
+  `search rebuild` 的信封报 `refresh` 这件事写清（`operation` 命名的是**操作**，不是 argv）。
+- **`agents/airoot.json`**：`env persist` 那条 lane 的 notes 从"writes nothing"改成"**会写下 plan 文件**
+  （那才是可批准物），而什么都不持久化"；`unmapped_verbs.scope` 的理由补上 `scope memory`；
+  `inventory --class` 补上"**它不过滤**，文档是整份投影"；`discover --record` 补上 `recorded` 与 `counts`
+  各答一个问题。
+- **白名单**：`build` 那条 `weak_reason` 里"capability itself is not yet frozen"改成真话——**能力在 `cap-4`
+  里已经冻结，弱的是"识别证据"**，不是能力的存在。
+
+### 171.4 我自己的验收
+
+```text
+A  把 reference 候选行的 `source="registry"` 改回 `"path"`         → ③ 三条 + field-values 的 † 守卫 一起红
+B  把 `health = observed if decisive else recorded` 改成恒 recorded → ④ 的两条 变红
+C  `reported_scope = decision.scope` 改回旧写法                     → ⑤ 的新守卫 红，而 §161 那条仍绿
+```
+
+三处都是字节级变异并按字节写回。真机验收脚本我自己跑了：`closed loop: PASS (0 failed check(s))`、
+`isolation: PASS (0 difference(s))`（含 `where` 在闭环里的两条读数）。
+
+### 171.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1494 → 1509**（+15） |
+| 代码 | `tx/artifact.py`、`caps/where.py`、`caps/health.py`、两个后端、`cli.py`；文档/SKILL/JSON 见 §171.3 |
+| 契约层 | **不动**（`cli/schema` 一个字未改；新取值一个都没加——③ 走的是"让行说真话 + 给没写者的值打 †"，不是改枚举） |
+| 语料 | **变 3 个 fixture、5 行**（候选行与顶层的 `source`：`where_deprecated_external_fallback_is_ignored`、`where_owned_broken_degrades_to_reference`、`where_unmanaged_only`），在同一个改动里重生；重生后全语料 `"source": "path"` 零命中 |
+| 既有期望被取代 | **1 条**（`test_l1_health.py::test_both_observers_agree_once_the_entrypoint_is_deleted` —— 就是 ④ 的行为变化本身），并把"为什么是修正不是回归"写进了它的 docstring |
+| 记录在案、本阶段**不扩** | 不声明入口点的 reference 行、以及"整个载荷目录不见了"，仍由**登记值**回答（§147.4 的窄化原样保留）；"登记值能不能被磁盘推翻"是**另一个裁决** |

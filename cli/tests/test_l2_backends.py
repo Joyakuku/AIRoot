@@ -222,6 +222,41 @@ def test_a_missing_artifact_fails_without_leaving_a_stage(registry, clock, root,
     assert tx["outcome"] == "NOT_FOUND"
 
 
+def test_a_refusal_names_the_backend_that_refused(registry, clock, root, tmp_path: Path) -> None:
+    """§171 ②: `portable_archive` admits a local `.zip` too, and borrowed `portable_file.fetch`.
+
+    It therefore refused with ``portable_file takes an existing local file as its source`` while the
+    plan it was refusing recorded ``backend_id=portable_archive`` — the message named a backend that
+    was not doing the reading, and an agent reading the evidence would go and look at the wrong
+    declaration. The reader takes the name of the backend that runs it now, and this pins both
+    directions: the archive backend says its own name, and the file backend still says its own.
+    """
+
+    missing = tmp_path / "cmake-3.30.5-missing.zip"
+
+    def failure_details(backend_id: str) -> list[str]:
+        backend = resolve_backend(backend_id)
+        plan = create_artifact_plan(
+            registry, backend,
+            capability_id="fake-tool", version="3.30.5", kind="managed_tool",
+            locator=str(missing), source_digest="sha256:" + "a" * 64, clock=clock,
+        )
+        assert plan["metadata"]["backend_id"] == backend_id
+        fake_issuer.install_keyring(root.path)
+        token = fake_issuer.issue(plan, clock=clock)
+        tx = ArtifactRunner(registry, backend, clock=clock).commit(plan, token)
+        assert tx["state"] == "ROLLED_BACK" and tx["outcome"] == "NOT_FOUND", tx
+        return [str(item["detail"]) for item in tx["failure"]["evidence"]]
+
+    archive = " ".join(failure_details("portable_archive"))
+    assert "portable_archive takes an existing local file as its source" in archive, archive
+    assert "portable_file" not in archive, archive
+
+    # Non-vacuity: the backend that really is the single-file reader still says so.
+    single = " ".join(failure_details("portable_file"))
+    assert "portable_file takes an existing local file as its source" in single, single
+
+
 def test_the_instance_digest_describes_the_owned_payload_not_the_source(
     registry, clock, root, artifact: Path
 ) -> None:
