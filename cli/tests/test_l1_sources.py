@@ -48,9 +48,12 @@ def run(capsys, *argv: str) -> tuple[int, dict]:
 def test_the_shipped_catalog_is_valid_and_allowlists_hosts() -> None:
     catalog = load_sources()
 
-    assert catalog.revision == "src-1"
+    assert catalog.revision == "src-2"
     assert "static.rust-lang.org" in catalog.allowed_hosts
+    # §151: the first runtime source, and the only entry whose artifact is a tree rather than a file.
+    assert "nodejs.org" in catalog.allowed_hosts
     assert any(item.capability_id == "rust-toolchain" for item in catalog.sources)
+    assert any(item.capability_id == "node" for item in catalog.sources)
 
 
 def test_every_catalog_entry_names_a_checksum_source() -> None:

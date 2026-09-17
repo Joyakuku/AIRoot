@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "src-1",
+  "revision": "src-2",
   "notes": [
     "Trusted upstream sources (draft §23). This file answers three questions and nothing else:",
     "  which host may be contacted, what artifact a (capability, version) maps to, and where the",
@@ -21,13 +21,20 @@
     "fetch and parse. A digest source that does not exist is worse than no entry at all: `archive`",
     "is now a capability without a source, so `source resolve` answers NOT_FOUND(1) — 'a capability",
     "without a source is a reference-only capability, not an installable one' — instead of surfacing",
-    "an HTTP 404 as PROVENANCE_FAILED(7)."
+    "an HTTP 404 as PROVENANCE_FAILED(7).",
+    "src-2 (draft §151): `node` was added — the first **runtime** source, and the first whose",
+    "artifact is a runtime *tree* rather than a single file. Like every entry here it was",
+    "resolved for real before it was written: SHASUMS256.txt carries the GNU-style line for",
+    "node-v22.14.0-win-x64.zip, and the artifact answers with 34906389 bytes. The artifact is a",
+    "`.zip`, so `source resolve` picks `portable_archive` (§145), and a plan for `node` is",
+    "`kind=runtime` (§150) — which is what makes the installed object a runtime instance."
   ],
   "allowed_hosts": [
     "static.rust-lang.org",
     "github.com",
     "objects.githubusercontent.com",
-    "raw.githubusercontent.com"
+    "raw.githubusercontent.com",
+    "nodejs.org"
   ],
   "sources": [
     {
@@ -55,6 +62,19 @@
       "filename": "cmake-{version}-windows-x86_64.zip",
       "publisher": "Kitware",
       "notes": "a portable archive with no installer script; the checksum file lists the archive by name. Verified online in draft §59: this is the `sha256sums` name-matching path, and it resolved a real digest for the real filename. The artifact itself was not downloaded."
+    },
+    {
+      "capability_id": "node",
+      "kind": "https",
+      "artifact_url": "https://nodejs.org/dist/v{version}/node-v{version}-win-x64.zip",
+      "checksum": {
+        "kind": "https",
+        "url": "https://nodejs.org/dist/v{version}/SHASUMS256.txt",
+        "format": "sha256sums"
+      },
+      "filename": "node-v{version}-win-x64.zip",
+      "publisher": "OpenJS Foundation",
+      "notes": "Verified online in draft §151: the first **runtime** source, resolved for real before the entry existed, which is what the growth path above requires: SHASUMS256.txt carries the GNU-style line for node-v22.14.0-win-x64.zip, and the artifact HEAD answers 200 with 34906389 bytes. `node` is a frozen `kind=runtime` capability with a whitelist predicate, so `source resolve node --version 22.14.0` is the whole operator route to an owned runtime — no new verb and no new flag. The version is one this machine really has under nvm4w, which is the point: the ledger can now account for a runtime AIROOT installed rather than only for one it referenced."
     }
   ]
 }

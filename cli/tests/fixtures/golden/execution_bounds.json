@@ -54,7 +54,7 @@
     "discovery_whitelist": "wl-6",
     "search": "srch-4",
     "selection": "sp-1",
-    "sources": "src-1"
+    "sources": "src-2"
   },
   "provenance": {
     "artifact_bounds": "caps/backends/{portable_file,https_artifact}.py",

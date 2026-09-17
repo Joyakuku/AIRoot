@@ -12888,3 +12888,58 @@ P5 Runtime 最客观的一处缺口是：**`runtime-instance.schema.json` 是一
 | 契约层 | **不动**：没有 schema、没有枚举、没有退出码、没有 reason code。变的是**谁被构造** |
 | 语料 | **+1**（`runtime_instance.json`）；`docs/schema/README.md` 的"没有写者"清单 **3 → 2** |
 | 没有做 | **操作者还没有一条路走出一个 runtime 实例**：`sources.json` 里没有 runtime 来源，且 `adopt --mode import` 对 `kind=runtime` 按 §12.1 **拒绝**（它绑机器级、问不了"装哪儿"）。写者已存在、`plan` 已会按 `python`/`node`/`java` 产出 `kind=runtime`，但把一个**真实**运行时装进去，是下一个决策 |
+## 151. 第一个 runtime 来源：owned runtime 的路通了，而它在正确的地方停下来问（`src-2`）
+
+P5 的最后一个缺口是**操作者没有一条路**：§150 给了 `runtime-instance` 写者，但没有任何来源能提供一个运行时。
+这一节把它接上，并且**第一次让一个运行时走到 §12.1 那道确认门前**。
+
+### 151.1 先量：上游按成长路径的规矩先验证，条目后写
+
+`sources.json` 自己的规矩写着「只有**真的解析过**的 host 与能力才能进来，没验证过的条目不许"为了完整"先占位」。
+所以顺序是先解析、后写条目：
+
+| 探法 | 读数 |
+|---|---|
+| `SHASUMS256.txt`（`nodejs.org/dist/v22.14.0/`） | 3777 字符，含 GNU 风格行 `55b639295920b219bb2acbcfa00f90393a2789095b7323f79475c9f34795f217  node-v22.14.0-win-x64.zip` |
+| artifact HEAD | 200，`content-length=34906389` |
+| **产品自己的 `source resolve node --version 22.14.0`** | `backend_id=portable_archive`、`offline=False`、`expected_digest=sha256:55b639295920b219…f217` —— **与上游发布的那一行逐字相同**，而且**摘要是从校验和文件来的**，不是自己算的 |
+
+选 `node` 而不是 `python` 有两个理由：它有**机器可读的**校验和文件（python.org 没有），而它的 win-x64 发行版
+就是一个 `.zip` —— 于是它正好落在 §145 的 `portable_archive` 上，装进 store 的是一棵**树**，而不是一个文件。
+`node` 本身已经是**冻结的 `kind=runtime` 能力**，白名单里也有它的谓词，所以这一条**没有新动词、没有新 flag**。
+
+### 151.2 它停在正确的地方：§12.1 的确认门
+
+解析通过之后，`plan node --source-json <resolved>` 报：
+
+```text
+exit=4  reason_code=SCOPE_CONFIRMATION_REQUIRED
+message: installing node needs confirmation before a plan may be produced
+evidence: installing a runtime creates an environment, and where it lives is a real choice
+          options: project-isolated / data-root / cancel
+          origin=high_risk
+```
+
+**这是设计里那道门，而且这是第一次有一个运行时走到它面前**：§12.1 把"装包 / 建环境 / 超阈值"列为必须确认的
+三类，运行时装的就是环境，所以 `plan` 不给计划、只给问题——而不是像 `adopt --mode import` 那样**因为问不了
+所以拒绝**（那条拒绝现在是同一件事的另一面：`import` 固定绑机器级，`plan` 能问）。答案由操作者用
+`--scope project`/`--scope data-root --target data-root:<id>` 给，给完之后就是 §150 那条路。
+
+### 151.3 改了什么
+
+1. `sources.json` → **`src-2`**：加 `node` 条目（host `nodejs.org`、`SHASUMS256.txt`、`sha256sums` 格式），
+   条目的 `notes` 按规矩写明**它是怎么被验证的**（守卫会检查这句话的存在，第一版就因为没有"Verified"字样红了）；
+2. `test_l1_sources.py`：把钉住 shipped revision 的那条断言从 `src-1` 改成 `src-2`，并断言新 host 与
+   `node` 条目在清单里；
+3. `cli/tests/fixtures/golden/execution_bounds.json`：shipped policy revision 是那份契约目录的一部分，
+   重生一次（**同一个提交里**）。
+
+### 151.4 成本与**没有做的事**
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 不动**（改的是策略文件、一条断言与一份契约目录，不加用例） |
+| 契约层 | **不动**（没有 schema、没有枚举、没有码） |
+| 语料 | **0 个 fixture 变化**（`execution_bounds.json` 里的 revision 字符串变了，数量不变，仍是 **44**） |
+| 真机读数 | 上游解析：真；`expected_digest` 与上游发布逐字相同；`plan` 报 `SCOPE_CONFIRMATION_REQUIRED(4)` |
+| **没有做** | **回答那道门之后的整链没有观察到**：`plan --scope … ` → `issue` → `approve` → `install` → `tool verify` → `run --capability node -- --version` → `retire` → `gc` 真删。所以这一节的标题是"路通了、它在正确的地方停下来问"，**不是"真机装成了一个运行时"**。下一轮补这一次并记录读数 |
