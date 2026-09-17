@@ -11999,4 +11999,70 @@ truncated AGENTS.md from 65840 to 65243 bytes
 **这一节最该留下的是这条因果**：不是"顺手多修了两处"，而是**把静默改成响亮之后，第一轮就多出三个
 信号**。"没人被通知"能盖住多少东西，这一轮量到的数字是 3。
 
+## 140. 引用可以落在数据根的**任何深度**——`adopt` 的归属规则（ADR-0051）
+
+### 140.1 先纠正一条旧叙述
+
+`where rust-toolchain` 不是"只能指到 store 里的安装器"。临时 root 里把 `~/.rustup` 登记为数据根之后，
+**`adopt` 容器 `~/.rustup/toolchains` 就成功了**，`where rust-toolchain` 立刻命中**真实工具链**
+（`active_version=1.98.1.0`、`digest sha256:ca9988af…`）——多版本与活跃版本本来就在容器对象上。
+所以缺的不是"数据根之外"，是**深度**。
+
+### 140.2 实测（临时 root；`dr-cargo`/`dr-rustup` 已登记；`wl-5`）
+
+| 目标 | 当时 | 读数 |
+|---|---|---|
+| `discover` | `dr-rustup`: `external_reference=1`（`toolchains`，cap=`rust-toolchain`）+ unmanaged 3；`dr-cargo`: unmanaged 1 | `files_touched=0` |
+| `adopt ~/.rustup/toolchains`（**直接子项**） | ✅ `SUCCESS` | `where rust-toolchain` 随后命中它 |
+| `adopt ~/.rustup/toolchains/stable-x86_64-pc-windows-msvc`（孙项） | ❌ `INVALID_INPUT`(8) | `target.parent == 数据根` 不成立 |
+| `adopt ~/.cargo/bin`（直接子项） | ❌ `CAPABILITY_NOT_DECLARED`(9) | 三个 shim **没有版本资源** |
+| `adopt ~/.cargo/bin/cargo.exe`（孙项） | ❌ `INVALID_INPUT`(8) | 同一条深度规则 |
+
+### 140.3 机制（三处）与两处核心事实
+
+机制见 **ADR-0051**；两处**决定改动大小**的事实是读代码得到的，不是推断：
+
+- `doctor` 的 reference 重观测**按路径**做（`_check_references` → `classify_object(path, data_root_id=…)`），
+  **不含任何深度假设**——放开深度不会让漂移检测失真；
+- `external_id` 原来是 `external/<数据根>/<目录名>`，**默认一层**——所以它必须跟着改成**地址**，
+  否则同一数据根下两个同名目录会撞 id。**深度-1 的 id 逐字节不变**（一段路径 join 出来就是原字符串），
+  于是这条裁决之前登记的引用一个都不动、golden 语料不需要重生。
+
+归属的实现是**最深包含**：数据根可以嵌套，内层细化外层；目标必须**严格在里面**，
+**数据根本身不是对象**（它是作用域），这一条被明确拒绝并说清原因。
+
+### 140.4 明确写在范围外的两件事
+
+1. **数据根之外的"自由引用"不做**：数据根是 `doctor` 重观测的上下文与**卷守卫**（`volume_serial`）的来源，
+   没有它就没有"我在观察这棵树、但不拥有它"这句陈述（见 ADR-0051 的被否决项）。
+2. **`~/.cargo/bin` 的 shim 不是对象图问题**，是能力/白名单问题（三个 shim 没有版本资源，`wl-5` 的注释
+   早记过）：它要另立工作项（`weak_evidence` 谓词，或另冻一个 `cargo` 能力）。本节**没有**动它。
+
+### 140.5 守卫与验红
+
+四个新用例（两个在 `test_l1_discovery.py`，两个在 `test_cli_steward.py`）：
+
+| 用例 | 问的问题 |
+|---|---|
+| id 是地址 | 深度-1 逐字节不变；深度-2 = `external/dr-env/toolchains/stable-x86_64-pc-windows-msvc`；同根两个 `bin` 不撞 |
+| 归属错误的拒绝 | 传一个不包含目标的根 → `INVALID_INPUT`（不许静默回落到目录名）；数据根本身也被拒 |
+| 深度-2 的 adopt 端到端 | `adopt` 成功 → `where` 命中（`path` 是入口、evidence 记的是对象目录）→ `doctor` 无 `REFERENCE_DRIFTED` |
+| `adopt <数据根>` | `INVALID_INPUT`，消息说清"作用域不是对象" |
+
+**验红（两次变异，各自还原、前后 sha256 相同）**：
+
+| 变异 | 结果 |
+|---|---|
+| `external_id` 忽略相对路径（回落到目录名） | id 那个用例 **红** |
+| `adopt` 的归属改回 `target.parent == 数据根` | 深度-2 adopt 那个用例 **红**（孙项 `INVALID_INPUT`） |
+
+### 140.6 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1369 → 1373**（+4）；`test_l0_consistency.py` 常驻审计 **112 不动**（新用例不在那个模块） |
+| 计数同步 | `AGENTS.md` 三处、规范审查报告的当前状态节两处 |
+| 协议面 | **无新 schema、无新 reason code、无新动词**；`Candidate` 多一个内部字段 `relative_path`，**不进文档**（`to_document` 不变，故 discover 的 schema 与语料不动） |
+| 行为 | `adopt` 接受更深的对象；`adopt <数据根>` 的拒绝理由更准确；其余动词按路径工作，不变 |
+| ADR | **ADR-0051**（含三条被否决的路） |
 

@@ -2660,3 +2660,67 @@ binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
 - 需要新增一个模块（`caps/launcher.py`）与一条 CLI 参数（`run --capability`），**没有新 schema、没有新码**。
 
 **状态：已裁决（B —— 写静态 `.cmd`，权威留在 registry）。** 实现与实测记录见草案 **§123**。
+
+## ADR-0051 — **引用可以落在数据根的任何深度**（`adopt` 的归属规则：从"父目录相等"改为"最深包含"）
+
+### 背景
+
+账本当时的对象模型是"**一个数据根的直接子项 = 一个对象**"：`adopt --mode reference` 要求
+`target.parent` 恰好等于某个已登记数据根。这条规则在小数据根上够用（`D:\env\java` 正好是直接子项），
+对**用户目录里的工具树**不够用——那些树的"对象"天生在第二层：`~/.rustup/toolchains/<triple>`、
+`~/.cargo/bin/cargo.exe`。
+
+实测（临时 root；`dr-cargo`/`dr-rustup` 已按 §121 登记；白名单 `wl-5`）：
+
+| 目标 | 当时 | 读数 |
+|---|---|---|
+| `discover` | `dr-rustup`: `external_reference=1`（`toolchains`，cap=`rust-toolchain`）+ unmanaged 3；`dr-cargo`: unmanaged 1 | `files_touched=0` |
+| `adopt ~/.rustup/toolchains`（**直接子项**） | ✅ `SUCCESS` | 随后 `where rust-toolchain` 命中**真工具链**（`active_version=1.98.1.0`） |
+| `adopt ~/.rustup/toolchains/stable-x86_64-pc-windows-msvc`（孙项） | ❌ `INVALID_INPUT`(8) | `target.parent == 数据根` 不成立 |
+| `adopt ~/.cargo/bin`（直接子项） | ❌ `CAPABILITY_NOT_DECLARED`(9) | 三个 shim **没有版本资源**（`wl-5` 的注释早记过） |
+| `adopt ~/.cargo/bin/cargo.exe`（孙项） | ❌ `INVALID_INPUT`(8) | 同一条深度规则 |
+
+**顺带纠正一处旧叙述**：`where rust-toolchain` 不是"只能指到 store 里的安装器"。把容器 `toolchains`
+登记成引用之后，`where` 就指向真实工具链了（多版本与活跃版本本来就在那个容器对象上）。缺的是**深度**，
+不是"数据根之外"。
+
+两处**决定改动大小**的核心事实（读代码得到，不是推断）：
+
+- `doctor` 的 reference 重观测**按路径**做（`caps/doctor.py` 的 `_check_references` →
+  `classify_object(path, data_root_id=…)`），**不含任何深度假设**；
+- `external_id` 当时是 `external/<数据根 slug>/<对象目录名 slug>`（`caps/discovery.py` 的
+  `Candidate.external_id`）——它默认了"一层"，深度放开后同一数据根下两个同名目录会撞 id。
+
+### 决定
+
+**B —— 归属 = 最深的、包含目标的已登记数据根；id 变成地址。**
+
+1. `adopt --mode reference <path>` 接受**任何**落在某个已登记数据根**之内**的目标；归属取**最深**的那个
+   数据根（数据根可以嵌套，内层细化外层，而不是与外层竞争）。目标必须**严格在里面**：**数据根本身不是
+   对象**（它是作用域），`adopt <数据根>` 被明确拒绝并说明原因。
+2. `external_id` 由"数据根 + 目录名"改为"数据根 + **对象在其中的相对路径**"（逐段 slug、`/` 连接）。
+   **深度-1 的 id 逐字节不变**（一段路径 join 出来的就是原来那个字符串），所以这条裁决之前登记的引用
+   一个都不动，golden 语料也不需要重生。
+3. `discover` 的对象粒度**不变**（仍是数据根的直接子项、即容器）。引用可以比它更细——这是两个问题：
+   `discover` 回答"这棵树里有哪些对象"，`adopt` 回答"我要登记哪一个"。
+
+### 被否决的路
+
+- **自由引用（不在任何数据根里的对象）**：数据根是 `doctor` 重观测的上下文与**卷守卫**（`volume_serial`）
+  的来源；没有它就没有"我在观察这棵树、但不拥有它"这句陈述，一条没有观测面的引用只能证明"这个路径当时存在"。
+- **每个深度各登记一个数据根**：也不成立——要引用 `toolchains/<triple>` 本身，得登记它的**父目录**，
+  而那正是已经登记过的 `~/.rustup`；再往下登记只能引用更深一层，永远差一层。
+- **改 `discover` 的对象模型（把每一层都当对象）**：那会让 `D:\env` 这样的大根对象数爆炸，也会让
+  "一个能力一个对象"的等价关系失效。容器粒度是对的，缺的只是引用粒度。
+
+### 后果
+
+- 现有 id 不动（逐字节），`test_matching_object_becomes_a_reference_candidate` 那类断言原样成立；
+- `doctor`、`where`、`inventory`、`search` 都**不需要改**：它们按路径工作；
+- **一处新增拒绝**：`adopt <数据根本身>`（以前掉进"不在数据根里"的模糊消息，现在说清是作用域不是对象）；
+- 不传数据根的调用点（`capability check`）保持旧 id 形态（`relative_path` 为 `None` 时回落到目录名）；
+- **没有新 schema、没有新 reason code、没有新 CLI 动词**；`Candidate` 多一个内部字段 `relative_path`，
+  它**不进文档**（`to_document` 未变，故 discover 的 schema 与 golden 语料不动）。
+
+**状态：已裁决（B —— 最深包含 + 地址化 id）。** 实现与实测记录见草案 **§140**。
+

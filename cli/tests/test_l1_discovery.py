@@ -24,6 +24,7 @@ from airoot.caps.discovery import (
     VERSION_SOURCE_PREFIX,
     WHITELIST_PATH,
     WhitelistEntry,
+    classify_object,
     discover_all,
     discover_data_root,
     load_whitelist,
@@ -217,6 +218,56 @@ def test_matching_object_becomes_a_reference_candidate(data_root: Path) -> None:
     assert candidate.source_kind == "pe_static"
     assert candidate.external_id == "external/dr-env/python"
     assert candidate.evidence and candidate.evidence[0]["kind"] == "pe_static"
+
+
+def test_a_candidate_id_is_an_address_not_a_directory_name(data_root: Path) -> None:
+    """§140 / ADR-0051: the id carries the object's path below the data root.
+
+    `external/<root>/<name>` was enough while only direct children could be adopted. At any depth,
+    two objects called `bin` under one root would have collided, so the path is part of the identity.
+    A depth-1 object yields the identical string as before (a one-component path), which is why
+    nothing recorded before this change moves — the assertion below pins both halves.
+    """
+
+    place_python_pe(data_root / "python")
+    place_python_pe(data_root / "toolchains" / "stable-x86_64-pc-windows-msvc")
+    place_python_pe(data_root / "other" / "bin")
+
+    shallow = classify_object(data_root / "python", data_root_id="dr-env", data_root_path=data_root)
+    deep = classify_object(
+        data_root / "toolchains" / "stable-x86_64-pc-windows-msvc",
+        data_root_id="dr-env",
+        data_root_path=data_root,
+    )
+    sibling = classify_object(data_root / "other" / "bin", data_root_id="dr-env", data_root_path=data_root)
+
+    assert shallow.external_id == "external/dr-env/python"
+    assert deep.external_id == "external/dr-env/toolchains/stable-x86_64-pc-windows-msvc"
+    assert sibling.external_id == "external/dr-env/other/bin"
+    assert len({shallow.external_id, deep.external_id, sibling.external_id}) == 3
+    # The path is per component, so a deep object does not get truncated into a shallow one's id.
+    assert slug(deep.relative_path) != deep.relative_path
+
+
+def test_classifying_an_object_for_a_root_that_does_not_contain_it_is_refused(
+    data_root: Path, tmp_path: Path
+) -> None:
+    """Falling back to the directory name would be silent, and silence is how a collision happens.
+
+    A data root is also refused as one of its own objects: the scope is not a capability.
+    """
+
+    place_python_pe(tmp_path / "elsewhere" / "python")
+
+    with pytest.raises(AirootError) as outside:
+        classify_object(tmp_path / "elsewhere" / "python", data_root_id="dr-env", data_root_path=data_root)
+    assert outside.value.reason_code == "INVALID_INPUT"
+    assert "not inside the data root" in outside.value.message
+
+    with pytest.raises(AirootError) as itself:
+        classify_object(data_root, data_root_id="dr-env", data_root_path=data_root)
+    assert itself.value.reason_code == "INVALID_INPUT"
+    assert "not one of its own objects" in itself.value.message
 
 
 def test_unmatched_object_stays_unmanaged(data_root: Path) -> None:

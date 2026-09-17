@@ -323,6 +323,9 @@ class Candidate:
     directory_name: str
     management: str
     data_root_id: str | None = None
+    #: Posix path below the data root, when the caller could name it. This is what makes the
+    #: id an **address** instead of a directory name (draft §140 / ADR-0051).
+    relative_path: str | None = None
     capability_id: str | None = None
     kind: str | None = None
     version: str | None = None
@@ -338,10 +341,19 @@ class Candidate:
 
     @property
     def external_id(self) -> str:
-        """Stable id namespaced by data root, so equal directory names never collide."""
+        """Stable id namespaced by the data root **and by the object's path below it**.
+
+        `external/<root>/<name>` assumed one level, which was enough while `adopt` only
+        accepted direct children. §140 allows any depth, and then two objects called `bin`
+        under one root would have collided; the path is the addressing that was missing. A
+        depth-1 object produces the identical string (a one-component path), so nothing
+        recorded before §140 moves.
+        """
 
         prefix = slug(self.data_root_id) if self.data_root_id else "root"
-        return f"external/{prefix}/{slug(self.directory_name)}"
+        tail = self.relative_path or self.directory_name
+        parts = [part for part in tail.replace("\\", "/").split("/") if part]
+        return f"external/{prefix}/" + "/".join(slug(part) for part in parts)
 
     def to_document(self) -> dict[str, Any]:
         return {
@@ -453,16 +465,46 @@ def _is_reparse(path: Path) -> bool:
     return is_reparse_point(path)
 
 
+def _relative_inside(target: Path, data_root_path: Path | None) -> str | None:
+    """`target`'s posix path below `data_root_path`, or None when no root was given.
+
+    A root that does not contain the object is a caller mistake, not a verdict about the
+    object: the id would quietly fall back to the directory name and could then collide with
+    a same-named object at another depth — the collision §140 exists to remove. A data root
+    is a scope, not an object, so it cannot be classified as its own child either.
+    """
+
+    if data_root_path is None:
+        return None
+    try:
+        relative = target.relative_to(data_root_path).as_posix()
+    except ValueError as exc:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"object is not inside the data root it was classified for: {target}",
+            evidence=[f"data_root={data_root_path}"],
+        ) from exc
+    if relative == ".":
+        raise AirootError(
+            "INVALID_INPUT",
+            f"a data root is not one of its own objects: {target}",
+            evidence=[f"data_root={data_root_path}"],
+        )
+    return relative
+
+
 def classify_object(
     entry: Path,
     *,
     data_root_id: str | None = None,
+    data_root_path: Path | None = None,
     whitelist: Whitelist | None = None,
 ) -> Candidate:
-    """Classify one object (a direct child of a data root). Pure read."""
+    """Classify one object inside a data root, at any depth. Pure read."""
 
     rules = whitelist or load_whitelist()
     target = Path(entry)
+    relative_path = _relative_inside(target, data_root_path)
     if not target.is_dir():
         raise AirootError("INVALID_INPUT", f"an adopted object must be a directory: {target}")
     if _is_reparse(target):
@@ -471,6 +513,7 @@ def classify_object(
             directory_name=target.name,
             management="quarantined",
             data_root_id=data_root_id,
+            relative_path=relative_path,
             notes=["reparse point: not followed, not classified"],
         )
     exclusion = rules.exclusion_for(target.name)
@@ -480,6 +523,7 @@ def classify_object(
             directory_name=target.name,
             management="excluded",
             data_root_id=data_root_id,
+            relative_path=relative_path,
             notes=[exclusion.reason],
         )
     executables, _capped = _iter_executables(target, rules.limits)
@@ -487,6 +531,7 @@ def classify_object(
     if classified is None:
         classified = _unmanaged(target, executables)
     classified.data_root_id = data_root_id
+    classified.relative_path = relative_path
     return classified
 
 
@@ -550,6 +595,8 @@ def discover_data_root(
             classified = _unmanaged(entry, executables)
         classified.data_root_id = data_root_id
         candidates.append(classified)
+    for candidate in candidates:
+        candidate.relative_path = _relative_inside(candidate.object_root, root)
     return DiscoveryReport(
         data_root_id=data_root_id,
         data_root_path=str(root),

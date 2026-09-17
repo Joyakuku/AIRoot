@@ -488,25 +488,44 @@ def cmd_adopt(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any
     registry = context.registry()
     try:
         target = canonicalize(args.path, must_exist=True)
-        owner = next(
-            (
-                row
-                for row in registry.data_roots()
-                if Path(_claim_spelling(str(row["path"]))) == target.parent
-            ),
-            None,
-        )
+        roots = registry.data_roots()
+        # §140 / ADR-0051: the owner is the **deepest** registered root that contains the
+        # target, not the one it happens to be a direct child of. A data root is a scope, so a
+        # root nested inside another one refines it rather than competing with it; and the
+        # target must be strictly inside, because the scope itself is not an object.
+        inside: list[tuple[int, Any]] = []
+        for row in roots:
+            root_path = Path(_claim_spelling(str(row["path"])))
+            try:
+                relative = target.relative_to(root_path)
+            except ValueError:
+                continue
+            if str(relative) != ".":
+                inside.append((len(root_path.parts), row))
+        owner = max(inside, default=(0, None), key=lambda item: item[0])[1]
         if owner is None:
+            at_a_root = any(
+                Path(_claim_spelling(str(row["path"]))) == target for row in roots
+            )
             raise AirootError(
                 "INVALID_INPUT",
-                "adopt only accepts objects that sit directly inside a registered data root",
+                (
+                    "a data root is a scope, not one of its own objects: adopt something inside it"
+                    if at_a_root
+                    else "adopt only accepts objects inside a registered data root"
+                ),
                 evidence=[
                     f"requested={target}",
-                    f"registered roots={[row['path'] for row in registry.data_roots()]}",
+                    f"registered roots={[row['path'] for row in roots]}",
                 ],
             )
         data_root = data_root_from_row(owner)
-        candidate = classify_object(target, data_root_id=data_root.data_root_id, whitelist=load_whitelist())
+        candidate = classify_object(
+            target,
+            data_root_id=data_root.data_root_id,
+            data_root_path=Path(_claim_spelling(str(owner["path"]))),
+            whitelist=load_whitelist(),
+        )
         if candidate.management != "external_reference":
             raise AirootError(
                 "CAPABILITY_NOT_DECLARED",

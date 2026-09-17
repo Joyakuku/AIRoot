@@ -338,6 +338,59 @@ def test_adopt_outside_a_data_root_is_refused(capsys, cli_root: Path, tests_tmp:
     assert "registered data root" in document["message"]
 
 
+def test_adopt_accepts_an_object_deeper_inside_a_data_root(
+    capsys, cli_root: Path, data_root: Path
+) -> None:
+    """§140 / ADR-0051: a tool tree's objects are rarely direct children of the tree's root.
+
+    `~/.rustup/toolchains/<triple>` is the shape this was measured on: `discover` already classifies
+    the container, `doctor` re-observes a reference by path, and only `adopt` insisted on depth 1.
+    """
+
+    toolchain = data_root / "toolchains" / "stable-x86_64-pc-windows-msvc"
+    place_pe(toolchain, "python.exe")
+    assert add_root(capsys, cli_root, data_root, "--role", "tool")[0] == 0
+
+    code, document = run(capsys, "--json", "--root", str(cli_root), "adopt", str(toolchain))
+
+    assert code == 0, document
+    reference = document["reference"]
+    assert reference["external_id"] == "external/dr-env/toolchains/stable-x86_64-pc-windows-msvc"
+    assert reference["capability_id"] == "python"
+    assert reference["data_root_id"] == "dr-env"
+    assert document["files_touched"] == 0
+
+    # The point of the change: the deeper reference is a first-class candidate, and re-observing it
+    # finds the same facts (`doctor` classifies by path, so depth was never its problem).
+    where_code, where = run(capsys, "--json", "--root", str(cli_root), "where", "python")
+    assert where_code in {0, 2}, where
+    assert where["found"] is True
+    assert where["management"] == "external_reference"
+    assert where["selection_reason"] == "STEWARD_REFERENCE_HEALTHY"
+    # `path` is the entry actually run; the object directory is what the evidence records.
+    chosen = next(item for item in where["candidates"] if item["management"] == "external_reference")
+    assert chosen["path"] == str(toolchain / "python.exe")
+    assert any(item.get("path") == str(toolchain) for item in chosen["evidence"])
+
+    _doctor_code, diagnosis = run(capsys, "--json", "--root", str(cli_root), "doctor")
+    codes = {item["code"] for item in diagnosis["diagnostics"]}
+    assert "REFERENCE_STALE" not in codes
+    assert "REFERENCE_DRIFTED" not in codes
+
+
+def test_adopting_a_data_root_itself_is_refused(capsys, cli_root: Path, data_root: Path) -> None:
+    """ADR-0051: the data root is the scope a reference sits **in**, not an object inside it."""
+
+    place_pe(data_root / "python", "python.exe")
+    assert add_root(capsys, cli_root, data_root, "--role", "runtime")[0] == 0
+
+    code, document = run(capsys, "--json", "--root", str(cli_root), "adopt", str(data_root))
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert "scope" in document["message"]
+
+
 def test_adopt_import_plans_and_installs_a_script_free_file(
     capsys, cli_root: Path, data_root: Path, tmp_path: Path
 ) -> None:
