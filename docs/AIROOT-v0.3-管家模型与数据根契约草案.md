@@ -12195,3 +12195,62 @@ truncated AGENTS.md from 65840 to 65243 bytes
 | 常驻审计 | **112 → 113** |
 | 计数同步 | `AGENTS.md` 三处、规范审查报告两处 |
 
+## 143. 三个 ref 文件被清零／截断：一次仓库修复的读数
+
+### 143.1 症状与诊断
+
+`git status -sb` 把**整棵树**列成 `A`（全部当成新增），而 `git log` / `git branch` 报
+`your current branch appears to be broken`。逐项读数：
+
+| 位置 | 状态 |
+|---|---|
+| `.git/HEAD` | 正常（`ref: refs/heads/main`） |
+| `.git/packed-refs` | 可读，但里面是**旧的** tip（`4cda8d78…`，§137 那次 `gc` 留下的） |
+| `.git/refs/heads/main` | **41 字节，全 0** |
+| `.git/refs/remotes/origin/main` | **41 字节，全 0** |
+| `.git/refs/remotes/origin/HEAD` | **0 字节**（被截断） |
+| `.git` 其余文件 | 全树扫描：没有别的全零文件 |
+| 对象库 | `git cat-file -t 23da4c96…` → `commit` ✓ **完好** |
+
+**"只有三个 ref 文件坏、对象一个不少"这一条决定了修法**：不需要从远端重取（当时也取不到，见 §143.4），
+只需要把引用指回那个**上一轮实测过的** tip。
+
+### 143.2 修复步骤（不用网络）
+
+1. 删掉三个坏 ref 文件——**必须先删**：`git update-ref` 在 loose ref 损坏时会拒绝写入
+   （`cannot lock ref …: unable to resolve reference …: reference broken`），它连"要把哪个引用改成什么"
+   都读不出来。第一次尝试正是被这一点挡住的；
+2. 删完之后从 `packed-refs` 解析出的是**旧的** `4cda8d78…`，所以接着
+   `git update-ref refs/heads/main 23da4c96…`、`git update-ref refs/remotes/origin/main 23da4c96…`
+   ——写回的是**上一轮 `git ls-remote` 与本地 `rev-parse` 都量到过的**那个 tip；
+3. `git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main` 重建被截断的那个；
+4. `git pack-refs --all` 归并（把 `packed-refs` 里那条旧的挤掉），`git reset` 重建索引。
+
+### 143.3 验证（逐条读数）
+
+| 检查 | 读数 |
+|---|---|
+| `git rev-parse HEAD` | `23da4c961846a2a7f85152faf9cb63353570cc98`——与上一轮推送的 tip **逐字相同** |
+| `git show-ref` | `main` / `origin/HEAD` / `origin/main` **三个都指 23da4c96…** |
+| `git fsck --full` | **退出码 0**，零报告 |
+| `git status` | `## main...origin/main`，**0 处改动**（工作树与 HEAD 一致，也说明那次事件没有动工作树内容） |
+| 对象库 | pack **2.37 MiB** / in-pack 1656 / 松散 101（最近几次提交） |
+| 全套测试 | **1377**（内容未被那次事件碰到） |
+
+### 143.4 这一节**不做**的三条断言
+
+- **不说"网络没问题"**：修完当次 `git ls-remote` **失败**——本机到 GitHub 的代理（`127.0.0.1:7890`）
+  当时不可达。上面用的远端 tip 是**上一轮的实测值**，不是这一次重新量的；
+- **不说知道原因**：两个文件恰好 41 字节全零、第三个 0 字节，其余 `.git` 文件无损、对象完好。
+  这是一次**文件级**事件（磁盘、杀软、备份工具都做得到），本节只能证明"哪些字节变了"，不能指认是谁改的；
+- **不说已经预防**：`.git` 不在本项目的守卫范围内，没有加任何守卫，下一次仍可能发生；留下来的是这条诊断路径。
+
+### 143.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1377 → 1377**（本节不动代码） |
+| 仓库 | refs 恢复、索引重建、工作树 0 改动、`fsck` 干净 |
+| 未完成 | **推送**：代理不可达，本轮的提交只能先留在本地 |
+
+
