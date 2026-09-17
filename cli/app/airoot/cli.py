@@ -22,6 +22,7 @@ from .caps.where import WhereQuery, where
 from .clock import SYSTEM_CLOCK
 from .exits import AirootError, EXIT_DEGRADED, EXIT_RECOVERY, EXIT_SUCCESS, exit_code_for
 from .ext.fake import FakeExtension
+from .ext.hosts import hosted_here, unhostable_evidence
 from .ext.manifest import load_manifests
 from .posture import SECURITY_MODE, enforcement_for
 from .registry import Registry
@@ -2250,6 +2251,16 @@ def cmd_extension_status(args: argparse.Namespace, context: Context) -> tuple[di
             "EXTENSION_UNAVAILABLE",
             f"unknown extension: {args.extension_id}",
             evidence=sorted(manifests),
+        )
+    if not hosted_here(manifest):
+        # A manifest is a declaration, not a host: running it through the fake extension would answer
+        # with the fake host's own self-test word under someone else's extension_id.
+        raise AirootError(
+            "EXTENSION_UNAVAILABLE",
+            f"extension {args.extension_id} declares implementation "
+            f"{manifest.get('implementation_id')}, which this build cannot host: the only extension "
+            "host here is the deterministic fake extension",
+            evidence=unhostable_evidence(manifest),
         )
     extension = FakeExtension(manifest, clock=context.clock)
     document = extension.run(args.operation or "status")

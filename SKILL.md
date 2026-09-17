@@ -57,14 +57,14 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "这个 X 是从哪来的 / 凭什么信它" | `airoot source list --json`，再 `airoot source resolve X --version … --json` | **不编造 digest**；校验和来自上游发布的文件，不是你自己算的 |
 | "这东西能不能交给 AIROOT 管" | `airoot capability check <path> --json` | 不为了让对象"能被管"而放宽判据 |
 | "这个目录（D:\env 之类）交给 AIROOT 看着" | `airoot data-root add <path> --id <data_root_id> --role <runtime\|tool\|mixed> --json` | **注册不写任何文件**（`files_touched` 是 0）；这是管家域的第一步：没有数据根，`discover`/`adopt` 无事可做 |
-| "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件 |
+| "把这个目录里的东西登记一下" | `airoot discover --json`（只读）→ `airoot adopt <path> --mode reference --json` | 不 `adopt` 数据根之外的路径；数据根内不删任何文件。**数据根是"注册点"不是"存储位置"**：AIROOT 自己装的东西落在这个 root 的 `store\` 里，数据根目录本身**一个文件都不会被写**（`files_touched=0` 就是这条） |
 | "别再记着这个引用了（文件不要动）" | `airoot forget <external-id> --json` | **永不删文件**，只丢记录；reference 没有 `uninstall`（`unadopt` 是它的兼容别名） |
 | "让 X 在这个会话/项目里可用" | `airoot env activate <external-id> --session <id> --shell powershell` 或 `airoot exec <external-id> -- <cmd>`（`exec --env <external-id> -- <cmd>` 同义） | 不声称能改父 shell（物理上做不到） |
 | "把 AIROOT 装的那个工具跑一下" | `airoot run <instance-id> [-- <args>] --json`，或按**当前绑定**跑 `airoot run --capability <id> -- <args> --json`（稳定入口用的就是后者） | 不声称这会持久暴露它：`run` 只跑**一次**，不动环境变量、不动 PATH、不动 binding——会写这些的那些动词才报 `PERSISTENCE_REQUIRES_APPROVAL`；**没跑起来就说没跑起来**（退出码在 `exit_status`，`reason_code` 是 `SUCCESS`/`CHILD_PROCESS_FAILED`）；要长期可用是 `env persist` 或稳定入口那两件事，不是这条 |
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
-| "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json` | **对 reference 一律拒绝**：那不是 AIROOT 的东西 |
+| "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json`，**要真删才** `airoot tool gc --apply --token-file <token>`（需要本机签一次：见《批准》） | **对 reference 一律拒绝**：那不是 AIROOT 的东西。`--apply` 是**全链唯一会真删东西的一步**（必须带 token，没有 `--force`）；`--plan` 只列可回收项。`retire` 清绑定**不清稳定入口那个文件**——入口的漂移由 `path verify` 报 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
 | "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（需要本机签一次：见《批准》） |
 | "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致） | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
@@ -73,6 +73,16 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "这个索引是什么状态 / 为什么报了 stale" | `airoot search status --json`、`airoot search explain <query> --json` | `stale` 只说明索引比 `--max-staleness-ms` 旧：refresh 或放宽约束，不要说它"坏了" |
 | "确认一下现在到底什么状态" | `airoot doctor --verify --json` | 不把 `--verify` 的结果当成"已修复" |
 | "诊断说投影/审计漂移了" | `airoot rebuild --plan --json` 看清要重建什么，再 `airoot rebuild --json` | **不改数据库**；不 adopt 陌生对象；不删任何文件 |
+
+**三个 flag 边界**（都实测过，踩了会拿到难懂的结果）：
+
+- **`--json` 写在 `--` 之前**：`airoot run <id> --json -- --version` 才拿到信封；写在 `--` 之后会被**原样交给子进程**（`exec` 同理），于是你看到的是子进程的 "unknown option" 和一个 `CHILD_PROCESS_FAILED`。
+- **`--dry-run` 不是同一个意思**：`plan --dry-run` **什么都不写**，而 `env persist --dry-run` **会写下那个 plan 文件**（信封自带 `plan_file`）——看完就删是你的选择，别以为它没落盘。
+- **普通 `doctor` 看不见内容漂移**：它只做有界重观测（版本/路径/入口点），**只有 `doctor --verify` 会给入口点重算整文件 digest**。所以 `doctor` 报 `healthy` 不等于"被引用的那个文件没被动过"；要真查就 `--verify`。
+
+`metadata.routing` 的三个字段要一起读：`confirmation_required` 与 `decision_reason` 说的是**这一类要不要问**
+（分类），`confirmation_answered_by` 说的是**这一次谁答了**（状态）。只看到 `decision_reason=SCOPE_CONFIRMATION_REQUIRED`
+就以为门还开着是误读——有 `confirmation_answered_by` 就是已经答过了。
 
 `where` 会说清楚它为什么这么选（`selection_reason`）。常见值的含义：
 

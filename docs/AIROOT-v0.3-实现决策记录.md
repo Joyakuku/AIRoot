@@ -3256,7 +3256,71 @@ target.scope = "machine"
   需要给每条诊断登记一个结构化的"可否修复"，那是另一件事——**记下来，不假装做了**。
 - **没有做的**：F2（`extension status` 的身份错位）与 F6/F4（各要一次裁决）、F7–F11（文档收口）。
 
-**状态：已裁决并已落地（A、B，草案 §161）**：A 的守卫是
+**状态：已裁决并已落地（A、B，草案 §161）**
+
+## ADR-0061 — **`extension status` 回答的是它自己的实现，而编码前缀不是身份**
+
+### 背景
+
+§159 的全表面测试留下三条"**报告讲的是别人家的事实**"（我在临时 root 上复现）：
+
+**A —— `extension status <id>` 用另一个扩展的身份作答**（§159 F2）。`cmd_extension_status` 对**任意**
+已知 id 都构造 `FakeExtension(manifest)`，于是假扩展硬编码的那份自证词被挂在别人的 `extension_id` 下：
+
+```text
+$ airoot extension status airoot-native-search-extension --json
+exit=0  status=ok  reason_code=null
+data.health=healthy  data.freshness=static
+data.self_test.checks=["envelope","manifest","operation-policy"]   ← 假扩展的常量
+evidence[0].detail="deterministic fake extension; no external state touched"  ← 逐字节相同
+data.operations=["explain","refresh","search","status"]            ← 这条来自 manifest，所以信封"看着"合理
+```
+
+第二个 id 的 manifest 里 `health_checks` 是 `["probe","permission","index_integrity"]`，**没有 `self_test`**。
+一个 agent 读到 `health=healthy`，会以为 `file_search` 在这台机器上是健康的——那是一句它无从判断的话。
+
+**B —— `health` 是登记时记下的值，而读的人当它是重测值**（§159 F7）。`caps/toolstate.py:61` 就是
+`str(row["health"])`：payload 已被 `gc` 收走的实例仍读 `healthy`，同一份文档里的 `payload_present=false`
+与 `findings=[PAYLOAD_COLLECTED]` 才是那一刻的事实。这一条同一个 root 上还有一个**姐妹字段**：
+`lifecycle_status` 也出现了两行同时读 `active` 而只有一个 binding 的情形（§162.7，记为候选）。
+
+**C —— root marker 的 BOM 被当成身份问题**（§159 F9）。`read_marker` 用 `utf-8` 读自己写的文件；带 BOM
+意味着**别人**编辑过它（Windows 上多数编辑器的默认产物），而结果是一份**可读**的 marker 报
+`ROOT_MARKER_INVALID`（`Unexpected UTF-8 BOM`）。
+
+### 决定
+
+**A —— 判据是 manifest 自己的 `implementation_id`，不是扩展的名字。** 本 build 只宿主
+`airoot-fake-deterministic`（`ext/fake.py` 里那个假扩展）；其余 manifest 的 `extension status` 报
+`EXTENSION_UNAVAILABLE`(9)，并给出**推导出来的**证据（按该 manifest 自己的 `capability_types` 查
+"这个能力在本 build 真的在哪里"）。两条没有采用的路：按扩展名字判（改名即失效，而名字与"谁会跑它"
+没有关系）、改报 `EXTENSION_NOT_FOUND`（语义是"没有扩展提供这个 capability"，被 §159.3 记为"可辩护
+但不准"）。**不可用 ≠ 被抹掉**：`extension list` 照旧列出它。
+
+**B —— `health` 这一版保持"登记时记下的值"，不加重测写者。** 把记录值改成每次读盘重算是一次语义
+变更：它会让 `health` 与"最后一次事务的结论"脱钩，而重测这件事在这个 build 里已经有它的位置——`where`
+（会给 `NOT_FOUND`）与 `caps/health.py::observe_payload`（§147）。所以这一版改的是**解释**：
+`references/field-values.md` 写明它是记录值并点名那两个真正重测的地方。**同一个问法对
+`lifecycle_status` 也成立**（§162.7 的候选读数），那一半要一次专门的复现，不在本裁决内。
+
+**C —— 用 `utf-8-sig` 读 marker。** marker 的身份是**字段值 + 卷序列号**，不是它的编码前缀；AIROOT 自己
+写的那份不带 BOM，所以这条只影响"有人手工编辑过"的情形，而那正是诊断最不该消失的情形。这是 ADR-0021
+"默认放宽"的直接应用。
+
+### 代价
+
+- **A 是一处对外行为的变更**：两个已知 id 里有一个从 `ok` 变成 `EXTENSION_UNAVAILABLE`(9)；不可宿主 id 的
+  `--operation probe|invoke` 的**码**也由 `EXTENSION_OPERATION_UNKNOWN` 变成同一个码（两条都是真话，
+  退出码都还是 9）。`EXTENSION_UNAVAILABLE` 早已注册、早已有写者，**不需要动码表、不需要重生语料**。
+- **B 不加守卫**：文档与代码一致这件事今天只能靠读；做成守卫要给每个字段登记一个"记录值 / 派生值"的
+  结构化标记，那是另一件事——**记下来，不假装做了**。
+- **没有一个 schema 描述 `extension status` 的信封与 `root-marker` 的编码**，所以这一条不动契约层。
+- **没有做的**：F6（稳定入口的第二个写者）与 F4（`DATA_ROOT_MISSING` 的档位）各要一次裁决；F12 候选
+  （`lifecycle_status` 的两行 active）的完整复现。
+
+**状态：已裁决并已落地（A、B、C，草案 §162）**：A 的守卫是 `test_l1_extension.py` 的四条（含一条
+"改名不改变结论"的判据守卫与一条"不可用≠被抹掉"），验红为 `if False and not hosted_here(manifest):`；
+C 的守卫是 `test_cli.py::test_a_root_marker_with_a_bom_is_still_readable`，验红为把编码改回 `utf-8`。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

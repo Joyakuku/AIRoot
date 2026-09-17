@@ -112,7 +112,12 @@ def read_marker(root: Path) -> dict[str, Any]:
     import json
 
     try:
-        marker = json.loads(path.read_text(encoding="utf-8"))
+        # §159 F9: `utf-8-sig`, not `utf-8`. AIROOT writes this file without a BOM, so a BOM means a
+        # human (or another tool) edited it — and on Windows that is what most editors produce. The
+        # bytes of the marker carry no meaning beyond the fields in it, so refusing a BOM-checked
+        # file only ever turned a readable marker into `ROOT_MARKER_INVALID` (the file's own
+        # identity check is the field values plus the volume serial, not its encoding prefix).
+        marker = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise AirootError("ROOT_MARKER_INVALID", f"root marker is unreadable: {path}", evidence=[str(exc)]) from exc
     validate_document("root-marker", marker, reason_code="ROOT_MARKER_INVALID")

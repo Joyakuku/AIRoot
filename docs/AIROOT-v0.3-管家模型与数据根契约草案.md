@@ -13773,3 +13773,168 @@ FAILED test_an_unanswered_plan_records_no_requested_scope
 | 文档 | `references/field-values.md` 一格、`SKILL.md` 第一步的一条变两条 |
 | 没有做 | F2（下一个阶段）、F6（要一次裁决）、F4（要一次裁决）、F7–F11（文档收口） |
 | 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |
+
+## 162. F2 + F7–F11：`extension status` 不再讲别人家的故事，五处解释收口
+
+裁决见 **ADR-0061**。§159 那份清单里剩下的六条**不需要裁决**的缺陷一次做完：一条代码缺陷（F2）与五处
+"说错了"（F7、F8、F9、F10、F11）。F1 见 §160，F3+F5 见 §161；F6 与 F4 各要一次裁决，**不在本节**
+（§162.7 给出对它们有影响的额外读数）。
+
+**为什么合成一节**：F2 的改动由一个并行 agent 落在工作树上时，我已经在改 F7–F11 的文档；而 F9 的用例
+与 F2 的四条用例落在**同一次计数变动**里（1412 → 1417）。拆成两个提交的话，前一个提交的计数守卫必然
+是 1412 而树上已经有 1417 条测试——一个过不去的提交比一次诚实的合并更贵。**F2 的代码与用例由 agent 写，
+它的读数与验红我在自己的临时 root 上逐条复跑过**（§162.6 写明哪几条是我复跑的）。
+
+### 162.1 F2：`extension status <id>` 曾经按**另一个实现**的身份作答
+
+修法前的读数（同一个 root，两条命令都 exit 0）：
+
+| 字段 | `airoot-fake-extension` | `airoot-native-search-extension` |
+|---|---|---|
+| `status` / `reason_code` | ok / null | **ok / null** |
+| `data.health` / `data.freshness` | healthy / static | **完全相同** |
+| `data.self_test.checks` | `["envelope","manifest","operation-policy"]` | **逐字节相同** |
+| `evidence[0].detail` | `deterministic fake extension; no external state touched` | **逐字节相同** |
+| `data.operations` | invoke/probe/status | explain/refresh/search/status |
+
+最后一行来自 manifest，所以信封**看着**很合理；前两行是假的——search manifest 的 `health_checks` 是
+`["probe","permission","index_integrity"]`，**根本没有 `self_test`**，而 `health=healthy`/`freshness=static`
+是假扩展的常量。原因在 `cmd_extension_status`：它对**任意**已知 id 都构造 `FakeExtension(manifest)`，
+于是那份硬编码的自证词被挂在别人的 `extension_id` 下。**这不是"缺一个功能"，是一份报告在讲别人家的
+故事**：agent 读到的 `health=healthy` 与 `file_search` 在这里到底是什么毫无关系。
+
+修法：新增 `cli/app/airoot/ext/hosts.py`（唯一的宿主身份 + 一张"这个能力在本 build 真的在哪里"的表），
+`cmd_extension_status` 在 unknown-id 分支之后多一道判据：
+
+```python
+if not hosted_here(manifest):
+    raise AirootError("EXTENSION_UNAVAILABLE", …)
+```
+
+- **判据是 manifest 自己的 `implementation_id`**（`hosted_here` 只比这个字符串），**不是扩展的名字**：
+  一个模块可以改名而不改变"谁会跑它"，按名字判是巧合不是判据。用例
+  `test_the_host_criterion_is_the_implementation_id_not_the_extension_name` 把 fake manifest 改名后
+  仍判可宿主、把 search 的 `airoot-native-search-crawl` 判不可宿主。
+- **证据是推导出来的**：`unhostable_evidence` 按 manifest 自己的 `capability_types` 查 `CAPABILITY_HOMES`
+  （当前只有 `file_search → cli/app/airoot/caps/search.py` + `search implementations` / `search status`），
+  表里没有的能力只说"不经扩展宿主可达"，**不**声称"本 build 没有实现"——那是同一个缺陷的小号版本。
+- **行为不变的两条**：fake 扩展仍 exit 0 / `status=ok` / 自证词仍是原来那句；未知 id 仍报
+  `EXTENSION_UNAVAILABLE` 且证据列全部已知 id。`extension list` 未改（**不可用 ≠ 被抹掉**，
+  `test_extension_list_still_declares_the_extension_this_build_cannot_host` 钉住这一点）。
+- **`--operation` 的码变了**：不可宿主 id 的 `--operation probe|invoke` 由 `EXTENSION_OPERATION_UNKNOWN`
+  变成 `EXTENSION_UNAVAILABLE`（两条都是真话，退出码都是 9）。选后者的理由：`status` 与 `probe|invoke`
+  对同一个 id 给出**同一个**理由，比"这个 manifest 恰好没声明 probe"更接近调用方要知道的那件事。要保留
+  "就是没声明这个 operation"这条事实，判据得改成"先查 operation 声明、再查宿主"——**记在这里，不假装做了**。
+
+**没有采用的两条路**：① 按扩展名字硬编码（改名即失效，且名字与"谁会跑它"没有关系）；② 改报
+`EXTENSION_NOT_FOUND`——它的两个写者（`cli.py:2930`/`3022`）都在 `search` 路径上，语义是"**没有扩展
+提供这个 capability**"（`exits.py:186` 注释原文），拿它报"这个 id 的实现在这里跑不了"是拉伸语义
+（§159.3 已把这条主张记为"可辩护但不准"）。
+
+### 162.2 F7：`health` 是**登记时记下的值**，不是重测值
+
+`tool list` / `tool status` 直接取注册表那一列（`caps/toolstate.py:61` 就是 `str(row["health"])`），
+所以一个 payload 已被 `gc` 收走的实例仍可能读 `health=healthy`——同一份 `tool status` 里的
+`payload_present=false` 与 `findings=[PAYLOAD_COLLECTED]` 才是那一刻的事实。
+
+`references/field-values.md` 的 `$defs.health` 那一格补上这条，**并点名这个 build 里真正重测的是谁**：
+`where`（会给 `NOT_FOUND`）与 `caps/health.py` 的 `observe_payload`（§147）。**没有加重测写者**：
+把记录值改成每次读盘重算是一次语义变更（它会让 `health` 与"最后一次事务的结论"脱钩），不是这一阶段
+该顺手做的事——ADR-0061 把这条写成裁决，免得下一个读者以为它只是个措辞问题。
+
+### 162.3 F8：三个 flag 边界（agent 面文档）
+
+`SKILL.md` 补了一段《三个 flag 边界》，三条都是实测踩过的：
+
+- `--json` 写在 `--` **之前**才是 AIROOT 的选项，写在之后原样交给子进程（`run`/`exec` 同理）；
+- `--dry-run` **不是同一个意思**：`plan --dry-run` 什么都不写，`env persist --dry-run` **会写下那个
+  plan 文件**（信封自带 `plan_file`）；
+- 普通 `doctor` 只做有界重观测，**只有 `doctor --verify`** 给入口点重算整文件 digest（与 162.2 同型：
+  一个听起来像"检查过了"的动词，实际检查的范围比读者以为的窄）。
+
+同一段还补了 `metadata.routing` 的读法：`confirmation_required`/`decision_reason` 说的是**这一类要不要
+问**，`confirmation_answered_by` 说的是**这一次谁答了**；只看到 `decision_reason=SCOPE_CONFIRMATION_REQUIRED`
+就以为门还开着是误读（§161.1 刚把同一族里的另一半修掉）。
+
+### 162.4 F9：root marker 的编码前缀**不是**它的身份
+
+`root.py` 的 `read_marker` 由 `encoding="utf-8"` 改成 **`utf-8-sig`**。AIROOT 自己写这个文件时不带 BOM，
+所以带 BOM 意味着有人（或别的工具）编辑过它——在 Windows 上那正是多数编辑器的产物。marker 的身份是
+**字段值 + 卷序列号**，不是它的编码前缀；原来的行为只把一份**可读**的 marker 变成
+`ROOT_MARKER_INVALID`（AIROOT 自己写的那份永远碰不到这条）。这是 ADR-0021"默认放宽"的一个直接应用，
+守卫是 `test_a_root_marker_with_a_bom_is_still_readable`（写 BOM 后 `root status` 仍 exit 0）。
+
+### 162.5 F10 / F11：数据根是**注册点**；`gc --apply` 是全链唯一真删的一步
+
+- **F10**：`SKILL.md` 的 `data-root add` 那一行补上"**数据根是注册点不是存储位置**"——AIROOT 自己装的
+  东西落在这个 root 的 `store\` 里，数据根目录**一个文件都不会被写**（`files_touched=0` 就是这条）。
+  读者最容易把"把这个目录交给 AIROOT"理解成"AIROOT 会往这个目录里写东西"。
+- **F11**：`"把它卸掉"` 那一行补上 `tool gc --apply --token-file`（需要本机签一次）并写明它是
+  **全链唯一会真删东西的一步**、`--plan` 只列可回收项、没有 `--force`；同时写明 `retire` 清绑定
+  **不清稳定入口那个文件**——入口的漂移由 `path verify` 报（这一句正好是 F6 的一半，见 §162.7）。
+
+### 162.6 守卫与验红
+
+五条新用例（`cli/tests/test_l1_extension.py` 4 条 + `cli/tests/test_cli.py` 1 条）：
+
+| 用例 | 钉住的命题 |
+|---|---|
+| `test_the_host_criterion_is_the_implementation_id_not_the_extension_name` | 判据是 `implementation_id`，改名不改变结论 |
+| `test_extension_status_does_not_answer_for_an_extension_this_build_cannot_host` | 不可宿主 id 不得给出 `status=ok`，且不得出现假扩展的自证词/`self_test`；证据点名 `caps/search.py` 与两条 `search` 命令 |
+| `test_extension_status_still_runs_the_hosted_extension` | 唯一宿主的路径没被这道门误伤 |
+| `test_extension_list_still_declares_the_extension_this_build_cannot_host` | 不可用 ≠ 从目录里消失 |
+| `test_a_root_marker_with_a_bom_is_still_readable` | F9：BOM 不是身份 |
+
+**验红（两处，各一次合成变异；F2 那一处我在自己的机器上复跑过，不是转抄）**：
+
+```text
+# 把 `if not hosted_here(manifest):` 改成 `if False and not hosted_here(manifest):`
+FAILED test_extension_status_does_not_answer_for_an_extension_this_build_cannot_host
+       AssertionError: a manifest nobody here can run is not healthy
+       assert not (0 == 0 and 'ok' == 'ok')
+```
+
+```text
+# 把 `encoding="utf-8-sig"` 改回 `encoding="utf-8"`
+FAILED test_a_root_marker_with_a_bom_is_still_readable
+       assert 6 == 0        ← ROOT_MARKER_INVALID
+       Unexpected UTF-8 BOM
+```
+
+F2 的合成变异用**字节级**改写做（`%TEMP%\airoot-scratch\redproof_f2.py`：备份原字节 → 替换那一行 →
+跑用例 → 从备份写回），跑完核对文件字节**与改动前相同**（`git diff --stat` 仍是 `+11`）。用字节级而不是
+编辑工具，是因为本仓库 `* -text` 而 `cli.py` 存的是 LF——文件工具会把整份文件转成 CRLF，一次十行的
+改动会变成几千行的 diff。
+
+### 162.7 一次独立核对（F12 候选，**不是**本次修法引入）
+
+F6 的调查 root（`%TEMP%\airoot-scratch\f6\root`）留在盘上，我直接读了它的最终状态，读出两件事：
+
+```text
+tool list  → archive/probe/9.9.10/win-x64   health=broken  lifecycle=broken  active_binding=null
+             archive/probe/9.9.11/win-x64   health=healthy lifecycle=**active** active_binding=null
+             archive/probe/9.9.9/win-x64    health=healthy lifecycle=**active** active_binding=machine/archive/windows/x64 (gen 6)
+where archive → instance_id=archive/probe/9.9.9/win-x64, selection_reason=MACHINE_MANAGED_HEALTHY, exit 0
+```
+
+**两行同时读 `lifecycle_status=active`，而同一个 binding key 只有一个 active implementation**，`where`
+选的是 9.9.9。`field-values.md` 对 `active` 的解释是"有 active binding"——所以这是 **162.2 那一类的
+第二个字段**：`lifecycle` 与 `health` 一样是登记时记下的值，不能当派生事实读。F6 的调查还实测到
+"同版本重装 = `INSTANCE_CONFLICT`(7) + 把当前实例标 `broken`"（该 root 的 audit seq 34/35），与
+9.9.10 那一行现在读 `broken` 一致。
+
+**本阶段只把它记成候选**：完整因果链（哪一次事务把哪一行写成了 active、回滚为什么能复活一个绑定）
+要一次专门的复现，我没有做，所以**不把它写成结论**。它是 F6/F12 那一轮的第一件事。
+
+### 162.8 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1412 → 1417**（+5：F2 四条 + F9 一条） |
+| 代码 | `cli/app/airoot/ext/hosts.py`（新，72 行）、`cli.py`（+11）、`root.py`（一行 + 注释） |
+| 契约层 | **不动**（没有 schema 描述 `extension status` 的信封与 `root-marker` 的编码；`EXTENSION_UNAVAILABLE` 早已注册并已有写者） |
+| 语料 | **不动**（无 `extension status` / marker 相关 fixture） |
+| 文档 | `SKILL.md` 三处；`references/field-values.md` 一格（`$defs.health`） |
+| 隔离 | 复跑用的 root 在 `cli/tests/.tmp/` 与 `%TEMP%\airoot-scratch\` 内；没有碰 `D:\env*`、HKCU、PATH、注册表 |
+| 没有做 | F6、F4 的裁决（各要一次，材料已备）；F12 候选的完整复现（§162.7）；`--operation` 判据的顺序问题（§162.1 末） |
+| 入口文档预算 | `AGENTS.md` 改完之后实测 **63259 B / 上限 63488 B**（**只剩 229 B**）：本节只同步了计数与范围（外加 ADR-0061 的一行摘要），细节全部留在草案里 |

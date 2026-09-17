@@ -12,10 +12,12 @@ from pathlib import Path
 import pytest
 
 from airoot import schema_io
+from airoot.cli import main
 from airoot.exits import AirootError, exit_code_for
 from airoot.ext import FakeExtension, load_manifest, load_manifests, register_manifests
 from airoot.ext.envelope import envelope, failure_envelope
 from airoot.ext.fake import load_fake_extension
+from airoot.ext.hosts import hosted_here
 from airoot.ext.manifest import declared_operations, operation_policy
 
 MANIFEST = Path(__file__).resolve().parents[1] / "extensions" / "airoot-fake-extension.json"
@@ -228,3 +230,93 @@ def test_manifests_are_registered_as_declared_state(registry, monkeypatch) -> No
     assert row["protocol_version"] == 1
     assert json.loads(row["manifest_json"])["capability_types"] == ["fake-echo"]
     assert registry.event_count() == 1
+
+
+# --------------------------------------------------------------------------- #
+# the CLI must answer with *that* extension's facts, not the fake host's
+# --------------------------------------------------------------------------- #
+
+#: A bundled manifest this build cannot run: `file_search` is `caps/search.py` here, not a host.
+SEARCH_EXTENSION = "airoot-native-search-extension"
+SEARCH_MANIFEST = Path(__file__).resolve().parents[1] / "extensions" / f"{SEARCH_EXTENSION}.json"
+
+#: `ext/fake.py`'s hardcoded self-test word, verbatim. It belongs to `airoot-fake-extension` and
+#: must never show up in the answer about another extension — that is the whole defect.
+FAKE_SELF_TEST_WORD = "deterministic fake extension; no external state touched"
+
+
+def run_cli(capsys, *argv: str) -> tuple[int, dict]:
+    code = main(list(argv))
+    captured = capsys.readouterr()
+    document = json.loads(captured.out) if captured.out.strip() else {}
+    return code, document
+
+
+@pytest.fixture
+def cli_root(registry) -> Path:
+    return Path(registry.path).parent.parent
+
+
+def test_the_host_criterion_is_the_implementation_id_not_the_extension_name() -> None:
+    """The decision must survive a rename, so it cannot be a lookup on ``extension_id``."""
+
+    fake = load_manifest(MANIFEST)
+    assert hosted_here(fake) is True
+    assert hosted_here(dict(fake, extension_id="airoot-renamed-fake")) is True, (
+        "a rename does not change which implementation would run"
+    )
+
+    search = load_manifest(SEARCH_MANIFEST)
+    assert search["implementation_id"] == "airoot-native-search-crawl"
+    assert hosted_here(search) is False
+
+
+def test_extension_status_does_not_answer_for_an_extension_this_build_cannot_host(capsys, cli_root) -> None:
+    """F2: ``extension status <id>`` used to run *every* manifest through the fake host.
+
+    The envelope carried ``extension_id=airoot-native-search-extension`` while its ``data`` and
+    ``evidence`` were ``ext/fake.py``'s hardcoded self-test — a health report about a different
+    implementation, delivered under this id.
+    """
+
+    code, document = run_cli(capsys, "--json", "--root", str(cli_root), "extension", "status", SEARCH_EXTENSION)
+
+    assert not (code == 0 and document.get("status") == "ok"), "a manifest nobody here can run is not healthy"
+    assert code == 9
+    assert document["reason_code"] == "EXTENSION_UNAVAILABLE"
+
+    rendered = json.dumps(document)
+    assert FAKE_SELF_TEST_WORD not in rendered, "the fake host's self-test word is not this extension's answer"
+    assert "self_test" not in rendered, "`ext/fake.py`'s check list is not this extension's check list"
+
+    assert "cli/app/airoot/caps/search.py" in rendered, "the evidence must name where file_search really lives"
+    assert "search implementations" in rendered and "search status" in rendered
+    assert "deterministic fake extension" in document["message"], (
+        "the message must name the only extension host this build has"
+    )
+
+
+def test_extension_status_still_runs_the_hosted_extension(capsys, cli_root) -> None:
+    """The other half: the fix must not turn the one runnable extension into an error."""
+
+    code, document = run_cli(capsys, "--json", "--root", str(cli_root), "extension", "status", "airoot-fake-extension")
+    assert code == 0
+    assert document["status"] == "ok"
+    assert document["extension_id"] == "airoot-fake-extension"
+    assert document["data"]["self_test"]["passed"] is True
+    assert document["evidence"] == [{"kind": "self_test", "detail": FAKE_SELF_TEST_WORD}]
+
+
+def test_extension_list_still_declares_the_extension_this_build_cannot_host(capsys, cli_root) -> None:
+    """Unavailable is not erased: the catalog still declares it (the fix did not touch ``list``)."""
+
+    code, document = run_cli(capsys, "--json", "--root", str(cli_root), "extension", "list")
+    assert code == 0
+    assert [item["extension_id"] for item in document["extensions"]] == [
+        "airoot-fake-extension",
+        SEARCH_EXTENSION,
+    ]
+    assert [item["implementation_id"] for item in document["extensions"]] == [
+        "airoot-fake-deterministic",
+        "airoot-native-search-crawl",
+    ]

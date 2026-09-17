@@ -114,6 +114,30 @@ def test_root_init_creates_a_root_from_nothing(capsys, tests_tmp: Path, monkeypa
     assert status["root_instance_id"] == "root-created-by-test"
 
 
+def test_a_root_marker_with_a_bom_is_still_readable(capsys, tests_tmp: Path) -> None:
+    """§159 F9: AIROOT writes the marker without a BOM, so a BOM means someone edited it.
+
+    On Windows that is what most editors produce, and the diagnostic was accurate but unhelpful
+    (`Unexpected UTF-8 BOM`). The marker's identity is its field values plus the volume serial — not
+    its encoding prefix — so refusing it only turned a readable marker into a broken root.
+    """
+
+    target = tests_tmp / "init-bom-marker"
+    code, document = run(
+        capsys, "--json",
+        "root", "init", str(target), "--root-instance-id", "root-bom", "--machine-id", "host-bom",
+    )
+    assert code == 0, document
+    marker = target / "state" / "root.json"
+    marker.write_bytes(b"\xef\xbb\xbf" + marker.read_bytes())
+
+    code, document = run(capsys, "--json", "--root", str(target), "root", "status")
+
+    assert code == 0, document
+    assert document["registry_state"] == "available"
+    assert document["root_instance_id"] == "root-bom"
+
+
 def test_root_init_reports_the_layout_it_actually_created(capsys, tests_tmp: Path) -> None:
     """What the answer claims to have made has to be on disk: the count and the paths are read."""
 
