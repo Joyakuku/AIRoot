@@ -419,11 +419,7 @@ def cmd_data_root_forget(args: argparse.Namespace, context: Context) -> tuple[di
     try:
         row = registry.data_root(args.data_root_id)
         if row is None:
-            raise AirootError(
-                "NOT_FOUND",
-                f"unknown data root: {args.data_root_id}",
-                evidence=[item["data_root_id"] for item in registry.data_roots(active_only=False)],
-            )
+            raise _unknown_data_root(args.data_root_id, registry)
         observed = registry.external_references_for_data_root(args.data_root_id)
         with registry.write(expected_generation=registry.generation) as connection:
             for reference in observed:
@@ -468,11 +464,7 @@ def cmd_discover(args: argparse.Namespace, context: Context) -> tuple[dict[str, 
         if args.data_root:
             row = registry.data_root(args.data_root)
             if row is None:
-                raise AirootError(
-                    "NOT_FOUND",
-                    f"unknown data root: {args.data_root}",
-                    evidence=[item["data_root_id"] for item in registry.data_roots(active_only=False)],
-                )
+                raise _unknown_data_root(args.data_root, registry)
             rows = [row]
         else:
             rows = registry.data_roots()
@@ -2268,12 +2260,40 @@ def cmd_extension_status(args: argparse.Namespace, context: Context) -> tuple[di
     return document, EXIT_SUCCESS
 
 
+def _known_data_root_ids(registry: Any) -> list[str]:
+    """Every registered data root id, sorted — the evidence for "this id is not registered"."""
+
+    return sorted(str(item["data_root_id"]) for item in registry.data_roots(active_only=False))
+
+
+def _unknown_data_root(data_root_id: str, registry: Any) -> AirootError:
+    """The one answer to "this data root id is not registered" (draft §163 / ADR-0062).
+
+    Three verbs ask it — ``plan --target data-root:<id>``, ``discover --data-root`` and
+    ``data-root forget`` — and two of them answered ``NOT_FOUND``(1) while ``plan`` answered
+    ``DATA_ROOT_MISSING``(6), whose tier means "transaction recovery required". A mistyped id is not
+    a broken machine, and an agent reading only the exit code would go and run ``repair``.
+    ``DATA_ROOT_MISSING``(6) keeps its other job: a data root that *is* registered and whose
+    directory has gone away (``discovery``/``doctor`` raise it there). The evidence is labelled,
+    because a bare list of ids does not say what it is a list *of*.
+    """
+
+    return AirootError(
+        "NOT_FOUND",
+        f"unknown data root: {data_root_id}",
+        evidence=[f"known data roots: {_known_data_root_ids(registry)}"],
+    )
+
+
 def _resolve_plan_target(registry: Any, args: argparse.Namespace) -> tuple[str, str | None, str]:
     """Turn ``--scope``/``--target`` into a concrete destination (draft §12.4).
 
     Returns ``(scope, target_id, target_path)``. A data-root target must be registered, and a
     path target must exist: "typo in the path" and "the target is not there" are different
-    problems and must not collapse into one.
+    problems and must not collapse into one. A **typo in an id** is not a third problem — it is the
+    same "not there" as a typo in a path, so it answers ``NOT_FOUND``(1) like its two sibling verbs
+    (draft §163 / ADR-0062); ``DATA_ROOT_MISSING``(6) is for a registered data root whose directory
+    has gone away, which is a state problem and is reported by ``discover``/``doctor``.
 
     ``--target`` alone still says **what kind of place** it is (§155): the two spellings are not
     interchangeable — ``<dir>`` is a project, ``data-root:<id>`` is a data root. Defaulting both to
@@ -2308,16 +2328,12 @@ def _resolve_plan_target(registry: Any, args: argparse.Namespace) -> tuple[str, 
             raise AirootError(
                 "INVALID_INPUT",
                 f"a data-root target must be written data-root:<id>, got {target!r}",
-                evidence=[f"known data roots: {[row['data_root_id'] for row in registry.data_roots()]}"],
+                evidence=[f"known data roots: {_known_data_root_ids(registry)}"],
             )
         data_root_id = target.split(":", 1)[1]
         row = registry.data_root(data_root_id)
         if row is None:
-            raise AirootError(
-                "DATA_ROOT_MISSING",
-                f"unknown data root: {data_root_id}",
-                evidence=[str(item["data_root_id"]) for item in registry.data_roots(active_only=False)],
-            )
+            raise _unknown_data_root(data_root_id, registry)
         return scope, data_root_id, str(row["path"])
     return scope, None, args.target or ""
 

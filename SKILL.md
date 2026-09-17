@@ -230,3 +230,7 @@ airoot root adopt|relocate   # copy/verify/switch 规则已由 ADR-0025 决定�
 ```
 
 `reason_code` 永远比退出码更精确：**先读 `reason_code`，再读退出码**。
+
+`6` 只在 message/证据里真的出现 root / marker / volume / registry / journal（或数据根的**可读性**）时才是
+"需要恢复"。一个**没注册**的数据根 id（`unknown data root: <id>`）不是状态坏了：`plan`、`discover
+--data-root`、`data-root forget` 三条都报 `NOT_FOUND`(1)，下一步是 `data-root list`，**不要**去跑 `repair`。

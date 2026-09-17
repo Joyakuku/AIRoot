@@ -1190,6 +1190,11 @@ golden 语料重生成，其中两个 fixture **改名**：`where_conflict_manag
    `SCOPE_UPGRADE_REQUIRES_APPROVAL`；请求 project 而结论是 data-root → 允许（收窄自己不需要批准）。
 5. **`--target data-root:<id>` 必须存在于 registry**，否则 `DATA_ROOT_MISSING`；路径形式的 target
    必须是一个真实目录（`INVALID_INPUT`），因为"目标不存在"与"目标写错"要分开。
+   **这一条的错误码已被 ADR-0062 / §163 推翻**：没注册的 id 改报 `NOT_FOUND`(1)，与
+   `discover --data-root`、`data-root forget` 一致；`DATA_ROOT_MISSING`(6) 的档位是"需要事务恢复"，
+   "id 拼错了"不是机器坏了，而只读退出码的 agent 会被 6 引去跑 `repair`。它保留的另一半职责是
+   "**已注册**的数据根目录不见了"（`discover`/`doctor` 发射它）。**原文保留**：改的只是这一条分到哪一档，
+   "两个问题要分开"这个判断本身仍然成立——只是第三个情形（id 写错）属于"目标不存在"，不属于"需要恢复"。
 
 ### 20.4 验收标准
 
@@ -13938,3 +13943,65 @@ where archive → instance_id=archive/probe/9.9.9/win-x64, selection_reason=MACH
 | 隔离 | 复跑用的 root 在 `cli/tests/.tmp/` 与 `%TEMP%\airoot-scratch\` 内；没有碰 `D:\env*`、HKCU、PATH、注册表 |
 | 没有做 | F6、F4 的裁决（各要一次，材料已备）；F12 候选的完整复现（§162.7）；`--operation` 判据的顺序问题（§162.1 末） |
 | 入口文档预算 | `AGENTS.md` 改完之后实测 **63259 B / 上限 63488 B**（**只剩 229 B**）：本节只同步了计数与范围（外加 ADR-0061 的一行摘要），细节全部留在草案里 |
+
+## 163. F4：同一个"这个 id 没注册"，三个动词只能有一个答案
+
+裁决见 **ADR-0062**。§159 F4 报的是"`DATA_ROOT_MISSING` 这一档覆盖了两件事"，调查之后发现它其实是
+**三种**情形（外加保留的那一份职责），而错判的那一格只有一条路径。
+
+### 163.1 三种情形，不是二分
+
+| 情形 | 实测调用 | 修法前 | 修法后 |
+|---|---|---|---|
+| 名字合法但**没注册** | `plan archive --scope data-root --target data-root:dr-nope` | `DATA_ROOT_MISSING`(6) | **`NOT_FOUND`(1)** |
+| 同一个问题，别的动词 | `discover --data-root dr-nope` / `data-root forget dr-nope` | `NOT_FOUND`(1) | 不变（证据改成带标签） |
+| 形态不合法 | `--scope data-root --target D:/somewhere` | `INVALID_INPUT`(8) | 不变 |
+| 路径不存在（被当成 project） | `plan archive --target D:/somewhere` | `INVALID_INPUT`(8) | 不变 |
+| **已注册的数据根目录不见了** | `discover`（删掉目录之后） | `DATA_ROOT_MISSING`(6) | **不变**——它才是这个码的职责 |
+
+三条路径的 message 本来就**一字不差**（`unknown data root: <id>`），所以这一改是把第三格挪到它该在的档位，
+不是把两个情形合并。`REASON_EXIT` 是 `dict[str,int]`（实测 97 键、无重复），"同一个码两个档位"做不到；
+而 `plan --target data-root:<id>` **根本不看那个目录在不在**（它只查注册表），所以它答的从来不是最后一行。
+
+### 163.2 修法
+
+- `cli.py` 新增 `_known_data_root_ids(registry)`（排序后的 id 列表）与 `_unknown_data_root(id, registry)`
+  （唯一的构造函数），三条路径都改用它：message 与证据**逐字节相同**。
+- 证据由裸 id 列表改成 `known data roots: [...]`：一个裸列表没说清它是**什么**的列表，而 agent 要读的正是
+  这句。`--scope data-root --target D:/somewhere`（形态错）那条的已知 id 列表也换成同一个来源，于是
+  "已知数据根"在所有分支里只由一处产出。
+- `_resolve_plan_target` 的 docstring 写明这条边界，并点名 `DATA_ROOT_MISSING`(6) 保留的那份职责。
+- **不动** `exits.py`、诊断码表、schema、golden 语料：`NOT_FOUND` 早已注册、早有多处写者。
+
+### 163.3 守卫与验红
+
+`test_l1_plan_routing.py::test_an_unknown_data_root_target_is_refused` 在同一个提交里改写并加强：
+断言 `code == 1` / `reason_code == NOT_FOUND` / message 原文 / 证据带标签，并且**逐条比对三个动词**
+（`plan` / `discover --data-root` / `data-root forget`）的 `code`、`reason_code`、`message`、`evidence`
+是否**完全一致**——"同一问题同一答案"这句话第一次由守卫来量，而不是由注释来承诺。
+
+`DATA_ROOT_MISSING`(6) 的另一半职责早就有自己的用例，本轮**没有**动它们：
+`test_cli_steward.py::test_discover_unknown_data_root_is_not_found`（1）与
+`test_discover_missing_directory_is_recovery_required`（6，删目录之后 `discover` 仍报这个码）。
+
+**验红（一次合成变异）**：把构造函数里那一行 `"NOT_FOUND"` 改回 `"DATA_ROOT_MISSING"`：
+
+```text
+FAILED test_an_unknown_data_root_target_is_refused
+       assert 6 == 1
+```
+
+改动用字节级脚本做（`%TEMP%\airoot-scratch\redproof_163.py`：备份 → 替换 → 跑 → 写回），跑完核对文件
+字节与改动前相同。
+
+### 163.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1417 不动**（改写了一条既有用例并加强它的断言；另有一条 `test_l1_sources.py` 里"按退出码 6 判断要不要重跑"的既有分支改成按"拒绝了没有"，它把旧档位钉住了——这正是这条改动的外部可见性） |
+| 代码 | `cli.py`：一个两函数的小节 + 三处调用点（净 +16 行代码、-17 行重复） |
+| 契约层 / 语料 | **不动**（`NOT_FOUND` 已注册；无相关 fixture） |
+| 文档 | 契约草案 §20.3-5 就地标注（**推翻已记录的错误码**，原文保留）；`references/reason-codes.md` §6 补一段；`SKILL.md` 退出码块下面补一句 |
+| 操作者决定 | 环境收尾已按裁决执行：用户级 `AIROOT_HOME`（原来指着测试 root `D:\env_test\.airoot`）**已删除**；用户 PATH 里的 `D:\AIRoot\cli\bin` 保留 |
+| 入口文档预算 | **§163 顺手做了一件必须记录的事**：`AGENTS.md` 的 ADR 那一行**手抄了 30 多条 ADR 的摘要**（2301 字节），而这一行的最后一句话自己就写着"括号里是范围，不是内容清单——别在这里补一份手抄的目录（§85）"。§162 结束时它只剩 **229 字节**，而下一个阶段要在同一份文档里写一个新动词。现在那一行只留**范围 + 四个锚点**（`ADR-0004`/`ADR-0021`/`ADR-0025` 与"此后每一条"）：**63259 → 61148 字节**，省下 **2111 字节**。丢掉的只是抄本——每一条 ADR 的标题仍在决策记录里，而 `test_the_repo_map_states_the_decision_log_range_not_a_hand_copy_of_it` 量的就是"这一行有没有点名范围的两端"，不是它抄了几条 |
+| 没有做 | `plan --target <dir>`（被当成 project）那条 `INVALID_INPUT` 的证据里没有"已知数据根"这类指针——记着，不假装做了；F6 见下一阶段 |

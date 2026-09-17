@@ -382,13 +382,35 @@ def test_the_routing_target_changes_the_plan_hash(capsys, cli_root: Path, data_r
 
 
 def test_an_unknown_data_root_target_is_refused(capsys, cli_root: Path) -> None:
+    """§163 / ADR-0062: a mistyped id is "not there", not "the machine needs recovery".
+
+    The same question is asked by `plan --target data-root:<id>`, `discover --data-root <id>` and
+    `data-root forget <id>`; `plan` used to be the only one answering `DATA_ROOT_MISSING`(6), whose
+    tier means "transaction recovery required" — an agent reading the exit code would run `repair`.
+    """
+
     code, document = run(
         capsys, "--json", "--root", str(cli_root),
         "plan", "archive", "--scope", "data-root", "--target", "data-root:dr-nope",
     )
 
-    assert code == 6
-    assert document["reason_code"] == "DATA_ROOT_MISSING"
+    assert code == 1
+    assert document["reason_code"] == "NOT_FOUND"
+    assert document["message"] == "unknown data root: dr-nope"
+    # The evidence says what the list is a list *of*: a bare list of ids did not.
+    assert any(item.startswith("known data roots: ") for item in document["evidence"])
+
+    siblings = {
+        "discover": run(capsys, "--json", "--root", str(cli_root), "discover", "--data-root", "dr-nope"),
+        "forget": run(capsys, "--json", "--root", str(cli_root), "data-root", "forget", "dr-nope"),
+    }
+    for verb, (sibling_code, sibling) in siblings.items():
+        assert (sibling_code, sibling["reason_code"], sibling["message"]) == (
+            code, document["reason_code"], document["message"],
+        ), f"`{verb}` answers the same question differently"
+        assert sibling["evidence"] == document["evidence"], (
+            f"`{verb}` lists the known data roots differently from `plan`"
+        )
 
 
 def test_a_malformed_target_is_refused(capsys, cli_root: Path) -> None:

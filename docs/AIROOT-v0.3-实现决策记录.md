@@ -3320,7 +3320,55 @@ data.operations=["explain","refresh","search","status"]            ← 这条来
 
 **状态：已裁决并已落地（A、B、C，草案 §162）**：A 的守卫是 `test_l1_extension.py` 的四条（含一条
 "改名不改变结论"的判据守卫与一条"不可用≠被抹掉"），验红为 `if False and not hosted_here(manifest):`；
-C 的守卫是 `test_cli.py::test_a_root_marker_with_a_bom_is_still_readable`，验红为把编码改回 `utf-8`。：A 的守卫是
+C 的守卫是 `test_cli.py::test_a_root_marker_with_a_bom_is_still_readable`，验红为把编码改回 `utf-8`。
+
+## ADR-0062 — **同一个"这个 id 没注册"，三个动词只能有一个答案：`NOT_FOUND`(1)**
+
+### 背景
+
+§159 F4 量到 `plan --scope data-root --target data-root:<没注册的 id>` 报 `DATA_ROOT_MISSING`，退出码
+**6**，而 `exits.py` 给 6 的含义是 **transaction recovery required**（`EXIT_MEANINGS[6]`，诊断码表第 24 行
+原文），`references/reason-codes.md` §6 给它的下一步是"**停止**，先 `repair`"。同一个"这个 id 没注册"，
+另外两个动词早就报 `NOT_FOUND`(1)：`discover --data-root <id>`（`cli.py:471`）与
+`data-root forget <id>`（`cli.py:421`），三者 message **一字不差**（`unknown data root: <id>`）。
+
+调查把这一族拆成了**三种**情形，而不是两种：
+
+| 情形 | 例子 | 由什么回答 | 该报什么 |
+|---|---|---|---|
+| 名字合法但**不存在**（注册表） | `plan --target data-root:dr-nope` | 注册表 | `NOT_FOUND`(1) ✅（本次改的就是这一格） |
+| 形态**不合法**（读注册表之前） | `--target D:/somewhere` 配 `--scope data-root` | 语法 | `INVALID_INPUT`(8)（不变） |
+| 名字合法、路径**不存在** | `--target D:/somewhere`（被当成 project） | 文件系统 | `INVALID_INPUT`(8)（不变） |
+| **已声明**的数据根目录不见了 | 删掉 `D:\env\...` 之后跑 `discover` | 文件系统 + 注册表 | `DATA_ROOT_MISSING`(6)（**保留**，由 `discover`/`doctor` 发射） |
+
+**`REASON_EXIT` 是 `dict[str, int]`**（实测 97 键、无重复、`code → exit` 单值），所以"同一个码在两个档位"
+做不到；而 `plan --target` 那条路径**根本不去看**那个目录在不在（它只查注册表），所以它答的不是第四种情形。
+
+### 决定
+
+**没注册的 id 报 `NOT_FOUND`(1)，证据带标签。** 三条路径共用一个构造函数
+(`cli.py::_unknown_data_root`)，message 与证据**逐字节相同**，证据从"裸 id 列表"改成
+`known data roots: [...]`——一个裸列表没说清它是**什么**的列表。`DATA_ROOT_MISSING`(6) 保留它
+真正的职责（已注册的数据根读不了），所以这一改不是"把两个情形合并"，而是**把第三个情形放到它该在的档位**。
+
+**没有采用的三条路**：① 新增 `DATA_ROOT_NOT_REGISTERED`——要动 `exits.py` + 码表 + 两个 references
++ 重生成 golden 语料，而两类情形对调用方的**下一步动作完全相同**，买到的是更精确的报告不是不同的行为
+（ADR-0055 拒绝同类扩张用的就是这份代价清单）；② 只改解释——只读退出码的调用方仍会被 6 引向 `repair`；
+③ 收敛到 `INVALID_INPUT`(8)——与本条已有的"形态问题"混在一起，且与两个兄弟动词仍不一致。
+
+### 代价
+
+- 这是一处**对外行为变更**：`plan` 对未注册 id 的退出码由 6 变 1。钉住旧行为的用例只有一条
+  （`test_l1_plan_routing.py::test_an_unknown_data_root_target_is_refused`），它在同一个提交里改写并
+  加强了（新增"三条路径的 code / reason_code / message / 证据必须一致"）。
+- **不动** `exits.py`、码表、schema、golden 语料：`NOT_FOUND` 早已注册且有多个写者。
+- 它**推翻**了契约草案 §20.3-5 记下的错误码（原文保留并就地标注，理由与 ADR-0046 推翻 §113.6-6 同一做法）。
+- **没有做的**：`plan --target <dir>` 被当成 project 时那条 `INVALID_INPUT` 的证据里只有 WinError 文本、
+  没有"已知数据根/项目"这类指针（§159 F4 的附带读数）——它不属于本次那一格，**记在这里，不假装做了**。
+
+**状态：已裁决并已落地（草案 §163）**：守卫是改写后的
+`test_l1_plan_routing.py::test_an_unknown_data_root_target_is_refused`（含三动词一致性），验红为把那一行
+改回 `DATA_ROOT_MISSING` → `assert 6 == 1`。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

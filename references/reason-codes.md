@@ -102,6 +102,13 @@ P1 没有 broker，所以 machine 级写入一定报 `PRIVILEGE_REQUIRED`；**�
 **具体原因**在 `missing[].reason_code`（每条还带 `data_root_id` 与 `detail`）——报的时候要说清是哪个数据根、
 为什么，不要只说一句"有数据根缺失"（§103）。
 
+**`6` 不是"任何与数据根有关的拒绝"**（§163 / ADR-0062）：一个**没注册**的数据根 id
+（message 是 `unknown data root: <id>`）是**调用方写错了**，`plan --scope data-root --target
+data-root:<id>`、`discover --data-root <id>`、`data-root forget <id>` 三条一律报
+`NOT_FOUND`(1)，证据是带标签的 `known data roots: [...]`。看到 6 先读 message 与证据：只有
+root / marker / volume / registry / journal / 数据根的**可读性**出现在里面时，才是"先 `repair`"；
+"id 拼错了"的下一步是 `data-root list`，不是 `repair`。
+
 ## 7 — 计划/来源问题
 
 `INVALID_PLAN`（hash 不匹配、缺 digest）、`DIGEST_MISMATCH`、`PROVENANCE_FAILED`

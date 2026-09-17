@@ -604,8 +604,11 @@ def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
         "--source-json", str(source_file),
     )
     # No data root is registered in this fixture, so routing legitimately refuses; the real-artifact
-    # branch is what matters here, so run it again with the simulated-free scope "machine".
-    if code == 6:
+    # branch is what matters here, so run it again with the simulated-free scope "machine". The
+    # refusal is `NOT_FOUND`(1) since §163/ADR-0062 — matching on the *code* 6 here pinned the old
+    # tier, so this asks "did it refuse?" instead of "which code did it refuse with".
+    if code != 0:
+        assert plan["reason_code"] == "NOT_FOUND", plan
         code, plan = run(
             capsys, "--json", "--root", str(cli_root),
             "plan", "build", "--source-json", str(source_file),
