@@ -29,7 +29,7 @@
 |---|---|---|---|
 | `status` | `healthy` / `degraded` / `broken` / `recovery_required` | 一次 `doctor` 的总结论，由诊断的 `severity` 集合推出：有 `error`/`critical` → `broken`，只有 `warning` → `degraded`；根标记/卷身份/日志损坏这类先于一切的问题 → `recovery_required`。退出码分别 0 / 2 / 3 / 4 | `caps/doctor.py` |
 | `diagnostics[].severity` | `info` / `warning` / `error` / `critical` | 单条诊断的严重度。`critical` 是"AIROOT 连自己在哪台机器上都不确定"这一档（根标记/卷身份/registry 元数据读不出来）——它和 `error` 一样把 `status` 推成 `broken`，但**repair 不再是它建议的动作** | `caps/doctor.py` |
-| `diagnostics[].remediation` | `none` / `inspect` / `repair` / `rebuild` / `reapprove`† / `recover` | 建议你下一步做什么：`none` 不用管；`inspect` 人看一眼（AIROOT 没有对应命令）；`repair` → `airoot repair`；`rebuild` → `airoot rebuild`（**只重建派生投影，数据库永不重建**）；`recover` → 按 journal 做恢复。`reapprove` 表示"需要重新拿一次批准"，但**这个 build 里没有任何 doctor 检查会产生它**（所以它带 †）：批准本身现在签得出来（ADR-0046 的本机签发），缺的是**判定"这一条得重新批"的那条检查**——遇到它请当作版本不一致 | `caps/doctor.py` |
+| `diagnostics[].remediation` | `none` / `inspect` / `repair` / `rebuild` / `reapprove`† / `recover` | 建议你下一步做什么：`none` 不用管；`inspect` 人看一眼（AIROOT 没有对应命令）；`repair` → `airoot repair`；`rebuild` → `airoot rebuild`（**只重建派生投影，数据库永不重建**）；`recover` **分两种，别混**（§159 F3 量过）：**journal 可回放**的那三种（`PENDING_TRANSACTION` / `RECOVERY_REQUIRED` / `JOURNAL_TRUNCATED`）→ `airoot repair`；而**权威或身份坏了**（`ROOT_MARKER_MISSING` / `ROOT_MARKER_INVALID` / `VOLUME_IDENTITY_MISMATCH` / `DATA_ROOT_VOLUME_MISMATCH` / `REGISTRY_MISSING`）→ **这一版没有任何动词能修**——`repair` 自己也要先能解析出 root，而 `rebuild` 永不重建权威数据库。这一类只能交给操作者，而 `doctor` 仍能描述它（`verify=False` 就是为这个存在的）。`reapprove` 表示"需要重新拿一次批准"，但**这个 build 里没有任何 doctor 检查会产生它**（所以它带 †）：批准本身现在签得出来（ADR-0046 的本机签发），缺的是**判定"这一条得重新批"的那条检查**——遇到它请当作版本不一致 | `caps/doctor.py` |
 
 ## `error-response.schema.json`
 

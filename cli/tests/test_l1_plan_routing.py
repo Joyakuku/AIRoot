@@ -289,6 +289,33 @@ def test_a_scope_that_contradicts_its_target_is_refused(capsys, cli_root: Path, 
     assert plan_files(cli_root) == []
 
 
+def test_an_unanswered_plan_records_no_requested_scope(capsys, cli_root: Path, data_root: str) -> None:
+    """§159 F5: nobody answered, so nothing may be recorded as the answer.
+
+    `_resolve_plan_target` falls back to the machine scope so the planner always has a destination,
+    and that fallback used to be written into `routing.requested_scope` — the document then said
+    `requested_scope: "machine"` next to `confirmation_required: true` with no
+    `confirmation_answered_by`, i.e. it claimed an answer the caller never gave. A dry run still
+    reports the scope the router decided, because that is where the plan would go.
+    """
+
+    code, unanswered = run(capsys, "--json", "--root", str(cli_root), "plan", "node", "--dry-run")
+
+    assert code == 4
+    assert unanswered["reason_code"] == "SCOPE_CONFIRMATION_REQUIRED"
+    assert unanswered["routing"]["requested_scope"] is None
+    assert unanswered["routing"]["decided_scope"] == "data-root"
+    assert "confirmation_answered_by" not in unanswered["routing"]
+    assert unanswered["target"]["scope"] == "data-root", "the dry run says where the router decided"
+
+    # The same holds when no confirmation is involved: a generic tool routes to the data root, and
+    # the caller still never named a scope.
+    code, low_risk = run(capsys, "--json", "--root", str(cli_root), "plan", "archive", "--dry-run")
+    assert code == 0, low_risk
+    assert low_risk["routing"]["requested_scope"] is None
+    assert low_risk["target"]["scope"] == low_risk["routing"]["decided_scope"] == "data-root"
+
+
 def test_an_unknown_capability_never_gets_a_plan(capsys, cli_root: Path) -> None:
     code, document = run(capsys, "--json", "--root", str(cli_root), "plan", "not-a-capability")
 

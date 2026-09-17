@@ -2343,8 +2343,16 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
         )
         # Both the recorded answer and the refusal below read this, so it is computed before either.
         answered = args.scope is not None or args.target is not None
+        # §159 F5: `_resolve_plan_target` falls back to the machine scope so the planner always has a
+        # destination, and recording that fallback as `requested_scope` made the document claim an
+        # answer nobody gave — `confirmation_required: true` next to `requested_scope: "machine"`,
+        # with no `confirmation_answered_by` to explain it. A requested scope is recorded only when
+        # one was requested; a dry run still reports the scope the router decided, because that is
+        # where the plan would go.
+        requested_scope: str | None = scope if answered else None
+        reported_scope = scope if answered else decision.scope
         routing = {
-            "requested_scope": scope,
+            "requested_scope": requested_scope,
             "decided_scope": decision.scope,
             "origin": decision.origin,
             "confirmation_required": decision.confirmation_required,
@@ -2420,7 +2428,7 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 "schema_version": 1,
                 "operation": "plan_dry_run",
                 "capability_id": args.capability,
-                "target": {"scope": scope, "data_root_id": target_id, "path": target_path},
+                "target": {"scope": reported_scope, "data_root_id": target_id, "path": target_path},
                 "routing": routing,
                 "confirmation_required": decision.confirmation_required,
                 "options": list(decision.options),
@@ -2437,8 +2445,8 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 document,
                 as_json=args.json,
                 lines=[
-                    f"dry run: {args.capability} -> scope={scope} target={target_path}",
-                    f"  routing: decided={decision.scope} origin={decision.origin}",
+                    f"dry run: {args.capability} -> scope={reported_scope} target={target_path}",
+                    f"  routing: requested={requested_scope} decided={decision.scope} origin={decision.origin}",
                     f"  size: {decision.size_estimate_bytes if decision.size_estimate_bytes is not None else 'unknown (SIZE_ESTIMATE_UNAVAILABLE)'}",
                     *(
                         ["  confirmation required; options: " + " / ".join(decision.options)]

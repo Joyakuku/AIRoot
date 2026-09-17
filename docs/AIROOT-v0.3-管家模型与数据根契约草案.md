@@ -13712,4 +13712,64 @@ FAILED test_cli_uninstall_dry_run_changes_nothing
 | 语料 | **不动** |
 | 真机 | 不需要新真机读数：这一条在临时 root 上可完整复现（§159.2 的读数 + 本条 160.2 的验红） |
 | 没有做 | F2/F3/F5/F6 与 F4 的裁决（各自后续阶段）；也没有给 `--dry-run` 加"预览 gc 会删掉哪些字节"这类新能力 |
+
+## 161. F5 + F3：没人作答就别记答案；`recover` 要分成两种
+
+两条都属于"**记下的话不是真的**"那一类（§159 的 F5 与 F3），一起做。
+
+### 161.1 F5：`requested_scope` 只在真的被请求时才记
+
+`_resolve_plan_target` 为了让 planner 总有目的地，会把缺省 scope 落成 `machine`；而这个**缺省值**被写进了
+`routing.requested_scope`，于是文档一边说 `confirmation_required: true`、一边说
+`requested_scope: "machine"`，而解释"谁答的"的 `confirmation_answered_by` **不存在**（§153 加那个字段
+正是为了区分这两种情形）。实测（§159.2）与修法：
+
+| 调用 | 修法前 | 修法后 |
+|---|---|---|
+| `plan node --dry-run`（无 scope） | `requested_scope="machine"`（没人说过）、`target.scope="machine"` | `requested_scope=**null**`、`target.scope="data-root"`（= `decided_scope`）、`confirmation_required: true`、仍无 `confirmation_answered_by` |
+| `plan archive --dry-run`（无 scope、低危） | `requested_scope="machine"` | `requested_scope=null`、`target.scope="data-root"`、exit 0 |
+| `plan node --scope data-root --target data-root:<id>` | `requested_scope="data-root"` | **不变** |
+
+两件事分开：**请求的 scope**（没人请求就是 `null`）与**dry run 报的目的地**（应当等于路由器决定的那个）。
+非 dry-run 的计划文档里没有 `target.scope` 这个字段，所以这一改只落在 dry run 与 routing 块上。
+
+**守卫**：`test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两种情况各断言一次，
+并断言 `confirmation_answered_by` **不在**——"没人答"必须看得出来）。**验红**：把该行改回 `scope`：
+
+```text
+FAILED test_an_unanswered_plan_records_no_requested_scope
+       assert 'machine' is None
+```
+
+### 161.2 F3：`remediation: "recover"` 分成两种，而文档原来只讲了一种
+
+`caps/doctor.py` 里 `recover` 出现在 7 处，实际分两类（§159.2 实测）：
+
+| 情形 | 诊断 | 有没有动词能修 |
+|---|---|---|
+| journal 可回放 | `PENDING_TRANSACTION` / `RECOVERY_REQUIRED` / `JOURNAL_TRUNCATED` | ✅ `airoot repair` |
+| **权威或身份坏了** | `ROOT_MARKER_MISSING` / `ROOT_MARKER_INVALID` / `VOLUME_IDENTITY_MISMATCH` / `DATA_ROOT_VOLUME_MISMATCH` / `REGISTRY_MISSING` | ❌ **没有**——`repair` 自己也要先解析出 root；`rebuild` 永不重建权威数据库 |
+
+原来 `references/field-values.md` 把这个值解释成"按 journal 做恢复"，`SKILL.md` 的
+`status=broken / recovery_required → 先跑 airoot repair` 也一样——**只对第一类成立**。后果是 agent 在第二类
+上照做、拿到一个硬失败（我实测：`repair` → `ROOT_MARKER_INVALID`(6) / `REGISTRY_MISSING`(6)），而文档没有
+下一步。**枚举在已发布 schema 里冻结**（加值要新 schema id），所以修的是解释与 skill 的分支：
+
+- `references/field-values.md`：`recover` 那一格改写为"分两种，别混"，并点名第二类**这一版没有任何动词能修**、
+  只能交给操作者、而 `doctor` 仍能描述它（`verify=False` 就是为这个存在的）。
+- `SKILL.md` 第一步：`broken / recovery_required` 由一条变成两条（journal 那三种 → `repair`；权威/身份那
+  四种 → 停下来交给操作者，**不要反复重试，也不要手改 root 里的文件**）。
+
+**没有加守卫**：这两处是**解释**，不是枚举——真正的判据在 `doctor` 的代码里（哪条诊断配哪个 remediation），
+而"某一类能不能被修"这件事的可执行形态就是 §159.2 的那两条实测读数。把"文档里的解释与代码一致"做成守卫，
+需要给每个诊断登记一个"可否修复"的结构化字段，那是另一件事（记在这里，不假装做了）。
+
+### 161.3 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1411 → 1412**（+1：`test_an_unanswered_plan_records_no_requested_scope`） |
+| 契约层 / 语料 | **不动**（dry run 是 CLI 报告面；语料里没有 `requested_scope`） |
+| 文档 | `references/field-values.md` 一格、`SKILL.md` 第一步的一条变两条 |
+| 没有做 | F2（下一个阶段）、F6（要一次裁决）、F4（要一次裁决）、F7–F11（文档收口） |
 | 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |

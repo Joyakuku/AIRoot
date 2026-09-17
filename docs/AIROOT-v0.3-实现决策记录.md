@@ -3203,6 +3203,64 @@ retired instance)`。**帮助文本与 flag 名不一致，本身就是这条缺
 "什么都没改 + 没留下半成品"；一处合成变异（回到先 retire 再判）把它变红（`assert 4 == 0`）；
 `test_l1_agent_read_fields.py` 里 `uninstall` lane 的记录方式随之改为不带该 flag 的分级路径。
 
+## ADR-0060 — **没人作答就别记答案，而 `recover` 是两种情形共用的一个词**
+
+### 背景
+
+§159 的全表面测试量到两条同型的"**记下的话不是真的**"（我在临时 root 上复现）：
+
+**A —— `requested_scope` 记了一个没人给过的答案。** `_resolve_plan_target` 为了让 planner 总有目的地，
+把缺省 scope 落成 `machine`；这个**缺省值**被写进 `routing.requested_scope`：
+
+```text
+$ airoot plan node --dry-run --json          # 谁都没作答
+routing.requested_scope = "machine"          ← 没人说过
+routing.confirmation_required = true
+target.scope = "machine"
+（没有 confirmation_answered_by）             ← 唯一的诚实信号
+```
+
+§153 加 `confirmation_answered_by` 正是为了区分"没人答"与"有人答"，而同一个文档的另一半仍在声称一个
+调用方从未做出的选择。
+
+**B —— `remediation: "recover"` 覆盖两件出路完全不同的事。** `caps/doctor.py` 里它出现 7 处：
+
+| 情形 | 诊断 | 能动它的动词 |
+|---|---|---|
+| journal 可回放 | `PENDING_TRANSACTION` / `RECOVERY_REQUIRED` / `JOURNAL_TRUNCATED` | `airoot repair` |
+| **权威或身份坏了** | `ROOT_MARKER_MISSING` / `ROOT_MARKER_INVALID` / `VOLUME_IDENTITY_MISMATCH` / `DATA_ROOT_VOLUME_MISMATCH` / `REGISTRY_MISSING` | **没有** |
+
+实测第二类：删掉 `registry.db` → `repair` 与 `rebuild` 都报 `REGISTRY_MISSING`(6)；marker 坏 → `repair`
+报 `ROOT_MARKER_INVALID`(6)。而 agent 面文档**只讲第一类**（`field-values.md` 说 "`recover` → 按 journal 做恢复"，
+`SKILL.md` 说 `broken/recovery_required → 先跑 repair`）——一个 agent 照做会拿到硬失败，然后没有下一步。
+
+### 决定
+
+**A —— `requested_scope` 只在真的被请求时才记**（`answered` 为假时记 `null`）。dry run 报的
+`target.scope` 改用**路由器决定的**那个 scope：没人请求时它等于 `decided_scope`，而不是缺省值。
+判据很简单——`requested_scope` 的字面意思就是"调用方请求的"。
+
+**B —— `recover` 的两种情形写进解释与 skill，但不改枚举。** `doctor-response.schema.json` 把
+`remediation` 的取值钉死为 `["none","inspect","repair","rebuild","reapprove","recover"]`，**加一个值是
+破坏性变更**（要新 schema id，ADR-0003）。所以这一版改的是**解释**：`references/field-values.md` 写明
+`recover` 分两种；`SKILL.md` 的坏 root 分支由一条拆成两条（journal 三种 → `repair`；权威/身份四种 →
+停下来交给操作者）。**不改代码**：`doctor` 的判断本身是对的（它不知道"有没有动词能修"，而
+`repair` 修不了的那些它照实报）——错的是那份把它统一解释成"按 journal 恢复"的说明。
+
+### 代价
+
+- **A 是一处对外 JSON 的变化**：`routing.requested_scope` 从 `"machine"` 变成 `null`（只在**没人请求**时）。
+  语料里没有 `requested_scope`（§161.3 查过），所以不需要重生；只读该字段的调用方本来也该先看
+  `confirmation_answered_by`。
+- **B 没有加守卫**：这两处是解释而不是枚举，真正的判据在 `doctor` 的代码里。把"解释与代码一致"做成守卫，
+  需要给每条诊断登记一个结构化的"可否修复"，那是另一件事——**记下来，不假装做了**。
+- **没有做的**：F2（`extension status` 的身份错位）与 F6/F4（各要一次裁决）、F7–F11（文档收口）。
+
+**状态：已裁决并已落地（A、B，草案 §161）**：A 的守卫是
+`test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
+`assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
+
+
 
 
 

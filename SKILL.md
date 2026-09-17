@@ -29,8 +29,12 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 
 - `status=healthy` → 继续。
 - `status=degraded` → 可以继续，但必须把降级原因说出来（`doctor` 的 `diagnostics[].impact`）。
-- `status=broken` / `recovery_required` → **停下来报告**，先跑 `airoot repair --json`，
-  不要"顺手修一下"（`doctor` 永不自动修复，`repair` 才是那个动词）。
+- `status=broken` / `recovery_required` → **停下来报告**，先分清是哪一种（`diagnostics[].code` 告诉你怎么读）：
+  - `PENDING_TRANSACTION` / `RECOVERY_REQUIRED` / `JOURNAL_TRUNCATED` → 先跑 `airoot repair --json`；
+    不要"顺手修一下"（`doctor` 永不自动修复，`repair` 才是那个动词）。
+  - `ROOT_MARKER_MISSING` / `ROOT_MARKER_INVALID` / `VOLUME_IDENTITY_MISMATCH` / `REGISTRY_MISSING` →
+    **这一版没有任何动词能修**：`repair` 自己也要先解析出 root（权威数据库也永不重建）。**停下来**，
+    把 `doctor` 的输出原样交给操作者；不要反复重试，也不要手改 root 里的文件。
 - `ROOT_NOT_RESOLVED`(8) 或 `ROOT_MARKER_MISSING`(6) → 这台机器**还没有可用的 root**。
   两条路，不要有第三条：让调用方用 `--root` / `AIROOT_HOME` 指到已有的 root，或者建一个 ——
   `airoot root init <目录> --root-instance-id <id> --machine-id <id> --json`（只在新**建或空**目录里建，
