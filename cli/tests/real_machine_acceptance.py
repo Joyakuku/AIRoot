@@ -296,11 +296,23 @@ def main_run() -> int:
     show("plan java --dry-run (routing + plan)", code, doc, ("confirmation_required", "required_approval", "size_estimate_bytes"))
     check("routing is reported", (doc.get("routing") or {}).get("decided_scope") is not None)
     check("an unknown size is reported as unknown", doc.get("size_note") == "SIZE_ESTIMATE_UNAVAILABLE" or doc.get("size_estimate_bytes"))
+    # §155: the dry run reports the verdict the real call has. Naming the scope *is* the answer
+    # (ADR-0055/§153), so this line and the `--creates-environment` one below have to agree about a
+    # pair of calls that differ only by `--dry-run`; both said "4" until this stage re-read them.
+    check("an answered high-risk call leaves nothing to confirm", code == 0 and doc.get("required_approval") == "none")
 
     code, doc = run("plan", "java", "--scope", "data-root", "--target", "data-root:dr-env", "--creates-environment")
-    show("plan java --creates-environment", code, doc, ("reason_code",))
+    show("plan java --creates-environment", code, doc, ("reason_code", "plan_file"))
+    check("an answered high-risk call produces the plan", code == 0)
+    check("...and the plan file is there to approve", doc.get("plan_file") is not None)
+
+    # The gate is still a gate: this is the call that names no scope at all, and it is the one the
+    # original assertion was about before §153 made an answer reachable.
+    code, doc = run("plan", "java", "--creates-environment")
+    show("plan java --creates-environment (no answer)", code, doc, ("reason_code",))
     check("a high-risk class must be confirmed before a plan exists", code == 4)
     check("...and no plan file is produced", doc.get("plan_file") is None)
+    check("...and the refusal names the options", "project-isolated" in " ".join(doc.get("evidence", [])))
 
     # Derived state can be rebuilt; authority cannot (draft §24) ------------------
     code, doc = run("rebuild", "--plan")

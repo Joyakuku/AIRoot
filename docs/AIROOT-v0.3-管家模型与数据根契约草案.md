@@ -1199,7 +1199,7 @@ golden 语料重生成，其中两个 fixture **改名**：`where_conflict_manag
    ```text
    airoot plan <cap> --scope data-root --target data-root:dr-env --dry-run --json   # 体积未知就说未知
    airoot plan <cap> --project <有清单的项目> --dry-run --json                       # project，不询问
-   airoot plan <cap> --scope data-root --project <有清单的项目> --json               # SCOPE_UPGRADE_REQUIRES_APPROVAL(4)
+   airoot plan <cap> --scope data-root --target data-root:dr-env --project <有清单的项目> --json   # SCOPE_UPGRADE_REQUIRES_APPROVAL(4)
    airoot plan <cap> --creates-environment --json                                    # SCOPE_CONFIRMATION_REQUIRED(4)，无计划文件
    ```
 3. 未获确认时 `state/plans/` 里**没有**新文件。
@@ -13115,3 +13115,151 @@ upgrading = scope == "data-root" and decision.scope == SCOPE_PROJECT
 | 语料 | **不动** |
 | 真机 | 三次 `plan` 的完整读数（含 `binding_key` 与 `routing`）见 §154.1 |
 | 没有做 | 修法本身；以及它之后要重跑的那次真机整链（`--scope data-root` 那条**是**对的，§153.3 已跑通） |
+
+## 155. 回答不等于改写路由：作答的 scope 与路由决定不一致时拒绝（§154 那处缺陷的修法）
+
+裁决见 **ADR-0056**。本节记读数、三处改动、守卫与验红，以及这一轮**顺手量到的另一处**（真机验收脚本里两条
+自 §153 起就是假的断言）。
+
+### 155.1 修法前后：同五种调用，两组读数（临时 root，`plan node`）
+
+| 调用 | 修法前 | 修法后 |
+|---|---|---|
+| `--scope data-root --target data-root:dr-node` | exit=0，`requested=data-root`、`decided=data-root`、路径是那个数据根 | **不变**（这是 §153.3 走通的那条） |
+| `--scope project --project <dir>` | exit=0，`requested=project`、`decided=data-root`、`binding_key=machine/…` | exit=**4** `SCOPE_UPGRADE_REQUIRES_APPROVAL`，证据里 `requested_scope=project` / `decided_scope=data-root`，**无计划文件** |
+| `--scope machine` | exit=0，`requested=machine`、`target_path=`**空串** | exit=**4**，同上（`requested_scope=machine`） |
+| `--target <dir>`（不给 `--scope`） | exit=0，`requested=`**`machine`（默认值）**、路径是那个目录 | exit=**4**，且 `requested_scope=project`——**这次是读出来的，不是默认值冒充的** |
+| `--target data-root:dr-node`（不给 `--scope`） | exit=0，`target_path=`**字面串 `data-root:dr-node`**、`target_id=null` | exit=**0**，`requested=data-root`、`target_id=dr-node`、`target_path=`**那个真实目录** |
+
+`--dry-run` 的同一组调用：
+
+| 调用 | 修法前 | 修法后 |
+|---|---|---|
+| 作答且与决定一致（`--scope data-root …`） | exit=4 `SCOPE_CONFIRMATION_REQUIRED`、`required_approval=scope_confirmation` | exit=**0** `SUCCESS`、`required_approval=none` |
+| 作答但与决定不一致（`--scope project …`） | exit=4 `SCOPE_CONFIRMATION_REQUIRED` | exit=4 `SCOPE_UPGRADE_REQUIRES_APPROVAL`、`required_approval=scope_upgrade` |
+| 没作答 | exit=4 `SCOPE_CONFIRMATION_REQUIRED` | **不变** |
+
+第一行与第三行是同一件事的两面：**"没作答"与"已作答"在 dry run 里长得一模一样**，而真调用一个出计划、
+一个拒绝。这一轮把它分开。
+
+### 155.2 三处改动（都在 `cli.py`）
+
+1. **`_resolve_plan_target`：`--target` 自己说明它是什么。** 原先 `scope = args.scope or "machine"` 把
+   `--target <dir>`（**项目**）与 `--target data-root:<id>`（**数据根**）都记成 `machine`——一个没人说过的
+   scope。现在：`--scope` 缺省时由 `--target` 的形状决定；两者同时给出且矛盾时报 `INVALID_INPUT`(8)
+   （"你的输入自相矛盾"不是"要批准"，所以不是 4）。
+2. **门补上另一半。** 新增 `diverging = decision.confirmation_required and answered and scope != decision.scope`，
+   在 `upgrading` 之后、计划构造之前拒绝，码沿用 `SCOPE_UPGRADE_REQUIRES_APPROVAL`，证据写两个 scope 与
+   `origin`。`upgrading`（请求 `data-root`、决定 `project`）**一个字没动**：它是同一句话的另一个方向。
+3. **dry run 报真调用会做的事。** `required_approval` 与 `reason_code` 现在读 `unconfirmed`（= 需确认且
+   **没**作答），而不是 `decision.confirmation_required`；人可读输出同样只在 `unconfirmed` 时打印三个选项，
+   作答且一致时改打印"由谁作答、这份计划不再需要别的"。
+
+**没有改的**：`planner.py` 的高危规则照旧**无条件**返回 `SCOPE_DATA_ROOT`（§12.1 的那条规则不是这次要动的
+东西——要动的是"调用者说了一个不一样的 scope 时怎么办"，答案是不假装它被采纳）。
+
+### 155.3 守卫与验红
+
+五条新用例在 `cli/tests/test_l1_plan_routing.py`：
+
+| 用例 | 盯的是 |
+|---|---|
+| `test_answering_with_a_different_scope_is_refused` | 门的本体：exit=4、码、两个 scope 都在证据里、**盘上没有计划文件** |
+| `test_the_dry_run_reports_a_diverging_answer_just_as_the_real_call_does` | dry run 与真调用同判 |
+| `test_a_bare_directory_target_says_it_is_a_project_answer` | `--target <dir>` 记成 `project`（不是默认的 `machine`） |
+| `test_a_data_root_target_alone_resolves_to_the_data_root` | `--target data-root:<id>` 单独给出时 `target_id` 与 `target_path` 都是真的 |
+| `test_a_scope_that_contradicts_its_target_is_refused` | `--scope machine` + 数据根 target → `INVALID_INPUT`(8) |
+
+**验红两个方向，各自只把自己那一半变红**（临时改 `cli.py` 后跑，再原样写回）：
+
+```text
+# 变异一：diverging = False（回到修法前）
+FAILED test_answering_with_a_different_scope_is_refused
+FAILED test_the_dry_run_reports_a_diverging_answer_just_as_the_real_call_does
+FAILED test_a_bare_directory_target_says_it_is_a_project_answer
+       assert 0 == 4          ← 正是 §154 量到的那个 0
+3 failed, 16 deselected
+
+# 变异二：scope = args.scope or "machine"（回到默认值冒充答案）
+FAILED test_a_data_root_target_alone_resolves_to_the_data_root
+FAILED test_a_scope_that_contradicts_its_target_is_refused
+       assert 0 == 8
+2 failed, 17 deselected
+```
+
+两条互不重叠：变异一不动解析、变异二不动门。**另有一条既有用例按新语义改了判据**
+（`cli/tests/test_cli_steward.py::test_adopt_import_refuses_a_high_risk_class_the_routing_gate_asks_about`）：
+它原先用"`--scope data-root … --dry-run` 报 4"来证明"两个入口一道门"，而那一条**自 §153 起就不再是拒绝**
+——只是因为 dry run 把"已作答"也报成 4 才一直绿。现在它断言的是**没作答**的那次被拒（门还在），
+外加**作答**的那次出计划（门的另一半），两条都比原来那条更接近它想说的话。
+
+### 155.4 顺手量到的第二处：真机验收脚本里两条断言自 §153 起就是假的
+
+跑 `python cli\tests\real_machine_acceptance.py`（离线）：
+
+```text
+  !! FAILED: a high-risk class must be confirmed before a plan exists
+  !! FAILED: ...and no plan file is produced
+step 5-6 + 8-9 + 31-34 real-machine acceptance: FAIL (2 failed check(s))
+```
+
+这两条在 `real_machine_acceptance.py` 里断言的是
+
+```text
+plan java --scope data-root --target data-root:dr-env --creates-environment   → code == 4
+```
+
+而 §153 之后**它已经出计划**（exit=0），所以这两条断言从 §153 起就是假的。**没有任何守卫变红**，因为
+`real_machine_acceptance.py` **不是 pytest 模块**（它需要真机、`winreg`、`D:\env`），计数守卫与一致性守卫
+都不跑它。§153 的记录说"真机整链走通"用的是**临时 root 上的 CLI 调用**，脚本本身没有被重跑。
+
+这一轮把它改成断言**真正该盯的那个调用**：
+
+| 调用 | 断言 |
+|---|---|
+| `plan java … --scope data-root --target data-root:dr-env --dry-run` | exit=0、`required_approval=none`（dry run 与真调用同判） |
+| `plan java … --scope data-root --target data-root:dr-env --creates-environment` | exit=0、**计划文件存在**（作答就是作答） |
+| `plan java --creates-environment`（**没作答**） | exit=4 `SCOPE_CONFIRMATION_REQUIRED`、无计划文件、证据里三个选项（§153 之前那两条想说的其实是这个） |
+
+重跑之后：`step 5-6 + 8-9 + 31-34 real-machine acceptance: PASS (0 failed check(s))`、`closed loop: PASS`、
+`isolation: PASS`。**教训写在这里**：改了 `plan` 的裁决的任何阶段，都必须**手动**重跑这个脚本——它是这个仓库
+里唯一一处"真机全路径"的证据，而它不在自动守卫里。
+
+### 155.5 重跑运行时整链（§153.3 那条路，临时 root，带网络）
+
+```
+source resolve node --version 22.14.0  → portable_archive，digest sha256:55b63929…f217（与 §153.3 同一个）
+plan … --version 22.14.0 --source-json … → exit=0，kind=runtime，binding_key=machine/node/windows/x64
+issue --provision → approve → install  → FINALIZED，instance=node/node-v22.14.0-win-x64/22.14.0/win-x64
+store                                   → 1 个顶层目录，node.exe 83 344 536 字节（与 §153.3 同一个数）
+run --capability node -- --version      → exit=0，stdout=v22.14.0，health=healthy，persisted=false
+where node                              → managed，version=22.14.0，MACHINE_MANAGED_HEALTHY
+retire → gc --plan → gc --apply         → payload_removed=True
+doctor                                  → healthy
+```
+
+**两次尝试，第一次没走到头**，读数一起记下来，因为它比"成功"更有信息：
+
+```text
+install → exit=2 state=ROLLED_BACK  outcome=INSTALL_IO_FAILED
+failure: the download from https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip was interrupted
+         TimeoutError: The read operation timed out / bytes received before the failure: 13631488
+         the partial file was removed; nothing was staged and no binding changed
+         failure_cleanup=stage_only stage_cleaned=True
+```
+
+也就是说：**上游链路慢（13.6 MB 用了约十分钟）时，事务引擎的行为是对的**——退出码 2、`ROLLED_BACK`、
+半成品删除、没有任何 binding 被改。第二次重试走完了全程。（另：第一次的 `instance_id` 里版本段是 `1.0.0`，
+因为那一遍**没有传 `--version`**——`plan` 的版本来自入参，不来自解析出来的来源文档。这一处**没有修**，
+记在 §155.6。）
+
+### 155.6 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1396 → 1401**（+5：`cli/tests/test_l1_plan_routing.py` 五条新用例；另按新语义改了一条既有用例的判据，不新增计数） |
+| 契约层 | **不动**——20 个 schema、迁移、golden 语料全都没动（`plan` 的对外 JSON 走的是 CLI 报告面，`plan_dry_run` 不在语料里）；`references/reason-codes.md` 只改了 `SCOPE_UPGRADE_REQUIRES_APPROVAL` 的**括号**（它现在有两个方向） |
+| 语料 | **不动**（`test_golden_fixtures_reproduce_exactly` 全绿） |
+| 真机 | 离线验收脚本**从 2 条假断言改成 PASS**；运行时整链重跑一次走通（§155.5），另有一次网络中断的读数也被记下来 |
+| 顺手改的文档 | `SKILL.md` 与草案 §20.4 各有一处把 `plan --scope data-root --project <项目>` 写成会报 `SCOPE_UPGRADE_REQUIRES_APPROVAL`——**它报的是 `INVALID_INPUT`**，因为那句话漏了 `--target`（两处都补上了；这是一处自 §20 起就与实现不符的说明，不由本次改动引入） |
+| 没有做 | 计划 scope 与 binding scope 的合并（§154.1 裁决为两套词汇）；**`plan --version` 与解析出来的来源文档的版本不互相校验**（§155.5 第一次实测：来源是 22.14.0、计划的实例身份里是 1.0.0）——这是**新记下的一处**，修它要给"来源与声明不一致"定一条规则，值得它自己的一轮 |

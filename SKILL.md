@@ -92,7 +92,7 @@ cancel             取消
 规则：
 
 - 选 `data-root` 是**权限提升**，需要它自己的批准（需要本机签一次：见《批准》）；项目目录里的 manifest 不能自己升级自己
-  （`airoot plan … --scope data-root --project <项目>` 会返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`）。
+  （`airoot plan … --scope data-root --target data-root:<id> --project <项目>` 会返回 `SCOPE_UPGRADE_REQUIRES_APPROVAL`）。
 - **简单的必须不问**：被项目清单引用的依赖、单文件通用 CLI，CLI 已经直接给答案；
   你不要再问一遍，否则确认会退化成噪音，真正高风险的三类（装包 / 建环境 / 超 300 MB）也会失效。
 - 体积未知时 CLI 返回 `null` + `SIZE_ESTIMATE_UNAVAILABLE`。**照实说未知**，不要估一个数。

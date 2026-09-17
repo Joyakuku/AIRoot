@@ -198,6 +198,97 @@ def test_naming_the_scope_is_the_answer_that_produces_the_plan(
     assert plan_files(cli_root), "an answered plan must exist on disk"
 
 
+def test_answering_with_a_different_scope_is_refused(capsys, cli_root: Path, data_root: str, project: Path) -> None:
+    """§155: an answer that is not the routing's answer is not an answer.
+
+    §153 made naming a scope produce a plan, and §154 measured what that opened: `plan node --scope
+    project` recorded `requested_scope=project`, was overridden by the high-risk rule (which returns
+    the data root unconditionally), and bound `machine/node/windows/x64`. The answer was taken, not
+    honoured. The refusal names both scopes, because unlike "nobody answered" the caller said
+    something — and it uses the code the opposite direction already uses (project → data-root).
+    """
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "node", "--scope", "project", "--project", str(project),
+    )
+
+    assert code == 4
+    assert document["reason_code"] == "SCOPE_UPGRADE_REQUIRES_APPROVAL"
+    evidence = " ".join(document["evidence"])
+    assert "requested_scope=project" in evidence
+    assert "decided_scope=data-root" in evidence
+    assert plan_files(cli_root) == [], "a plan whose answer was overridden must not exist on disk"
+
+
+def test_the_dry_run_reports_a_diverging_answer_just_as_the_real_call_does(
+    capsys, cli_root: Path, data_root: str, project: Path
+) -> None:
+    """The dry run is only useful if its verdict is the verdict (S-010's other half)."""
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "node", "--scope", "project", "--project", str(project), "--dry-run",
+    )
+
+    assert code == 4
+    assert document["reason_code"] == "SCOPE_UPGRADE_REQUIRES_APPROVAL"
+    assert document["required_approval"] == "scope_upgrade"
+    assert document["routing"]["requested_scope"] == "project"
+    assert plan_files(cli_root) == []
+
+
+def test_a_bare_directory_target_says_it_is_a_project_answer(
+    capsys, cli_root: Path, data_root: str, project: Path
+) -> None:
+    """§155: `--target` alone still says what kind of place it is, and the answer is recorded as that.
+
+    It used to default to `machine` — a scope nobody named — so the evidence above would have been a
+    claim about the caller's intent rather than a reading of it.
+    """
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "node", "--target", str(project)
+    )
+
+    assert code == 4
+    assert "requested_scope=project" in " ".join(document["evidence"])
+
+
+def test_a_data_root_target_alone_resolves_to_the_data_root(
+    capsys, cli_root: Path, data_root: str
+) -> None:
+    """§155: `--target data-root:<id>` was recorded as the literal string in `target_path`.
+
+    `--scope` is optional here because the spelling already carries the kind — the plan's destination
+    is now the data root's path and its `target_id` is the registered id, instead of a path-shaped
+    string that names no directory on this machine.
+    """
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "node", "--target", f"data-root:{data_root}"
+    )
+
+    assert code == 0, document
+    routing = document["metadata"]["routing"]
+    assert routing["requested_scope"] == "data-root"
+    assert routing["target_id"] == data_root
+    assert Path(routing["target_path"]).is_dir(), "the destination must be a real directory"
+
+
+def test_a_scope_that_contradicts_its_target_is_refused(capsys, cli_root: Path, data_root: str) -> None:
+    """Two spellings, one question: `--scope machine` and a data-root target are different answers."""
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "archive", "--scope", "machine", "--target", f"data-root:{data_root}",
+    )
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert plan_files(cli_root) == []
+
+
 def test_an_unknown_capability_never_gets_a_plan(capsys, cli_root: Path) -> None:
     code, document = run(capsys, "--json", "--root", str(cli_root), "plan", "not-a-capability")
 

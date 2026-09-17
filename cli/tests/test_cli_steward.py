@@ -493,13 +493,24 @@ def test_adopt_import_refuses_a_high_risk_class_the_routing_gate_asks_about(
     plans = Path(cli_root) / "state" / "plans"
     assert not plans.is_dir() or list(plans.iterdir()) == [], "a refused import left a plan behind"
 
-    # `plan` refuses the same capability for the same reason: two entry points, one gate.
+    # `plan` asks the same question for the same capability: two entry points, one gate. The call
+    # that names no scope is the one that is refused — §153 made naming one answer reachable, and
+    # §155 made both halves of that pair say what they do (`--dry-run` used to report the refusal
+    # even for an answered call, which is what let this assertion read as "the gate is here").
     code, planned = run(
-        capsys, "--json", "--root", str(cli_root), "plan", "python",
-        "--scope", "data-root", "--target", "data-root:dr-env", "--dry-run",
+        capsys, "--json", "--root", str(cli_root), "plan", "python", "--dry-run",
     )
     assert code == 4, planned
     assert planned["reason_code"] == refused["reason_code"]
+
+    # ...and the same call *with* the answer produces the plan, which is the other half of the gate.
+    code, answered = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "python",
+        "--scope", "data-root", "--target", "data-root:dr-env", "--dry-run",
+    )
+    assert code == 0, answered
+    assert answered["required_approval"] == "none"
+    assert answered["routing"]["confirmation_answered_by"] == "explicit_scope"
 
     # §68's rule: the lane that prescribes a command carries its boundaries, so an agent reading the
     # metadata alone does not have to discover the refusal by running it.

@@ -2951,3 +2951,72 @@ if decision.confirmation_required and not args.scope:   # 才是没作答
   不足以把它连同真机整链一起验完；**分两轮做，比一轮做一半好**。
 
 **状态：已裁决（A —— 记成缺口；B —— 最小修法给出；C —— 进账本）。B 已于 **§153** 落地**：确认门现在接受显式答案（`--scope`/`--target`），没作答的调用照旧被拒，答案记进 `metadata.routing.confirmation_answered_by`；真机上第一个 owned runtime 因此装成（§153.3）。
+
+## ADR-0056 — **回答不等于改写路由**：作答的 scope 与路由决定不一致时拒绝，`--target` 自己就能说明它是什么
+
+### 背景
+
+ADR-0055 的 B 让确认门接受显式答案，§153 落地之后，§154 量了"给了答案会怎样"，结果是**答案被收下、
+却没有被执行**（临时 root，`plan node`）：
+
+| 调用 | `routing.requested_scope` | `routing.decided_scope` | `routing.target_path` | `target.binding_key` | 退出码 |
+|---|---|---|---|---|---|
+| `--scope data-root --target data-root:dr-node` | `data-root` | `data-root` | 那个数据根目录 | `machine/node/windows/x64` | 0 |
+| `--scope project --project <dir>` | `project` | **`data-root`** | 那个 project 目录 | `machine/node/windows/x64` | **0** |
+| `--scope machine` | `machine` | **`data-root`** | **空字符串** | `machine/node/windows/x64` | **0** |
+| `--target <dir>`（不给 `--scope`） | `machine`（**默认值，没人说过**） | `data-root` | 那个目录 | `machine/node/windows/x64` | **0** |
+| `--target data-root:dr-node`（不给 `--scope`） | `machine`（同上） | `data-root` | **字面串 `data-root:dr-node`** | `machine/node/windows/x64` | **0** |
+
+两件事因此分开：
+
+1. **`data-root` 不是"绑定 scope"**（`caps/inventory.py` 的 `SCOPES` 里没有它，`tx/artifact.py:506` 硬写
+   `binding_key(capability_id, "machine")`）。计划决定的"装给谁用"与 binding key 的"哪个 key 上的 active
+   实现"是**两套词汇**，它们不一致不是缺陷；
+2. **但"作答的 scope"与"路由决定的 scope"是同一套词汇里的同一个问题**，而上面五行里四行都在回答之后
+   被别的规则覆盖掉了：`planner.py` 的高危规则**无条件**返回 `SCOPE_DATA_ROOT`，从不读请求的 scope；
+   `cli.py` 只覆盖了**一个方向**（请求 `data-root`、决定 `project` 算放宽，要批准）。§154 记成缺陷。
+
+### 决定
+
+**A —— 一道门，两个方向。** `upgrading`（请求 `data-root`、决定 `project`）已经是"作答与决定不一致 ⇒ 拒绝"，
+只是拼成了一个方向。补上另一半：**`confirmation_required` 且已作答、且作答的 scope ≠ 决定的 scope ⇒ 拒绝**，
+复用 `SCOPE_UPGRADE_REQUIRES_APPROVAL`（退出码 4），证据里写清 `requested_scope` 与 `decided_scope`
+（ADR-0055 选这个码而不是新码，这里沿用同一条理由：**拒绝是诚实的结果，而新码要连带改码表、守卫与语料**）。
+**不选的方案**：按请求的 scope 做——那会把 `planner.py` 的高危规则架空，而那条规则是 §12.1 的一部分。
+
+**B —— `--target` 自己就说明了它是什么。** `--target <dir>` 是**项目**、`--target data-root:<id>` 是**数据根**；
+`--scope` 是同一个问题的另一种拼法，两者同时给出且互相矛盾时报 `INVALID_INPUT`(8)（不是 4：那是"你的输入
+自相矛盾"，不是"要批准"）。这一条不是顺手改的：**它是 A 的证据要成立的前提**。不补它，上表第三、四行
+的 `requested_scope=machine` 就是**默认值冒充调用者的意思**，拒绝时打印"你答的是 machine"会是编的；
+第五行的 `target_path` 也仍然是一个**不指向任何目录的路径**。
+
+**C —— 报告必须说这次调用会做什么。** `--dry-run` 的裁决必须与真调用一致，**两个方向都算**：
+- 作答与决定不一致 ⇒ dry run 报 `SCOPE_UPGRADE_REQUIRES_APPROVAL`（原先报 `SCOPE_CONFIRMATION_REQUIRED`，
+  读起来像"再答一次就好了"，而真调用会拒绝）；
+- **作答与决定一致** ⇒ dry run 报 `SUCCESS`、`required_approval=none`（原先报 `SCOPE_CONFIRMATION_REQUIRED`，
+  读起来像"还没人确认"，而真调用**会**产出计划）。
+
+第二半是 A/B 之外**必须一起做**的：不做它，"`--scope` + `--dry-run`"与"`--scope`（不带 dry-run）"
+这一对调用会给出两个相反的裁决，而真机验收脚本里那一对是**相邻两行**——它自 §153 起就在断言旧的
+`code == 4`（见代价）。
+
+### 代价
+
+- **两条曾经能出计划的调用现在被拒**（`--scope project`、`--scope machine` 落在 data-root 决定上）。
+  这是有意的，但它是**行为收紧**，而 ADR-0021 的默认是放宽：这里按"审计守卫 + 诚实规则"处理——
+  被拒的不是权限，是**一句假话**（记下 `requested_scope=project` 然后绑机器级）。
+- **`machine` 不再被静默接受**：`--scope machine` 对 `kind=runtime` 的能力过去出计划、绑定也是 machine，
+  两个字段一致所以看着没问题；但它跳过了 §12.1 那道门（"运行时装哪儿"是个真实选择），现在被拒。
+- **真机验收脚本里两条断言自 §153 起就是假的**，而它不进 pytest，所以没有任何守卫变红：`plan java
+  --scope data-root ... --creates-environment` 与它的 `--dry-run` 版本都被断言成"必须确认"（退出码 4），
+  而 §153 之后真调用已经出计划（退出码 0）。§155 量到它、改了它，并把"没作答才被拒"这一条**换成**
+  脚本里真正要盯的那个调用。**这是一条可以被复用的教训**：`real_machine_acceptance.py` 不是 pytest 模块，
+  所以任何"改了 `plan` 的裁决"的阶段都必须**手动重跑它**，§153 没有跑。
+- **没有做**：`--scope data-root` 仍然绑 machine 级（上表第一行，§154.1 已裁决为两套词汇、不是缺陷）；
+  计划 scope 与 binding scope 的合并**不在本 ADR 的范围**内。
+
+**状态：已裁决并已落地（A、B、C，草案 §155）**：`plan` 的作答与决定不一致时拒绝并报两个 scope；`--target`
+单独给出时自己说明是项目还是数据根；`--dry-run` 的裁决与真调用一致。守卫是 `cli/tests/test_l1_plan_routing.py`
+的五条新用例，五条都做了合成变异验红（两半各自把自己的用例变红）。**同一轮里修掉并重跑了真机验收脚本那两条
+陈旧断言**（§155.4）。
+

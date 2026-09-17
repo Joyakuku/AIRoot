@@ -2109,11 +2109,25 @@ def _resolve_plan_target(registry: Any, args: argparse.Namespace) -> tuple[str, 
     Returns ``(scope, target_id, target_path)``. A data-root target must be registered, and a
     path target must exist: "typo in the path" and "the target is not there" are different
     problems and must not collapse into one.
+
+    ``--target`` alone still says **what kind of place** it is (§155): the two spellings are not
+    interchangeable — ``<dir>`` is a project, ``data-root:<id>`` is a data root. Defaulting both to
+    the machine scope recorded a destination that was not a destination (a bare directory bound
+    machine-wide, or the literal string ``data-root:dr-x`` as a *path*).
     """
 
     from .paths import canonicalize
 
-    scope = args.scope or "machine"
+    target = args.target or ""
+    scope = args.scope
+    if scope is None:
+        scope = "data-root" if target.startswith("data-root:") else ("project" if target else "machine")
+    if scope != "data-root" and target.startswith("data-root:"):
+        raise AirootError(
+            "INVALID_INPUT",
+            f"--scope {scope} cannot take a data-root target: {target!r}",
+            evidence=["a data-root target and any other scope are two different answers to one question"],
+        )
     if scope == "project":
         project = args.project or args.target
         if not project:
@@ -2123,7 +2137,6 @@ def _resolve_plan_target(registry: Any, args: argparse.Namespace) -> tuple[str, 
             raise AirootError("INVALID_INPUT", f"the project target must be a directory: {root}")
         return scope, None, str(root)
     if scope == "data-root":
-        target = args.target or ""
         if not target:
             raise AirootError("INVALID_INPUT", "--scope data-root needs --target data-root:<id>")
         if not target.startswith("data-root:"):
@@ -2202,8 +2215,27 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
 
         # Widening needs approval; narrowing yourself does not (draft §20.3-4).
         upgrading = scope == "data-root" and decision.scope == SCOPE_PROJECT
+        # §154/§155: an answer that names a **different** scope than the router decided is not an
+        # answer to this question. The gate asks *where* (draft §12.1), and the routing rules are what
+        # answer "where" — so `--scope project` on a runtime used to be recorded as the answer
+        # (`routing.requested_scope`), overridden by rule 4, and bound machine-level: accepted and
+        # then not honoured. Refusing is the honest outcome; the widening rule above already covers
+        # the other direction, so this is the same code from the other side, with both scopes named.
+        diverging = decision.confirmation_required and answered and scope != decision.scope
+        # "Nobody answered" is its own case and survives all of the above: the gate exists for it.
+        unconfirmed = decision.confirmation_required and not answered
 
         if args.dry_run:
+            # The dry run must report the verdict the real call has (§155), in both directions: a
+            # diverging answer is refused there too, and an answer that *is* the routing's answer
+            # leaves nothing to confirm. Saying "confirmation required" about a call that would
+            # produce a plan is the same defect one size smaller.
+            if upgrading or diverging:
+                approval, dry_reason = "scope_upgrade", "SCOPE_UPGRADE_REQUIRES_APPROVAL"
+            elif unconfirmed:
+                approval, dry_reason = "scope_confirmation", "SCOPE_CONFIRMATION_REQUIRED"
+            else:
+                approval, dry_reason = "none", "SUCCESS"
             document = {
                 "schema_version": 1,
                 "operation": "plan_dry_run",
@@ -2212,14 +2244,10 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 "routing": routing,
                 "confirmation_required": decision.confirmation_required,
                 "options": list(decision.options),
-                "required_approval": "scope_upgrade" if upgrading else ("scope_confirmation" if decision.confirmation_required else "none"),
+                "required_approval": approval,
                 "side_effects": ["writes_store", "writes_registry", "derived_cache"],
                 "version": args.version,
-                "reason_code": (
-                    "SCOPE_UPGRADE_REQUIRES_APPROVAL"
-                    if upgrading
-                    else ("SCOPE_CONFIRMATION_REQUIRED" if decision.confirmation_required else "SUCCESS")
-                ),
+                "reason_code": dry_reason,
             }
             document["size_estimate_bytes"] = decision.size_estimate_bytes
             document["size_source"] = decision.size_source
@@ -2234,10 +2262,26 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                     f"  size: {decision.size_estimate_bytes if decision.size_estimate_bytes is not None else 'unknown (SIZE_ESTIMATE_UNAVAILABLE)'}",
                     *(
                         ["  confirmation required; options: " + " / ".join(decision.options)]
-                        if decision.confirmation_required
+                        if unconfirmed
+                        else []
+                    ),
+                    *(
+                        [
+                            f"  confirmation answered by {routing['confirmation_answered_by']}; "
+                            "nothing further is required for this plan"
+                        ]
+                        if decision.confirmation_required and not unconfirmed and not (upgrading or diverging)
                         else []
                     ),
                     *(["  scope upgrade to data-root requires separate approval"] if upgrading else []),
+                    *(
+                        [
+                            f"  the answered scope {scope!r} is not the scope this capability routes "
+                            f"to ({decision.scope!r}); the answer does not override the routing rules"
+                        ]
+                        if diverging
+                        else []
+                    ),
                     "  nothing was written",
                 ],
             )
@@ -2250,6 +2294,22 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 evidence=[
                     f"the project manifests reference {args.capability}, so its scope is project",
                     "run with --dry-run to see the plan, then approve the scope upgrade explicitly",
+                ],
+            )
+        # §155: the answered scope is not the one the router decided, so nothing was answered about
+        # this plan — and unlike "nobody answered", the caller *did* say something, which is why the
+        # message names both scopes instead of re-listing the options.
+        if diverging:
+            raise AirootError(
+                "SCOPE_UPGRADE_REQUIRES_APPROVAL",
+                f"the answered scope {scope!r} is not the scope {args.capability} routes to",
+                evidence=[
+                    f"requested_scope={scope}",
+                    f"decided_scope={decision.scope}",
+                    f"origin={decision.origin}",
+                    "the routing decision comes from the dependency rules (draft §12.1), and naming "
+                    "a scope answers the question without overriding the answer",
+                    "run with --dry-run to see the routing, then approve the scope upgrade explicitly",
                 ],
             )
         # ADR-0055 / §153: the refusal is for the case where **nobody answered**, not for the class.
