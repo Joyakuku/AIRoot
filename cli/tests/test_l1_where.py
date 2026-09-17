@@ -318,7 +318,14 @@ def test_multiple_versions_coexist_but_only_one_is_active(registry, clock, root)
 
 
 def test_where_reads_only_the_registry(registry, root, monkeypatch) -> None:
-    """``where`` must never scan the disk: it works with a registry alone."""
+    """``where`` must never **walk** the disk: it answers from a registry plus fixed stats.
+
+    The word is *walk*, and §147 made it precise rather than loosening it. `where` has always
+    ``is_file()``-ed a reference's recorded entrypoint — that is how "记录里的入口点不见了"
+    is reported — and it now asks the same question of an owned payload through
+    `caps/health.py`. What this case forbids is **enumeration**, which is what `rglob` is:
+    any number of stats on paths the registry already names is not a scan, and a walk is.
+    """
 
     def explode(*_args, **_kwargs):  # pragma: no cover - would be hit on a disk scan
         raise AssertionError("where must not walk the filesystem")

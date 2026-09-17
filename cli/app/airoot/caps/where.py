@@ -37,6 +37,7 @@ from ..paths import from_root_relative
 from ..registry.entities import is_store_path, load_json
 from ..schema_io import validate_self
 from .effective import effective_state, machine_path, process_path, user_path
+from .health import HEALTHY, observe_payload
 from .launcher import launcher_path
 from .selection import SelectionPolicy, load_selection_policy
 from .version import satisfies
@@ -137,7 +138,23 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
         # (draft §66): `store` is the only payload storage (冻结契约 §5.3), so a declaration pointing
         # elsewhere cannot be honoured. It is still *reported* as a candidate — skipping it in silence
         # is the failure mode ADR-0022 already legislated against for Zone W.
-        in_store = is_store_path(instance["store_path"])
+        # The on-disk facts come from the one definition of that question (caps/health.py, draft
+        # §147), and here they are **reported rather than decisive**. `where` is a registry-only
+        # decision, and the first attempt at this stage made `usable` depend on the payload
+        # being on disk — which reddened `test_project_binding_wins_over_machine`, whose rows
+        # are hand-added: the simulated transaction never materialises a payload. That is the
+        # tightened reading of a fact that admits both, and ADR-0021 says the relaxed one wins
+        # (it is not a layer-2 contract, an honesty rule, a steward invariant or an audit
+        # guard). So the recorded `health` still decides, and what this adds is the report: a
+        # candidate whose payload was deleted by hand used to be presented with `health=healthy`
+        # and no hint at all, because nothing re-derives it (§147.1). Re-observing a payload and
+        # acting on it is `doctor`'s and `tool status`'s job; deciding where to *look* is this
+        # one's, and a passed-over candidate is reported for the same reason ADR-0022 requires
+        # Zone W to be reported rather than dropped in silence.
+        observation = observe_payload(
+            root=root, store_path=str(instance["store_path"]), entrypoints=entrypoints
+        )
+        in_store = observation.in_store
         candidates.append(
             _Candidate(
                 binding_key=str(row["binding_key"]),
@@ -149,8 +166,10 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                 management="managed",
                 source="registry",
                 path=executable,
+                # Registry-only on purpose: see the note above this block (ADR-0021).
                 usable=healthy and in_store,
-                version_ok=_version_ok(str(instance["version"]), query.version),                identity_match=identity_match,
+                version_ok=_version_ok(str(instance["version"]), query.version),
+                identity_match=identity_match,
                 slot=scope,
                 machine_discoverable=zone != "W",
                 evidence=[
@@ -170,6 +189,31 @@ def _managed_candidates(registry: Any, query: WhereQuery, root: Path) -> list[_C
                                 "detail": (
                                     f"store_path is not under store/: {instance['store_path']} "
                                     "(store is the only payload storage)"
+                                ),
+                            }
+                        ]
+                    ),
+                    # The case the recorded value cannot see: the payload tree is **there** and
+                    # the entrypoint it declares is not. Its own evidence kind rather than
+                    # folded into `layout` — the layout is not what is wrong (§147).
+                    #
+                    # Narrower than the observation on purpose, and the golden corpus is what
+                    # settled it: reporting *any* non-healthy observation made `where_healthy`
+                    # say the payload was broken, because that scenario is built from a
+                    # registry alone (the simulated transaction materialises no payload). A
+                    # missing payload **directory** cannot be told apart, by a registry-only
+                    # reader, from one that was never materialised — so this reports only what
+                    # is unambiguous. `tool status` still reports the directory case, and has
+                    # always done so.
+                    *(
+                        []
+                        if not (in_store and observation.payload_present and observation.missing)
+                        else [
+                            {
+                                "kind": "payload",
+                                "detail": (
+                                    f"the payload on disk is {observation.observed_health}: "
+                                    + "; ".join(item["detail"] for item in observation.problems)
                                 ),
                             }
                         ]

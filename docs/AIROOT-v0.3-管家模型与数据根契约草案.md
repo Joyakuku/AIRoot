@@ -12454,9 +12454,9 @@ import 不进来**，整个套件会一起红——**用一次全红换一句早
 
    | 文件 | 字节 |
    |---|---|
-   | `caps/runtime.py` | 15559 → 10948（−4611） |
-   | `caps/where.py` | 26138 → 23099（−3039） |
-   | `cli.py` | 166174 → 162142（−4032） |
+   | `caps/runtime.py` | 15603 → 10992（−4611） |
+   | `caps/where.py` | 26314 → 23269（−3045） |
+   | `cli.py` | 166379 → 162347（−4032） |
 
 2. `broker/pipe.py` 的 `` `\p` `` 改成 `` `\\p` `` 的源码拼法：81906 → 81908 字节（+2）；
 3. **守卫第三十八组**（`test_no_module_defines_the_same_name_twice`）与**第三十九组**
@@ -12519,3 +12519,124 @@ cli/app/airoot/cli.py: defined _expected_launchers x4 at module level; ...
 | 契约层 | **不动**（没有 schema、没有枚举、没有退出码、没有 reason code 改变） |
 | 语料 | **不动**（守卫与死代码都不进 golden 语料） |
 | 没有做 | `runtime-instance` 仍然**没有写者**（P5 才创建运行时实例）；P5 的健康面仍未落地——它们是下一阶段 |
+## 147. 载荷在磁盘上还在不在：一处定义、两处报告，而**不**是第二条选择规则（守卫第四十组）
+
+P5 Runtime 的测量从"`health` 到底是谁在写"开始。答案是：**注册时写 `healthy`、批准过的变更失败时写
+`broken`，此外没有任何东西重新推导它**。于是同一个问题有两个读者、两套规则，而**会做选择的那一个读的
+是更旧的事实**。
+
+### 147.1 先量：两个观察者对同一份载荷给出两种答案
+
+| 读者 | 它怎么判断"这份载荷能用" |
+|---|---|
+| `caps/where.py` | `usable = str(instance["health"]) == "healthy" and is_store_path(...)` —— **只读 registry** |
+| `caps/toolstate.py` | 走一遍载荷，逐个 `is_file()`，报出入口点缺了哪些 |
+
+实测（`cli/tests/test_l1_health.py`）：装上 `fake-tool` 之后手工删掉
+`store/<instance>/fake-tool.bin`：
+
+| 读数 | 值 |
+|---|---|
+| `tool status` | `entrypoints_missing=["fake-tool.bin"]`，`reason_code=MANIFEST_DIGEST_MISMATCH` |
+| `where` 的候选 | `health=healthy`、`usable=true`、**一句提示都没有** |
+
+根因不是谁的代码写错了，是**那个字段的语义被当成了观测量**：`health` 是一份**记录**，而"文件还在不在"
+是一个**观测**。记录不会自己更新。
+
+### 147.2 一处定义
+
+新增 `cli/app/airoot/caps/health.py`：`observe_payload()` 是"这份载荷此刻在磁盘上是什么样"的
+**唯一定义**（和 `caps/layout.py` 之于载荷标记扫描同一个理由，§71）。它只回答三个事实：在不在
+`store/` 里、载荷目录在不在、每个声明的入口点在不在。
+
+三个读者全部改走它，各自的**报告面**保持不变：
+
+| 读者 | 用它的哪一部分 | 保持不变的部分 |
+|---|---|---|
+| `caps/where.py` | `in_store`，以及**目录在而入口点不在**这一种情形（进 `payload` 证据；口径见 §147.5） | 选择规则（见 §147.4） |
+| `caps/toolstate.py` `tool_status` | 事实三件套 | 它自己的 finding code（`PAYLOAD_OUTSIDE_STORE`/`PAYLOAD_MISSING`/`MANIFEST_DIGEST_MISMATCH`） |
+| `caps/toolstate.py` `tool_verify` | 缺失的入口点列表 | 它自己的 problem 列表与 digest 工作（观测**刻意**不算 digest） |
+
+**它不写 registry**，所以这一版**记录**进 `health` 的仍然只有 `healthy` 与 `broken`——
+`references/field-values.md` 那句话不需要改：观测不是记录，把观测说成记录等于给一个文档事实换写法却
+不给它一个写者（§119 那类缺陷的形状）。
+
+### 147.3 `drifted` 有了第一个写者（在**观测**词汇里）
+
+`common.schema.json` 的 `$defs.health` 有五个值，此前 `degraded`/`stale`/`drifted` **一个写者都没有**。
+观测给了 `drifted` 一个：**声明落在 `store/` 外面**（`store` 是唯一载荷存储，冻结契约 §5.3，draft §66）——
+文件可能完好无损，错的是声明。
+
+`degraded` 与 `stale` **仍然没有**，而且是**故意**的：它们命名的是这次观测**看不到**的条件（"lifecycle
+说 active 但没有绑定"、"索引比策略允许的更旧"），各自有自己的诊断。field-values 里那条理由不变。
+
+### 147.4 一条被**测掉**的收紧读法（这一阶段最该记住的读数）
+
+第一版把选择也接上了观测：`usable = healthy and observation.runnable`。跑测试：
+
+```text
+FAILED cli/tests/test_l1_where.py::test_project_binding_wins_over_machine
+assert 'fake-tool/fake-tool/1.0.0/win-x64' == 'fake-tool/fake-tool/9.0.0/win-x64'
+```
+
+红的原因不是测试写错了，是**它说的是一件真事**：那一行 registry 是测试**手加**的，而
+`SimulationRunner`（模拟事务）**从不落一个真实载荷**。要求"文件真的在"，就是要求每一个只建 registry
+的场景都先在磁盘上摆一份载荷。
+
+这就是 **ADR-0021** 说的"同一事实存在放宽与收紧两种读法"，而四条例外**一条都不适用**：这不是图层级
+（没有违反已发布 schema）、不是诚实规则、不是管家模型的结构性不变量、也不是审计守卫。**所以按裁决走
+放宽的那一种**：
+
+- `usable` **不变**（`where` 仍然是 registry-only 的决定，`test_where_reads_only_the_registry` 继续成立）；
+- 新增的是**报告**：候选文档里多一条 `payload` 证据，写清磁盘上到底是什么。
+
+那个测试的**文档字符串**同时被改精确了：它禁的是**遍历**（`rglob`），不是 `stat`。`where` 一直会对
+**引用侧**记录的入口点做 `is_file()`——"记录里的入口点不见了"就是这么报出来的——现在它对 owned 载荷问
+同一个问题，只是**问来报告**。把"scan"当"碰过磁盘"读，会让这条守卫比它实际的意思严得多。
+
+**守卫第四十组**（`cli/tests/test_l1_health.py`）：
+
+| 用例 | 钉住什么 |
+|---|---|
+| 逐分支参数化 | 观测的每一支：健康／入口点缺一个／缺一部分／一个都不在／**一个入口点都没声明**（最后一条是**诚实的空**：没有声明就没有缺失，观测不得凭空造一条 finding） |
+| 声明在 `store` 外面 | 结论是 `drifted` 而不是 `broken` |
+| 载荷目录不见了 | 是 finding，**不是 raise**（§62 的教训） |
+| 两个观察者 | 删掉入口点之后：`tool status` 报缺失，`where` 报 `payload` 证据，而 `usable` **仍然是 `true`**（把 147.4 的裁决钉在测试里，不是只写在文档里） |
+| **合成变异** | 把 `where` 里的 observer 换成"永远健康"，那条 `payload` 证据**必须消失**——否则这个守卫读的根本不是那个观测，而它在干净树上看起来一模一样 |
+| `tool verify` | 第三个读者用的是同一个观测，三者不会再各自长出一套 |
+
+### 147.5 第二次更正：连**报告**也不能对"载荷目录不存在"开口
+
+放宽之后跑全套，**语料红了**：`where_healthy` 不再与当前核心逐字节相同。差的字节不重要，
+它说明的事情重要：那份 fixture 是**只从 registry 建**的场景，实例目录根本不存在，于是观测
+给的是 `broken`，候选里就多出一条"载荷坏了"。
+
+**那份 fixture 叫 `where_healthy`。** 让一份"健康"的语料带上"载荷坏了"的报告，就是在制造
+一条假读数——而它比第一版更难发现，因为**选择是对的**，只有报告是错的。
+
+所以报告再收一次口径，只对**没有歧义**的情形开口：
+
+| 情形 | registry-only 的读者能不能分辨 | `where` 报不报 | 谁报 |
+|---|---|---|---|
+| 目录在、声明的入口点不在 | **能**——目录在就说明有人物化过 | **报** | `where` 与 `tool status` |
+| 目录不在 | **不能**：与"从没物化过"完全同形 | 不报 | `tool status`（它一直都在报） |
+| 声明在 `store/` 外面 | 能 | 报（**原有**的那条 `layout` 证据） | `where` |
+
+这条口径由一个用例钉住（`test_an_absent_payload_directory_is_not_reported_by_where`），它
+同时断言"目录不在"**不是**拒绝回答的理由。**两次更正都来自"跑起来看"**：第一版由一条红
+测试纠正，第二版由一份红语料纠正。
+
+### 147.6 一处自我更正
+
+§146.4 的三个数字是**字符数**被写成了字节数（那个脚本用的是 `len(str)`，而删掉的副本里有中文注释）。
+本节按 `git cat-file -s` 改正为字节，并且顺带说明为什么 `where.py` 那一行的 Δ 与旧值不同：旧值
+`−3039` 是字符差，真实字节差是 `−3045`。
+
+### 147.7 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1384 → 1395**（+11：新文件 `cli/tests/test_l1_health.py`，七条函数、十一条用例，含逐分支参数化、两处合成变异与 §147.5 那条收窄）；常驻审计 **115 不动**（守卫第四十组在 L1，不在审计里） |
+| 契约层 | 不动：没有 schema、没有枚举、没有退出码、没有 reason code；`evidence[].kind` 多一个**由代码自由写**的标签 `payload`，它的权威在 `references/field-values.md`（那一节的两个方向都查） |
+| 语料 | **0 个 fixture 变化**——但这不是"没碰过"：第一版报告让 `where_healthy` 红过，收窄口径之后才是 0（§147.5） |
+| 没有做 | `health` 仍然**没有"重新观测并记录"的写者**。那是 P5 的下一刀，而它先要一个裁决：**谁有权写 `health`**——`where` 会按它选择，所以它不是一次无害的缓存刷新 |

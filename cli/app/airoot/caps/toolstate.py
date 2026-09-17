@@ -28,6 +28,7 @@ from ..canon import tree_digest
 from ..exits import AirootError
 from ..paths import from_root_relative
 from ..registry.entities import is_store_path, load_json
+from .health import observe_payload
 from .version import satisfies
 
 
@@ -179,8 +180,14 @@ def tool_status(registry: Any, instance_id: str, *, root: Path) -> ToolStatus:
     row = _resolve_instance(registry, instance_id)
     document = _instance_document(registry, row)
     finding_list: list[StatusFinding] = []
-    store_dir = from_root_relative(str(row["store_path"]), Path(root))
-    payload_present = store_dir.is_dir()
+    # The on-disk facts come from the one definition of that question (caps/health.py, draft
+    # §147) — the same one `where` uses to decide whether a payload can be started. The
+    # finding codes below stay this verb's own: they are what `tool status` has always
+    # reported.
+    observation = observe_payload(
+        root=Path(root), store_path=str(row["store_path"]), entrypoints=document["entrypoints"]
+    )
+    payload_present = observation.payload_present
     present: list[str] = []
     missing: list[str] = []
 
@@ -188,7 +195,7 @@ def tool_status(registry: Any, instance_id: str, *, root: Path) -> ToolStatus:
         finding_list.append(
             StatusFinding("info", "PAYLOAD_COLLECTED", f"payload was collected at {row['collected_at']}")
         )
-    elif not is_store_path(row["store_path"]):
+    elif not observation.in_store:
         # Present or not, a payload outside `store/` is layout drift and this verb must not report it
         # as a healthy owned instance (draft §66). Checked before the existence test: a mislocated
         # payload that happens to exist is the case that used to read as fine.
@@ -205,9 +212,8 @@ def tool_status(registry: Any, instance_id: str, *, root: Path) -> ToolStatus:
             StatusFinding("error", "PAYLOAD_MISSING", f"{row['store_path']} does not exist")
         )
     else:
-        for name in document["entrypoints"]:
-            target = store_dir / Path(str(name))
-            (present if target.is_file() else missing).append(str(name))
+        present = list(observation.present)
+        missing = list(observation.missing)
         if missing:
             finding_list.append(
                 StatusFinding(
@@ -247,6 +253,11 @@ def tool_verify(registry: Any, instance_id: str, *, root: Path) -> dict[str, Any
     document = _instance_document(registry, row)
     store_dir = from_root_relative(str(row["store_path"]), Path(root))
     problems: list[dict[str, Any]] = []
+    # Same definition as `tool status` and `where` (caps/health.py, §147); this verb keeps its
+    # own problem codes and its own digest work, which the observation deliberately does not do.
+    observation = observe_payload(
+        root=Path(root), store_path=str(row["store_path"]), entrypoints=document["entrypoints"]
+    )
 
     if row["collected_at"]:
         return {
@@ -263,7 +274,7 @@ def tool_verify(registry: Any, instance_id: str, *, root: Path) -> dict[str, Any
             "note": "the payload was collected by an approved gc; there is nothing left to verify",
         }
 
-    if not is_store_path(row["store_path"]):
+    if not observation.in_store:
         # Same invariant as `tool_status`, and the same code: `verify` must not report a payload
         # outside the store as a verified owned instance (draft §66).
         problems.append(
@@ -272,7 +283,7 @@ def tool_verify(registry: Any, instance_id: str, *, root: Path) -> dict[str, Any
                 "detail": f"store_path is not under store/: {row['store_path']}",
             }
         )
-    elif not store_dir.is_dir():
+    elif not observation.payload_present:
         problems.append({"code": "PAYLOAD_MISSING", "detail": f"{row['store_path']} does not exist"})
 
     actual = tree_digest(store_dir) if store_dir.is_dir() else None
@@ -284,9 +295,8 @@ def tool_verify(registry: Any, instance_id: str, *, root: Path) -> dict[str, Any
             }
         )
 
-    for name in document["entrypoints"]:
-        if not (store_dir / Path(str(name))).is_file():
-            problems.append({"code": "PAYLOAD_MISSING", "detail": f"entrypoint {name} is missing"})
+    for name in observation.missing:
+        problems.append({"code": "PAYLOAD_MISSING", "detail": f"entrypoint {name} is missing"})
 
     reason = problems[0]["code"] if problems else "SUCCESS"
     return {

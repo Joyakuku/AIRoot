@@ -221,7 +221,7 @@
 
 ### `evidence[].kind`
 
-每个命令的响应都带 `evidence[]`：`detail` 是人话，`kind` 说明这行是哪一类证据。**27 个值**：
+每个命令的响应都带 `evidence[]`：`detail` 是人话，`kind` 说明这行是哪一类证据。**28 个值**：
 
 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|
@@ -241,6 +241,7 @@
 | `binding` | 选中的绑定与它的 generation | `caps/where.py` |
 | `registry` | 声明/registry 侧的事实，含"声明了但不健康"与"没有满足约束的候选" | `caps/where.py` |
 | `layout` | 布局问题：payload 标记不在该在的地方 | `caps/where.py` |
+| `payload` | 载荷在磁盘上**此刻**的事实（`caps/health.py` 的 `observe_payload`，§147）：入口点还在不在、载荷目录还在不在、声明在不在 `store/` 里。**这是报告，不是第二条选择规则**——`usable` 仍然由记录下来的 `health` 决定（ADR-0021，§147.4） | `caps/where.py` |
 | `external_reference` | 引用侧的观测：观测时间与 management，或"记录的入口点不见了" | `caps/where.py` |
 | `policy` | 生效的选择策略（precedence / revision） | `caps/where.py` |
 | `effective` | 有效事实复核：新进程看到的与当前进程看到的可能不同 | `caps/where.py` |
