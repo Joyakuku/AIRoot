@@ -2840,3 +2840,53 @@ binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
   又是包管理器"属于同一类问题，先按"属于 flutter 发行版"处理。
 
 **状态：已裁决（A —— 不冻结；B —— 不顺手放宽扫描门；C —— 缺口进真机验收）。** 实现与实测记录见草案 **§149**。
+
+## ADR-0054 — **计划的 `kind` 从冻结能力清单推出，`runtime-instance` 因此第一次有了写者**
+
+### 背景
+
+`runtime-instance.schema.json` 是一份**已发布却没有写者**的契约：没有任何代码构造过它（ADR-0026 与
+`docs/schema/README.md` 都写着这一条）。追下去发现原因不在运行时那一侧，而在**计划层**：
+
+| 位置 | 读数 |
+|---|---|
+| `cli.py` 三处 + `tx/simulate.py` 一处 | `create_artifact_plan(..., kind="managed_tool")` **写死四处** |
+| `capabilities.json`（`cap-4`） | `python`/`node`/`java` 的 `kind` 是 **`runtime`** |
+| `tx/artifact.py` / `tx/simulate.py` | payload 一律用 `managed_tool_payload` 构造，`validate_self("managed-tool-instance", ...)` 也写死 |
+
+所以**两个 artifact 在互相矛盾**：冻结清单说 `python` 是 runtime，而给它建的计划自称 managed tool。
+后果是 `runtime-instance` 永远不可能被生产——不是因为运行时做不了，而是因为**没人会计划一个运行时**。
+
+### 决定
+
+**A —— 计划的 `kind` 由冻结能力清单推出，不再写死。** `caps/boundary.py` 的
+`plan_kind_for(capability_id)` 读那份清单（`load_capabilities()`，白名单加载期已经在用同一个来源）。
+
+**B —— 两套词汇不许混用，映射写在唯一一处。** 能力清单说的是**能力**的种类（`tool` / `runtime`），
+计划与实例说的是**AIROOT 拥有什么**（`managed_tool` / `runtime`）。§150 的第一版把
+`declared_kind` 的结果直接当实例 kind 用——**七个守卫同时红**（`test_cli_steward`、`test_l1_desired`、
+`test_l1_sources`、`test_l1_agent_read_fields` 与三个 census 守卫），因为 `tool` 不是任何 owned schema
+描述的种类。映射 `INSTANCE_KIND_BY_CAPABILITY_KIND` 因此单独存在，且对未知种类**失败关闭**。
+
+**C —— `runtime-instance` 有了写者：`registry/entities.py::runtime_instance_payload`。** 它按**那份
+schema 自己的**形状构造（`runtime_id`/`runtime_family` 而不是 `tool_id`，且那份 schema
+`additionalProperties: false`），不是把 managed-tool 的构造器换个标签。
+
+**D —— 校验按 kind 走，但两个 schema 名保持字面量。** 两个 runner 各写死一次
+`validate_self("managed-tool-instance", …)`；§150 第一版把它换成经变量的间接调用，结果**两个 census
+守卫都红**，报"两个 instance schema 都没有写者"——因为那份审计是**从校验调用点上的字面量**推导的。
+所以只有一个 `validate_instance(payload, kind=…)`，两个名字**都字面写在里面**：一处定义，且推导仍然
+看得见（改守卫去迁就变量是本项目禁止的那条路）。
+
+### 代价与边界
+
+- **写者有了，操作者的路还没有。** `runtime-instance` 现在由任何 `kind=runtime` 的计划生产，而
+  `plan`/`pin` 会真的按 `python`/`node`/`java` 产出 `kind=runtime`；但**要让这个计划在一个真实运行时上
+  成立**，还缺两样：`policy/sources.json` 里没有任何 runtime 的来源，而 `adopt --mode import` 对
+  `kind=runtime` 的能力**按 §12.1 拒绝**（它绑机器级、问不了"装哪儿"，所以拒绝而不是把门做成装饰）。
+  这一条**不在本 ADR 的范围内**，它是下一个决策。
+- 语料多一份 fixture（`runtime_instance.json`，43 → 44），因为一份自校验却没有 fixture 的文档没有验收面。
+- `test_l0_consistency` 里那个用来证明"有 fixture 却没人自校验"方向的**合成变异**因此失效了（它点名的
+  `runtime-instance` 现在两边都在），换成了一个仍然两边都不在的名字——**变异不再变异就必须换掉**。
+
+**状态：已裁决（A/B/C/D 全部落地）。** 实现与读数见草案 **§150**。

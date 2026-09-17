@@ -33,6 +33,7 @@ SCHEMA_FOR_FIXTURE = {
     "registry_with_data_root": "registry-projection",
     "extension_probe_envelope": "extension-envelope",
     "transaction_finalized": "transaction",
+    "runtime_instance": "runtime-instance",
     "plan_fake_tool": "plan",
     "managed_tool_instance": "managed-tool-instance",
     "reference_plan": "reference-plan",

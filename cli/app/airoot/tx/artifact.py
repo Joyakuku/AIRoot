@@ -24,7 +24,15 @@ from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
 from ..paths import from_root_relative, relative_to_root
 from ..schema_io import validate_document, validate_self
-from ..registry.entities import Binding, Instance, binding_key, managed_tool_payload
+from ..registry.entities import (
+    Binding,
+    Instance,
+    binding_key,
+    managed_tool_payload,
+    runtime_family_for,
+    runtime_instance_payload,
+    validate_instance,
+)
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
 from .rollback import revert_own_activation
@@ -180,7 +188,9 @@ class ArtifactRunner:
 
             if tx["state"] == "COMMITTED":
                 instance = self._instance_document(plan, store_dir)
-                validate_self("managed-tool-instance", instance.payload)
+                # The schema follows the kind (draft §150). The helper owns both names literally,
+                # which is what keeps the standing writer census able to see them.
+                validate_instance(instance.payload, kind=str(instance.kind))
                 self.journal.advance(
                     tx,
                     "REGISTERED",
@@ -306,22 +316,7 @@ class ArtifactRunner:
         manifest = file_manifest(store_dir)
         payload_digest = tree_digest(store_dir)
         entrypoints = self.backend.expose(store_dir)
-        payload = managed_tool_payload(
-            tool_id=plan["target"]["capability_id"],
-            instance_id=instance_id,
-            capability_id=plan["target"]["capability_id"],
-            version=plan["target"]["version"],
-            install_backend_id=plan["metadata"]["backend_id"],
-            artifact_digest=payload_digest,
-            store_path=f"store/{instance_id}",
-            file_manifest_digest=file_manifest_digest(manifest),
-            lifecycle_status="installed",
-            health="healthy",
-            entrypoints=entrypoints,
-            source=plan["source"],
-            file_manifest=manifest,
-            created_at=self.clock.timestamp(),
-        )
+        payload = self._instance_payload(plan, payload_digest, entrypoints, manifest)
         return Instance(
             instance_id=instance_id,
             kind=plan["target"]["kind"],
@@ -339,6 +334,48 @@ class ArtifactRunner:
             entrypoints=tuple(entrypoints),
             payload=payload,
             created_at=self.clock.timestamp(),
+        )
+
+    def _instance_payload(
+        self,
+        plan: dict[str, Any],
+        payload_digest: str,
+        entrypoints: list[str],
+        manifest: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """The payload document for this plan's kind, built by the builder that owns that shape.
+
+        Before draft §150 both runners built a **managed-tool** document unconditionally, so a
+        `kind=runtime` plan produced a document the published `runtime-instance` schema does not
+        describe — and since nothing ever *planned* a runtime, that schema had no writer at all.
+        The kind now comes from the frozen capability list, and this is where it decides the shape.
+        """
+
+        capability_id = str(plan["target"]["capability_id"])
+        common: dict[str, Any] = {
+            "instance_id": str(plan["target"]["instance_id"]),
+            "capability_id": capability_id,
+            "version": str(plan["target"]["version"]),
+            "install_backend_id": str(plan["metadata"]["backend_id"]),
+            "artifact_digest": payload_digest,
+            "store_path": f"store/{plan['target']['instance_id']}",
+            "lifecycle_status": "installed",
+            "health": "healthy",
+            "entrypoints": entrypoints,
+            "source": plan["source"],
+            "file_manifest_digest": file_manifest_digest(manifest),
+        }
+        if str(plan["target"]["kind"]) == "runtime":
+            return runtime_instance_payload(
+                runtime_id=capability_id,
+                runtime_family=runtime_family_for(capability_id),
+                **common,
+            )
+        return managed_tool_payload(
+            tool_id=capability_id,
+            file_manifest=manifest,
+            created_at=self.clock.timestamp(),
+            **common,
         )
 
     def _already_applied(self, plan: dict[str, Any]) -> dict[str, Any] | None:

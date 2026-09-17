@@ -29,7 +29,14 @@ from airoot.clock import FakeClock
 from airoot.exits import REASON_EXIT, exit_code_for
 from airoot.ext.fake import load_fake_extension
 from airoot.registry import Registry, build_projection
-from airoot.registry.entities import Binding, DataRoot, ExternalReference, Instance, binding_key
+from airoot.registry.entities import (
+    Binding,
+    DataRoot,
+    ExternalReference,
+    Instance,
+    binding_key,
+    runtime_instance_payload,
+)
 from airoot.root import init_root
 from airoot.tx import create_plan
 from airoot.tx.simulate import PAYLOAD_NAME, SimulationRunner
@@ -570,6 +577,34 @@ def _build_documents(base: Path) -> dict[str, dict[str, Any]]:
     # the managed instance payload — what gets registered and bound. They are recorded here rather than
     # in a block of their own because this is where both already exist.
     documents["plan_fake_tool"] = {"document": plan, "exit_code": 0}
+    # §150: the runtime instance document, recorded beside the managed-tool payload for the same
+    # reason — it is what gets registered and bound. It exists at all only because the plan layer
+    # now takes `kind` from the frozen capability list instead of hard-coding `managed_tool`,
+    # which is also what gave `runtime-instance` its first writer.
+    documents["runtime_instance"] = {
+        "document": runtime_instance_payload(
+            runtime_id="python",
+            instance_id="python/cpython/3.12.9150.1013/win-x64",
+            capability_id="python",
+            runtime_family="python",
+            version="3.12.9150.1013",
+            install_backend_id="portable_archive",
+            artifact_digest=digest,
+            store_path="store/python/cpython/3.12.9150.1013/win-x64",
+            lifecycle_status="active",
+            health="healthy",
+            entrypoints=["python.exe"],
+            source={
+                "kind": "generated_fixture",
+                "locator": "cache/fixtures/python/3.12.9150.1013",
+                "provenance": {"source_id": "fixture/cpython-v1", "publisher": "airoot-test"},
+                "integrity": {"artifact_digest": digest, "file_manifest_digest": "sha256:" + "b" * 64},
+                "signature": None,
+            },
+            file_manifest_digest="sha256:" + "b" * 64,
+        ),
+        "exit_code": 0,
+    }
     documents["managed_tool_instance"] = {
         "document": _instance("fake-tool/fake-tool/1.0.0/win-x64", digest=digest, version="1.0.0").payload,
         "exit_code": 0,

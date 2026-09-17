@@ -66,7 +66,7 @@
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
 | `operation` | `install_tool` / `install_runtime` / `import_tool`† / `recreate_runtime`† / `retire_tool` / `gc_apply` / `root_relocate`† | 这份计划想干的事：装一个受控工具 / 装一个运行时（P5）/ 退役一个实例（清 active binding，**payload 留着**）/ 回收已退役且无人引用的 payload / 迁移 root（要提权）。`import_tool` 与 `recreate_runtime` 这一版没有写者：`adopt --mode import` 出的是自己的计划形状（`metadata.import`），`recreate` 属 P5 | `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py` |
-| `target.kind` | `managed_tool` / `runtime`† | 计划作用的对象是受控工具实例还是运行时实例。这一版没有 runtime 实例，所以 `runtime` 不会出现 | `registry/entities.py`, `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py` |
+| `target.kind` | `managed_tool` / `runtime` | 计划作用的对象是受控工具实例还是运行时实例。**自 §150 起 `runtime` 真的会出现**：计划的 `kind` 从**冻结能力清单**推出（`tool` → `managed_tool`、`runtime` → `runtime`），而这份清单里 `python`/`node`/`java` 就是 `kind=runtime` | `registry/entities.py`, `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py` |
 | `operations[].kind` | `fetch` / `verify` / `stage` / `commit` / `expose` / `rollback`† / `delete` | 九步协议里的步骤名：取回 / 校验来源与摘要 / 进暂存区 / 提交进 store / 暴露（绑定或环境）/ 删除 payload。`rollback` 不会出现在计划里——回滚是状态机在失败/恢复时做的事（`ROLLBACK_PENDING`），不是计划的一步 | `tx/artifact.py`, `tx/simulate.py`, `caps/lifecycle.py`, `caps/exposure.py` |
 | `operations[].source_mutation` | `none` / `delete`† / `move`† / `overwrite`† | 这一步对**源**做了什么。这一版两个 backend 都声明 `none` 并被强制要求是 `none`（`caps/backends/base.py` 会拒绝别的）——**AIROOT 不动你的源文件** | `caps/backends` |
 | `canonicalization` | `jcs-rfc8785-compatible` | `plan_hash` 用哪个规范化算法算（README 规则 4）。**它不是可选项、也不是标签**：换一个算法，同一份计划就是另一个 hash，而批准是绑在那个 hash 上的 | `tx/artifact.py`, `tx/simulate.py`, `caps/exposure.py`, `caps/lifecycle.py` |
@@ -105,7 +105,7 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `instances[].kind` | `managed_tool` / `runtime`† | 受控工具实例 / 运行时实例（P5） | `registry/entities.py`, `tx/artifact.py`, `tx/simulate.py` |
+| `instances[].kind` | `managed_tool` / `runtime` | 受控工具实例 / 运行时实例。**`runtime` 自 §150 起有写者**：`kind=runtime` 的计划装出来的实例就是它，payload 由 `runtime_instance_payload` 构造 | `registry/entities.py`, `tx/artifact.py`, `tx/simulate.py` |
 | `external_references[].management` | `external_reference` / `unmanaged` / `project_owned`† / `quarantined` | 这条外部对象和 AIROOT 的关系：`external_reference` = 已登记、只读、**永不 `uninstall`**；`unmanaged` = 看到了但没登记；`quarantined` = 可疑（比如 reparse point 指向别处），只报告永不删。`project_owned` 这一版没有写者 | `caps/discovery.py`, `caps/where.py`, `registry/entities.py` |
 | `external_references[].capability_kind` | `runtime` / `tool` / `null` | 这条引用提供的是运行时还是工具；`null` = 白名单没判出来（**判不出来就说不知道，不猜**） | `caps/discovery.py`, `policy/discovery-whitelist.json` |
 | `external_references[].source_kind` | `declared`† / `pe_static` / `public_locator`† / `extension_handler`† / `approved_execution`† | 这条引用的身份是怎么来的：这一版**只有** `pe_static`（只读 PE 静态探测）。`declared`（由别人声明）与其余三个都没有写者——所以一条 reference 声称自己是 `declared` 时，那是手写进去的 | `caps/discovery.py`, `registry/entities.py`, `cli.py` |
@@ -180,8 +180,8 @@
 
 | 字段 | 取值 | 含义 | 本版谁写出 |
 |---|---|---|---|
-| `runtime_family` | `python`† / `node`† / `java`† / `dotnet`† / `custom`† | 运行时家族。**这五个值这一版一个都不会出现**：runtime 实例要到 P5 才创建（现在 `runtime` 这个词只出现在计划与清单的**种类**里，不出现为实例） | （没有写者） |
-| `kind` | `runtime`† | 唯一取值（`const`）：这份 schema 只描述运行时实例；受控工具实例是 `managed-tool-instance`，同一个字段的值是 `managed_tool`。**† 是量出来的**：这一版没有任何函数构造出 `runtime-instance` 文档（`managed_tool` 那一份有），所以它与上面的 `runtime_family` 同属"P5 才有写者" | （没有写者） |
+| `runtime_family` | `python` / `node` / `java` / `dotnet` / `custom` | 运行时家族。**§150 起五个值同一个写者**：`runtime_family_for` 在能力名落在枚举里时用它、否则给 `custom`——所以"谁写出"这一列对整行只有一个答案（守卫按**函数**归属，不按取值）。**今天真的会被写出的是 `python`/`node`/`java`**（冻结清单里的三个 runtime 能力）；`dotnet` 与 `custom` 由同一个函数**可达**但没有对应能力，所以它们不是†（† 的定义是"这一版没有任何代码会写出它"，而这里是有代码、只是没有输入） | `registry/entities.py` |
+| `kind` | `runtime` | 唯一取值（`const`）：这份 schema 只描述运行时实例；受控工具实例是 `managed-tool-instance`，同一个字段的值是 `managed_tool`。**§150 起有写者**：`registry/entities.py` 的 `runtime_instance_payload` 是这份 schema 的构造者；让它可被调到的，是计划层的 `kind` 不再写死 | `registry/entities.py` |
 
 ## `transaction.schema.json`
 

@@ -82,6 +82,57 @@ class CapabilityList:
         return tuple(item.capability_id for item in self.capabilities)
 
 
+def declared_kind(capability_id: str, *, capabilities: CapabilityList | None = None) -> str:
+    """The `kind` the **frozen capability list** declares for this capability (draft §150).
+
+    The capability list and the owned-instance schemas use **two different vocabularies**, and
+    the plan layer used to conflate them by hard-coding `managed_tool` everywhere: a capability
+    is `tool` or `runtime` (what it *is*), while a plan/instance is `managed_tool` or `runtime`
+    (what AIROOT *owns*). So a plan for a capability this list calls `runtime` described itself
+    as a managed tool, and the published `runtime-instance` schema could never be produced.
+    """
+
+    catalog = capabilities if capabilities is not None else load_capabilities()
+    for capability in catalog.capabilities:
+        if capability.capability_id == capability_id:
+            return str(capability.kind)
+    raise AirootError(
+        "CAPABILITY_NOT_DECLARED",
+        f"capability {capability_id} is not in the frozen list, so no kind can be derived",
+        evidence=[
+            "the growth path is propose -> freeze -> whitelist predicate (draft §15.4)",
+            f"declared: {', '.join(item.capability_id for item in catalog.capabilities)}",
+        ],
+    )
+
+
+#: The two vocabularies, joined in one place. §150's first version returned the capability kind
+#: directly and seven guards went red at once — the instance schemas describe `managed_tool` and
+#: `runtime`, not `tool` and `runtime`, and `agents/airoot.json`'s read paths speak the former.
+INSTANCE_KIND_BY_CAPABILITY_KIND: dict[str, str] = {
+    "tool": "managed_tool",
+    "runtime": "runtime",
+}
+
+
+def plan_kind_for(capability_id: str, *, capabilities: CapabilityList | None = None) -> str:
+    """The **instance** kind a plan for this capability targets (`declared_kind`, mapped).
+
+    A capability kind with no owned-instance counterpart is refused rather than passed through:
+    an unknown kind reaching the runner would pick no payload builder and no schema.
+    """
+
+    declared = declared_kind(capability_id, capabilities=capabilities)
+    instance_kind = INSTANCE_KIND_BY_CAPABILITY_KIND.get(declared)
+    if instance_kind is None:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"capability {capability_id} declares kind={declared!r}, which no owned instance schema describes",
+            evidence=[f"mapped: {', '.join(sorted(INSTANCE_KIND_BY_CAPABILITY_KIND))}"],
+        )
+    return instance_kind
+
+
 def load_capabilities(path: Path | None = None) -> CapabilityList:
     target = Path(path) if path is not None else CAPABILITIES_PATH
     if not target.is_file():

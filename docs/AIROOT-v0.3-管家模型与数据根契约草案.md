@@ -12839,3 +12839,52 @@ search refresh      exit=2 {"records": 248058, "coverage": "partial"}
 | 语料 | **不动** |
 | 真机 | 能力账本 **6 个**能力 + **16 个**看见未命名；`isolation: PASS`（且快照多了一个面） |
 | 没有做 | 冻结 `flutter`（要新 schema id，见 ADR-0053）；`VisualStudio` 仍是 unmanaged——它是一棵 IDE 树，逃逸名单里没有它，**下一轮处理**；`D:\env_apps` 仍然 `truncated=True` |
+## 150. 计划的 `kind` 不再写死：`runtime-instance` 第一次有了写者（守卫第四十一组，ADR-0054）
+
+P5 Runtime 最客观的一处缺口是：**`runtime-instance.schema.json` 是一份已发布、却没有任何写者的契约**
+（ADR-0026 与 `docs/schema/README.md` 都登记着它）。这一节把它的成因查清并修掉。
+
+### 150.1 先量：障碍在计划层，不在运行时层
+
+| 位置 | 读数 |
+|---|---|
+| `cli.py` 三处 + `tx/simulate.py` 一处 | `kind="managed_tool"` **写死四处** |
+| `cli/app/airoot/policy/capabilities.json`（`cap-4`） | `python`/`node`/`java` 的 `kind` 是 **`runtime`** |
+| `tx/artifact.py` / `tx/simulate.py` | payload 一律 `managed_tool_payload`，`validate_self` 的 schema 名也写死 |
+
+于是**两个 artifact 互相矛盾**：冻结清单说 `python` 是 runtime，而它的计划自称 managed tool。结论不是
+"运行时做不了"，而是**没人会计划一个运行时**——写者不存在的原因是**输入不存在**。
+
+### 150.2 改了什么
+
+1. `caps/boundary.py`：`plan_kind_for(capability_id)` 从**冻结能力清单**推出实例 kind；
+2. `caps/boundary.py`：`INSTANCE_KIND_BY_CAPABILITY_KIND` 把**两套词汇**接起来（能力是 `tool`/`runtime`，
+   实例是 `managed_tool`/`runtime`），未知种类**失败关闭**；
+3. `registry/entities.py`：`runtime_instance_payload`（按 `runtime-instance` 自己的形状）+
+   `runtime_family_for` + `validate_instance`；
+4. 两个 runner：payload 按 kind 选构造器，校验走 `validate_instance`。
+
+### 150.3 守卫怎么红的（两次，都不是靠读代码发现的）
+
+**第一次：两套词汇被混用。** 第一版让 `plan_kind_for` 直接返回能力清单的 kind，**七个守卫同时红**：
+`tool` 不是任何 owned schema 描述的种类，于是 `adopt --mode import`、`tool pin`、`plan --source-json`
+与 agent 面的 read 路径全崩。**这就是"混用即算错误"那条术语规矩的实际代价**，只是这次是机器付的。
+
+**第二次：census 的推导依赖字面量。** 把 `validate_self("managed-tool-instance", …)` 换成经变量的间接
+调用之后，两个 census 守卫反过来报"**两个** instance schema 都没有写者"——因为那份审计从**校验调用点上
+的字面量**推导。修法不是改守卫，而是让**两个名字都字面**地待在一个 `validate_instance` 里：一处定义，
+推导仍然看得见。
+
+另外两处是**语料**red 的：`runtime-instance` 自校验了却没有 fixture（补 `runtime_instance.json`，
+43 → 44），以及 `test_l0_consistency` 里那个"有 fixture 却没人自校验"的**合成变异**因为这次改动**不再
+变异**（点名的名字现在两边都在）——换成一个仍然两边都不在的名字。**变异不再变异就必须换掉**，否则那条
+非空性证明就成了一句空话。
+
+### 150.4 成本与边界
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 不动**（这一阶段改的是构造器、计划层的 kind 与语料：不加 pytest 用例） |
+| 契约层 | **不动**：没有 schema、没有枚举、没有退出码、没有 reason code。变的是**谁被构造** |
+| 语料 | **+1**（`runtime_instance.json`）；`docs/schema/README.md` 的"没有写者"清单 **3 → 2** |
+| 没有做 | **操作者还没有一条路走出一个 runtime 实例**：`sources.json` 里没有 runtime 来源，且 `adopt --mode import` 对 `kind=runtime` 按 §12.1 **拒绝**（它绑机器级、问不了"装哪儿"）。写者已存在、`plan` 已会按 `python`/`node`/`java` 产出 `kind=runtime`，但把一个**真实**运行时装进去，是下一个决策 |

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import PROTOCOL_VERSION
+from .caps.boundary import plan_kind_for
 from .caps.doctor import doctor, status_exit_code
 from .caps.inventory import inventory
 from .caps.where import WhereQuery, where
@@ -704,7 +705,7 @@ def _adopt_import(args: argparse.Namespace, context: Context) -> tuple[dict[str,
             resolve_backend("portable_file", root=context.path()),
             capability_id=capability,
             version=version,
-            kind="managed_tool",
+            kind=plan_kind_for(capability),
             locator=str(target),
             source_digest=sha256_file(target),
             clock=context.clock,
@@ -1992,7 +1993,7 @@ def cmd_tool_pin(args: argparse.Namespace, context: Context) -> tuple[dict[str, 
                     backend,
                     capability_id=entry["capability_id"],
                     version=str(args.version or "0.0.0"),
-                    kind="managed_tool",
+                    kind=plan_kind_for(str(entry["capability_id"])),
                     locator=resolved.artifact_url,
                     source_digest=resolved.expected_digest,
                     clock=context.clock,
@@ -2271,7 +2272,7 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 backend,
                 capability_id=args.capability,
                 version=args.version,
-                kind="managed_tool",
+                kind=plan_kind_for(args.capability),
                 locator=str(source_document["artifact_url"]),
                 source_digest=str(source_document["expected_digest"]),
                 clock=context.clock,

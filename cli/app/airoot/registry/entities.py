@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..exits import AirootError
+from ..schema_io import validate_self
 
 #: The one and only place an owned payload may live (冻结契约 §5.3: "`store` 是唯一 payload 存储；
 #: `tools`/`env` 只是 binding/view"). Spelled once and imported everywhere it is checked, because a
@@ -290,6 +291,94 @@ def managed_tool_payload(
         payload["created_at"] = created_at
     if retired_at is not None:
         payload["retired_at"] = retired_at
+    return payload
+
+
+#: The published `runtime_family` enum (`runtime-instance.schema.json`).
+RUNTIME_FAMILIES: tuple[str, ...] = ("python", "node", "java", "dotnet", "custom")
+
+def validate_instance(payload: dict[str, Any], *, kind: str) -> None:
+    """Validate an instance payload against the published schema its `kind` follows (§150).
+
+    One definition: the two runners each used to name `managed-tool-instance` in their own
+    `validate_self` call, so a `kind=runtime` document was validated as a managed tool.
+
+    **Both schema names appear literally here on purpose.** The standing audit derives "which
+    schemas does the core self-validate" from literal names at validation call sites (guard
+    group 34 in `test_l0_consistency`, and `test_l1_field_values`' writer census). Routing the
+    name through a variable — which §150's first version did — makes that derivation silently
+    wrong: both guards went red reporting that *neither* instance schema had a writer.
+    """
+
+    if kind == "runtime":
+        validate_self("runtime-instance", payload)
+    elif kind == "managed_tool":
+        validate_self("managed-tool-instance", payload)
+    else:
+        raise AirootError(
+            "INVALID_INPUT",
+            f"no published instance schema describes kind={kind!r}",
+            evidence=["the two owned schemas are managed-tool-instance and runtime-instance"],
+        )
+
+
+def runtime_family_for(capability_id: str) -> str:
+    """The family a runtime capability belongs to, or `custom` when the enum does not name it.
+
+    `custom` is the enum's own word for this, so it is a reading rather than a placeholder; a
+    capability that ever needs a fifth family has to earn it in the published schema.
+    """
+
+    return capability_id if capability_id in RUNTIME_FAMILIES else "custom"
+
+
+def runtime_instance_payload(
+    *,
+    runtime_id: str,
+    instance_id: str,
+    capability_id: str,
+    runtime_family: str,
+    version: str,
+    install_backend_id: str,
+    artifact_digest: str,
+    store_path: str,
+    lifecycle_status: str,
+    health: str,
+    entrypoints: list[str],
+    source: dict[str, Any],
+    file_manifest_digest: str | None = None,
+    platform: str = "windows",
+    architecture: str = "x64",
+) -> dict[str, Any]:
+    """Instance document shaped for ``runtime-instance.schema.json`` — this build's first writer.
+
+    The shape is the schema's, not the managed-tool builder's with a different label: that schema
+    sets `additionalProperties: false` and carries `runtime_id`/`runtime_family` where the other
+    carries `tool_id`, so copying it would be rejected by the contract it claims to satisfy.
+    """
+
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "runtime_id": runtime_id,
+        "instance_id": instance_id,
+        "kind": "runtime",
+        "capability_id": capability_id,
+        "runtime_family": runtime_family,
+        "version": version,
+        "platform": platform,
+        "architecture": architecture,
+        "artifact_digest": artifact_digest,
+        "install_backend_id": install_backend_id,
+        "store_path": store_path,
+        "lifecycle_status": lifecycle_status,
+        "health": health,
+        "bindings": [],
+        "source": source,
+    }
+    if entrypoints:
+        payload["entrypoints"] = list(entrypoints)
+    if file_manifest_digest is not None:
+        payload["file_manifest_digest"] = file_manifest_digest
     return payload
 
 

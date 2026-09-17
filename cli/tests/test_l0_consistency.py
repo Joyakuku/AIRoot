@@ -1199,8 +1199,8 @@ def test_the_documents_the_core_prints_and_the_corpus_are_the_same_set() -> None
     assert _printed_vs_fixture_problems(printed | {"ghost-response"}, covered) == [
         "ghost-response is self-validated but has no fixture"
     ]
-    assert _printed_vs_fixture_problems(printed, covered | {"runtime-instance"}) == [
-        "runtime-instance has a fixture but the core never self-validates it"
+    assert _printed_vs_fixture_problems(printed, covered | {"desired-manifest"}) == [
+        "desired-manifest has a fixture but the core never self-validates it"
     ]
 
 

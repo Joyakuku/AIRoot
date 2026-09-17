@@ -27,7 +27,13 @@ from ..clock import Clock, SYSTEM_CLOCK
 from ..exits import AirootError
 from ..paths import from_root_relative, relative_to_root
 from ..schema_io import validate_document, validate_self
-from ..registry.entities import Binding, Instance, binding_key, managed_tool_payload
+from ..registry.entities import (
+    Binding,
+    Instance,
+    binding_key,
+    managed_tool_payload,
+    validate_instance,
+)
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
 from .rollback import revert_own_activation
@@ -354,7 +360,9 @@ class SimulationRunner:
 
             if tx["state"] == "COMMITTED":
                 instance = self._instance_document(plan, store_dir)
-                validate_self("managed-tool-instance", instance.payload)
+                # Same rule as the real runner (draft §150). This runner's own plan builder fixes
+                # kind=managed_tool, so the payload below is still that shape.
+                validate_instance(instance.payload, kind=str(instance.kind))
                 self.journal.advance(
                     tx,
                     "REGISTERED",

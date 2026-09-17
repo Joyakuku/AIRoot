@@ -58,13 +58,17 @@ this schema), and its byte-level corpus lives in a **second** fixture map
 absent from it, because that answer is a machine observation (an ACL entry count and a DACL
 digest) and a fixture would either embed one machine's numbers or lie about them.
 
-The remaining **three have no writer at all in this build** — nothing validates them and nothing `$ref`s
+The remaining **two have no writer at all in this build** — nothing validates them and nothing `$ref`s
 them — and each says why, because "published ahead of implementation" and "describes a document that
 does not exist" look identical from the outside:
 
 - `desired-manifest.schema.json` — the **manifest boundary**: provenance plus the memory policies that skip confirmation. It is **not** `state/desired.json`: that file carries the same field names but omits `source` and `policies.auto_approve`, and filling them would invent provenance and pre-empt the memory channel (ADR-0026)
 - `gc-plan.schema.json` — a **batch** collection plan (`items`/`blocked_items`/`requires_approval`). This slice's collection plan is a `plan` (one payload per plan, `operation=gc_apply`), and the `operation: "gc_plan"` document `tool gc --plan` prints is a report envelope, not this schema
-- `runtime-instance.schema.json` — runtime instances arrive with P5
+
+`runtime-instance.schema.json` left this list in draft §150: the plan layer's `kind` stopped being
+hard-coded, so a `kind=runtime` capability yields a runtime instance and
+`registry/entities.py::runtime_instance_payload` is its writer. The list is short by exactly that
+one, and the reason it left is a code change rather than a documentation decision.
 
 Guard group 34 derives "in use" from the validation call sites **and** the `$ref` graph, and holds this
 list to exact equality with the remainder — so a schema cannot silently join either side, and neither
