@@ -14083,3 +14083,87 @@ C 的守卫走的是 **simulate runner**——也就是说这条修复当时在*
 | 行为变更（已写进 ADR-0063） | 一条**从 `STAGED` 恢复**且 store 被占的事务，现在判 `FAILED` 而不是回滚（原来会让后端在提交点之后拒、然后回滚并动 generation）。理由是 store 是 append-only，"这些字节可能是我们上次崩溃留下的"与"别人占着这个路径"在当时**无法区分**——宁可拒绝，不要猜 |
 | 已知的保守处（有意，无守卫） | `retired_at` 保留成历史时间戳，重装**不清它**；于是一个"曾经被 retire、后来重装"的实例，它更早的那个 generation 仍会被当作已退役而跳过回滚。保守方向（宁可说"没有合格前驱"），记录下来 |
 | 没有做 | F12 §1.1（`lifecycle_status` 是记录值 ⇒ 两行同时读 `active`）**不在本阶段**：它与 F6 是同一个"绑定是唯一权威、其余是投影"的问题，随 §165 一起做；`_row_is_live_for_another_transaction` 那条防御分支在 E 之后**不可达**，因此没有红的运行——如实记录，它是纵深防御而不是承重结构 |
+
+## 165. F6：稳定入口的第二个写者，以及"入口存在 ⟺ 有 active binding"这条不变量
+
+裁决见 **ADR-0064**。§159 的 F6 是"一个派生状态没有任何动词能重建或清除"。调查（§162.7 引用的那份）
+把它量成两个方向，**两个方向都让 `path verify` 永久 exit 2**：
+
+| 方向 | 形状 | 修法前有没有出路 |
+|---|---|---|
+| **1** | 一个 machine 级 active binding 在，对应的入口文件**不在**（操作者的真 root 就是这个：ADR-0050 之前的绑定） | 没有。`rebuild` 的契约是"只碰两个文件"，而"重跑一次 `install`"不是出路——同版本重装当时会 `INSTANCE_CONFLICT`(7) **并把活行标成 broken**（那一条已在 §164 修掉） |
+| **2** | `retire` 清了绑定，**入口文件还在** | 没有。`path verify` 只能报"resolves nothing"，没有任何动词能清它 |
+
+全树只有一个写者（两个 runner 在推进到 `EXPOSED` 之前写一次），**没有重派生路径**。
+
+### 165.1 写一半：新动词 `path repair`
+
+- **只写不删**：按权威（active machine 级 binding + AIROOT 拥有的实例）重派生缺失的入口，用**同一个**
+  `caps.launcher.write_launcher`（与 `EXPOSED` 步逐字节相同，实测比对），幂等（一致就一个字节都不重写），
+  不写 PATH、不动 binding、**不需要批准**（ADR-0050 已量过：写这个文件不需要受保护状态）。
+- **"应该有哪些入口"只有一份推导**：新增 `caps.lifecycle.expected_launchers(registry)`，`path verify`、
+  `path repair`、`retire` 三处都读它（`cli.py` 原来的那份改为委托）。这是本仓库反复付学费的那件事
+  （`tx/rollback.py`、`tx/registration.py`），这里不许有第二份。
+- **它重写漂移的入口**（内容与这个 build 会写的不一致：手工改过、或解释器/checkout 搬了家）。这一条是
+  实现时提出的判断，**我采纳**：拒绝重写会留下与方向 1 **同一个形状**的死角——所有入口一起漂，而没有任何
+  动词能修。
+- **它把不删的孤儿入口报出来，并且在那种情况下退出码是 2**：`orphans` 列出"有入口、没有任何 active
+  machine binding 投影它"的 capability，`reason_code` 是 **`PATH_EXPOSURE_VIOLATION`**（与 `path verify`
+  同码同档），`warnings` 说明**为什么不删**（root 内的物理删除要走 plan/approval，规划 §9.6）以及真正的
+  出路。**这是我在实现中途改的一处裁决**：原实现是"repair exit 0 / `SUCCESS`"，而同一台机器上
+  `path verify` 会说 exit 2——两个动词对同一个 root 给出互相矛盾的印象，正是这一阶段要消灭的那类报告。
+- **registry 读不出来时拒绝动手**：那种状态下"应该有什么"是**未知**的，所以报 `REGISTRY_MISSING`(6) 并把
+  note 放进证据，而不是把未知读成空、宣称"已经一致"。
+
+### 165.2 清一半：`retire` 清掉它自己投影的那一个入口文件
+
+入口是 binding 的**投影**（ADR-0050）：源没了，投影就该跟着没。于是"孤儿入口"不再被制造出来，而不是
+"制造出来之后再想办法清掉"。两处细节都记在这里：
+
+- **幂等路径也清**（"已经 retired"的早返回）：这是让**本次改动之前**遗留的旧孤儿能靠"再跑一次 `retire`"
+  收敛的唯一办法。
+- **删不掉时不借码**：报 `DEGRADED`(2) + `launcher_removed: false` + `launcher_path` + 点名路径的
+  `warnings`，**不抛异常**。理由：binding 那半已经提交了，留下的是 `path verify` 报的那种漂移，重跑 retire
+  或 `path repair` 都还能再试；而 `INSTALL_IO_FAILED` 的语义是"**安装**步骤被文件系统拒绝"，借它就是因为
+  退出码相同——本仓库有一条明文规则反对这件事（§115 就是这样把 `ACL_MISMATCH` 收回《发不出来的码》的）。
+  实测（真 `WinError 5`，把入口设成只读）：exit 2 / `DEGRADED`；锁解开后再跑一次 → exit 0 且入口真被清掉，
+  即 warning 里给的那条出路不是空话。
+- `path verify` **一行未动**（唯一改动是那句已经变成假话的括号说明："retire 清绑定不清文件" →
+  "这是本次改动之前的 root 留下的、或有人手工写进去的"）。它照旧把旧 root 的孤儿入口报成漂移。
+
+### 165.3 代价：一条不变量，两个方向都实测
+
+> **入口存在 ⟺ 有 active machine 绑定。**
+
+| 方向 | 实测 |
+|---|---|
+| active binding 在、入口缺失 | `path verify` exit 2 → `path repair` exit 0 / `created: ["archive"]` → `path verify` exit 0；第二次 repair `already_present` 且字节不变 |
+| `retire` | 入口清单 `["archive.cmd"] → []`，`launcher_removed: true`，`path verify` exit 0 / violations 0 |
+| 只 retire 一个 **session** 绑定的实例（machine 绑定还属于别的实例） | `launcher_removed: false`，入口**保留**——不会把一个孤儿换成一个"有绑定没入口" |
+| 手工改坏的入口 | repair 报 `rewritten` 并恢复成这个 build 的字节 |
+| 孤儿入口（本次改动之前的遗留） | repair **一个字节都不删**（`files_deleted: 0`）、报 `orphans`、exit 2；`path verify` 同码同档 |
+
+### 165.4 我自己的验收（不是转抄）
+
+- **三处独立变异**（字节级脚本：备份 → 改一行 → 跑守卫 → 按字节写回），各处都命中它该命中的守卫：
+  ① 让 `PathRepair.reason_code` 恒为 `SUCCESS` → `test_path_repair_reports_an_orphan_entry_and_deletes_nothing`
+  **与**自校验那条一起红（自校验也抓得住）；② 让"删不掉"那格恒为 `SUCCESS` →
+  `test_retire_reports_a_refused_entry_removal_instead_of_swallowing_it` 红；③ 让 repair 的主循环不跑 →
+  三条 repair 守卫红。
+- **真机验收脚本我自己跑了**（`python cli\tests\real_machine_acceptance.py`）：`closed loop: PASS (0 failed
+  check(s))`，其中两条新断言 `and removes the stable entry that binding projected` 与
+  `retiring leaves no entry behind, so path verify has no drift to report` 都是 `[ok]`；
+  `isolation: PASS (0 difference(s))`（42 个环境值、181 个文件、`D:\env` 的 191750 文件汇总、112 个顶层条目）。
+- 全套：见 §165.5。
+
+### 165.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1423 → 1435**（+12：`test_l1_launcher.py` 7 条、`test_l1_lifecycle.py` 4 条、`test_cli_lifecycle.py` 1 条） |
+| 代码 | `caps/lifecycle.py`（+114/−4）、`caps/pathexposure.py`（+206/−4）、`cli.py`（+69/−12） |
+| 契约层 / 语料 | **不动**（新动词的报告面是 CLI 报告面，`path verify` 也没有 schema 钉它；没有相关 fixture） |
+| 文档 | 命令地图加 `path repair`；`AGENTS.md` 图谱里 `caps/pathexposure.py` 的"永不写 PATH"补上它唯一的写一侧 |
+| 改过的既有期望 | `test_l1_lifecycle.py::test_gc_apply_removes_only_the_store_payload` 的快照时点从"retire 之前"移到"retire 之后、gc 之前"（断言一字未改——retire 现在合法地删掉入口，旧时点会把 retire 的删除记到 gc 账上）；`real_machine_acceptance.py` 的两处 retire 断言改成新的真话（见 §165.4 的实测读数）。**没有为变绿放宽任何断言** |
+| 已知残余缺口（未改，记录在此） | registry 读不出来时，`path verify` 会把**存在的**入口报成孤儿（它拿到的是 `expected=[]` + 一条 note）——"未知读成空"。改它属于改 `path verify` 的行为（本阶段明确不动它），而现在 `path repair` 在同一状态下**拒绝动手**，两者的差别本身就是一条可读的信号 |
+| 没有做 | 让 repair 删孤儿（那要动规划 §9.6 的"root 内删除走 plan/approval"）；`lifecycle_status` 的投影化（§164 已记为下一批） |

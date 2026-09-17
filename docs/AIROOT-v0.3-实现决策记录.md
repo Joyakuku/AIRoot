@@ -3432,7 +3432,71 @@ payload 比没有绑定更糟**：它把"这里什么都没有"变成"这里有�
 **状态：已裁决并已落地（草案 §164）**：守卫是新文件
 `cli/tests/test_f12_lifecycle_fixes.py` 的 6 条；三处合成变异各自命中它该命中的守卫（A 的前驱过滤器、
 B/E 的 `STAGED` 分类、C 的共享注册规则），其中 C 的第一版守卫**没有**抓到 artifact runner 里的那一份
-——那次失败促成了 `tx/registration.py`，也写进 §164.3 当作一个可复用的教训。：A 的守卫是
+——那次失败促成了 `tx/registration.py`，也写进 §164.3 当作一个可复用的教训。
+
+## ADR-0064 — **入口是绑定的投影：写它不需要批准，清它不需要新指令，而"改不动"要说成降级而不是借一个码**
+
+### 背景
+
+稳定入口 `<root>\cli\exposure\bin\<capability>.cmd` 是 ADR-0050 定下的**派生产物**（内容里没有版本，
+权威在 registry），全树只有一个写者：两个 runner 在推进到 `EXPOSED` 之前写一次。于是它有两个方向都
+**没有任何动词能修**的漂移（§159 F6，读数见草案 §165）：
+
+- **方向 1**：一个 machine 级 active binding 在、入口文件不在。`path verify` 永久 exit 2；`rebuild` 的契约
+  是"只碰两个文件"，而"重跑一次 `install`"从来不是出路（同版本重装当时会 `INSTANCE_CONFLICT`(7) 并把
+  活行标成 broken，§164 才修掉）。**操作者的真实 root 就是这个形状。**
+- **方向 2**：`retire` 清了绑定、入口文件还在。`path verify` 只能报"resolves nothing"，没有任何动词能清。
+  而"让 `gc --apply` 顺手收走它"走不通：`gc-plan.schema.json` 是全封闭的（`items` 只接受
+  instance/kind/store_path/digest/reason），一个入口文件既不是 instance 也没有 digest——那条路要换 schema id
+  并重生语料，代价与收益不成比例。
+
+### 决定
+
+**A —— 写一半是一个新动词 `path repair`**：按权威（active machine 级 binding + AIROOT 拥有的实例）重新派生
+缺失的入口，用**同一个** `caps.launcher.write_launcher`（与 `EXPOSED` 步逐字节相同），幂等，**只写不删**，
+不写 PATH，不动 binding，**不需要批准**（写这个文件本来就不需要受保护状态）。"应该有哪些入口"**只有一份
+推导**（`caps.lifecycle.expected_launchers`，`path verify`/`path repair`/`retire` 三处共读）。registry 读不出来
+时**拒绝动手**（`REGISTRY_MISSING`(6)）：那种状态下"应该有什么"是未知的，"未知读成空"然后宣称一致，正是
+这一族缺陷的另一个方向。
+
+**A′ —— 它也重写漂移的入口**（内容与这个 build 会写的不一致）。这一条是实现时提出的，**我采纳**：本动词的
+语义是"把投影重新对齐权威"，而不是"只补洞"；拒绝重写会让"解释器/checkout 搬了家 ⇒ 所有入口一起漂"落进与
+方向 1 完全相同的死角。它的边界仍然是**不删**。
+
+**A″ —— 它把不删的孤儿入口报出来，并在那种情况下退出码是 2**：`orphans` + `PATH_EXPOSURE_VIOLATION`
+（与 `path verify` 同码同档）+ 一条说明"为什么不删"的 warning。理由：一个动词说 `SUCCESS`、另一个动词对
+同一个 root 说漂移，是**同一台机器上互相矛盾的印象**——这一阶段存在的理由就是消灭这类报告。这不是行为
+上的放宽也不是收紧，而是不让一句话变成假话。
+
+**B —— 清一半是 `retire` 自己的事**：入口是那个 binding 的投影，所以 `retire` 在清掉绑定之后删掉它投影的
+**那一个**文件（两个返回路径都清，含"已经 retired"的幂等路径——这是让旧 root 的孤儿靠"再跑一次 `retire`"
+收敛的唯一办法）。两个刻意的边界：**还有别的 active machine 绑定投影它时不删**（那会把一个孤儿换成一个
+"有绑定没入口"，同一个漂移的反方向）；**删不掉时不静默**。
+
+**B′ —— 删不掉报 `DEGRADED`(2)，不抛异常、不借码**：`launcher_removed: false` + `launcher_path` + 点名路径
+的 warning。binding 那半已经提交，留下的是 `path verify` 报的那种漂移，重跑 retire 或 `path repair` 都能再试。
+**不借 `INSTALL_IO_FAILED`**：它的语义是"**安装**步骤被文件系统拒绝"，而这里不是安装、也不是失败；本仓库有
+一条明文规则反对"因为退出码相同就借一个码"（§115 就是这样把 `ACL_MISMATCH` 收回《发不出来的码》的）。
+实现时用的是 `INSTALL_IO_FAILED`，这一条是**我在中途改的裁决**。
+
+**C —— `path verify` 保持只读，一行行为都不改**（唯一改动是一句已经变成假话的括号说明）。
+
+### 代价
+
+- **新增一个动词**：`path repair` 要进命令地图、`AGENTS.md` 的图谱与（由守卫要求的）文档名册；它**不动**
+  schema、不动 golden 语料、不动状态机。
+- **不变量**："入口存在 ⟺ 有 active machine 绑定"，两个方向都实测（草案 §165.3）。
+- **两条既有期望被取代**：`test_gc_apply_removes_only_the_store_payload` 的快照时点、`real_machine_acceptance.py`
+  的两处 retire 断言（旧读数正是"这次改动之前的行为"）。**没有为变绿放宽任何断言**；真机验收脚本我重跑过，
+  `closed loop: PASS` 且 `isolation: PASS`。
+- **一处已知残余缺口（未改）**：registry 读不出来时 `path verify` 会把**存在的**入口报成孤儿（"未知读成空"）。
+  改它属于改 `path verify` 的行为；现在 `path repair` 在同一状态下拒绝动手，这个差别本身就是可读信号。
+- **没有做的**：让 repair 删孤儿（那要动规划 §9.6 的"root 内删除走 plan/approval"）；`lifecycle_status` 的
+  投影化（§164 已记为下一批）。
+
+**状态：已裁决并已落地（草案 §165）**：守卫是 `test_l1_launcher.py` 的 7 条、`test_l1_lifecycle.py` 的 4 条与
+`test_cli_lifecycle.py` 的 1 条；三处独立合成变异（孤儿不许说 `SUCCESS`、删不掉不许说 `SUCCESS`、repair 必须
+真写）各自命中它该命中的守卫。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

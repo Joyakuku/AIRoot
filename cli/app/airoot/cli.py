@@ -1570,7 +1570,7 @@ def cmd_tool_retire(args: argparse.Namespace, context: Context) -> tuple[dict[st
 
     registry = context.registry()
     try:
-        document = retire(registry, args.target, clock=context.clock)
+        document = retire(registry, args.target, clock=context.clock, root=context.path())
     finally:
         registry.close()
     _emit(
@@ -1579,9 +1579,16 @@ def cmd_tool_retire(args: argparse.Namespace, context: Context) -> tuple[dict[st
         lines=[
             f"{document['instance_id']} retired (payload retained: {not document['payload_removed']})",
             "  active binding cleared; use 'tool gc --plan' to see what may be collected",
+            (
+                f"  stable entry removed: {document['launcher_path']}"
+                if document["launcher_removed"]
+                else f"  stable entry kept: {document['launcher_path']} "
+                "(another active machine-level binding still projects it, or there was none)"
+            ),
+            *[f"  warning: {item}" for item in document["warnings"]],
         ],
     )
-    return document, EXIT_SUCCESS
+    return document, exit_code_for(document["reason_code"])
 
 
 def cmd_tool_gc(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
@@ -2035,24 +2042,21 @@ def _expected_launchers(context: Context) -> tuple[list[str], str | None]:
     Returns the capabilities plus a note when the question could not be asked at all. `path verify`
     reads the PATH and the disk; it must keep working on a root whose registry is unavailable, so an
     unreadable registry is reported as a note instead of turning a read-only diagnosis into a failure.
+
+    The derivation itself is `caps.lifecycle.expected_launchers` — one implementation, because
+    `path verify` (report), `path repair` (write) and `retire` (remove the projection) must answer
+    "which entries should exist here?" the same way. What lives here is only the *report-face* half:
+    turning "the registry could not be read" into a note instead of an exception.
     """
 
-    from .caps.lifecycle import is_owned
+    from .caps.lifecycle import expected_launchers
 
     try:
         registry = context.registry()
     except AirootError as error:
         return [], f"the registry is not readable ({error.reason_code}), so no stable entry is expected here"
     try:
-        expected: list[str] = []
-        for row in registry.bindings(active_only=True):
-            if str(row["scope"]) != "machine":
-                continue
-            instance = registry.instance(str(row["instance_id"]))
-            if instance is None or not is_owned(instance):
-                continue
-            expected.append(str(instance["capability_id"]))
-        return sorted(set(expected)), None
+        return expected_launchers(registry), None
     except AirootError as error:  # pragma: no cover - a registry that answers partially
         return [], f"the bindings could not be listed ({error.reason_code})"
     finally:
@@ -2083,6 +2087,53 @@ def cmd_path_verify(args: argparse.Namespace, context: Context) -> tuple[dict[st
             f"  AIROOT-owned PATH entries: {len(document['entries'])}",
             *[f"  [{item['severity']}] {item['code']}: {item['detail']}" for item in document["findings"]],
             "  PATH was not modified (writing machine PATH belongs to the P2 broker)",
+        ],
+    )
+    return document, exit_code_for(document["reason_code"])
+
+
+def cmd_path_repair(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
+    """Write the stable entries a machine-level binding is missing (ADR-0050). Never deletes.
+
+    The other half of `path verify`: that verb reports an active binding with no entry and nothing
+    could put the entry back, because `rebuild` only touches its two projection files and deleting
+    root-internal objects belongs to a plan plus an approval (规划 §9.6). This verb writes, and only
+    writes. It is the same write the ``EXPOSED`` step performs, so an entry it creates is the entry an
+    install would have created (byte for byte), and running it twice changes nothing.
+    """
+
+    from .caps.pathexposure import repair_path_exposure
+
+    expected, bindings_note = _expected_launchers(context)
+    # The note is handed on rather than swallowed: `repair_path_exposure` refuses with
+    # `REGISTRY_MISSING` (exit 6) when it is present, because an unreadable registry makes the
+    # expectation *unknown*, and "unknown" may not be written down as "nothing to repair".
+    repair = repair_path_exposure(
+        context.path(), expected_launchers=expected, bindings_note=bindings_note
+    )
+    document = repair.to_document()
+    created = [item for item in document["launchers"] if item["created"]]
+    rewritten = [item for item in document["launchers"] if item["rewritten"]]
+    if not document["expected"] and not document["orphans"]:
+        outcome_line = "  no stable entry is expected here (no active machine-level binding)"
+    elif not document["repaired"]:
+        outcome_line = "  nothing to repair: every expected stable entry is already byte-identical"
+    else:
+        outcome_line = "  nothing was deleted, no binding was changed, PATH was not modified"
+    _emit(
+        document,
+        as_json=args.json,
+        lines=[
+            f"stable entries expected: {len(document['expected'])}; "
+            f"repaired: {len(document['repaired'])} "
+            f"(created {len(created)}, rewritten {len(rewritten)}); "
+            f"already present: {len(document['already_present'])}; "
+            f"orphans: {len(document['orphans'])}",
+            *[f"  created {item['path']}" for item in created],
+            *[f"  rewritten {item['path']}" for item in rewritten],
+            *[f"  orphan entry with no binding: {item}" for item in document["orphans"]],
+            *[f"  warning: {item}" for item in document["warnings"]],
+            outcome_line,
         ],
     )
     return document, exit_code_for(document["reason_code"])
@@ -3769,6 +3820,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     path_sub = path_parser.add_subparsers(dest="subcommand", required=True)
     path_sub.add_parser("verify", help="check the frozen PATH rule (read-only)", parents=[common])
+    path_sub.add_parser(
+        "repair",
+        help="write the stable entries an active machine-level binding is missing (never deletes)",
+        parents=[common],
+    )
 
     capability_parser = subparsers.add_parser(
         "capability", help="the frozen capability list and its admission rules (draft §15)", parents=[common]
@@ -3853,6 +3909,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Context], tuple[dict[str, Any]
     "tool.pin": cmd_tool_pin,
     "tool.gc": cmd_tool_gc,
     "path.verify": cmd_path_verify,
+    "path.repair": cmd_path_repair,
     "uninstall": cmd_uninstall,
     # Capability boundary (draft §15): what may be managed at all.
     "capability.list": cmd_capability_list,

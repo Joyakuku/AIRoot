@@ -64,10 +64,10 @@ airoot doctor --json          # D1-D10 不变量、数据根、reference 观测�
 | "这个会话里先别用 X 了" | `airoot env deactivate --session <id>`（或 `--all`） | 手工删变量；`deactivate` 是**恢复旧值**，不是删除 |
 | "把它设成永久可用" | `airoot env persist <external-id> --dry-run --json`，再要 approval token（需要本机签一次：见《批准》） | **没有 token 就不要写**；不发明 `--force` |
 | "撤掉 / 不要再让它默认生效" | `airoot env forget <external-id> --dry-run --json` 然后执行 | 不手工删注册表值 |
-| "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json`，**要真删才** `airoot tool gc --apply --token-file <token>`（需要本机签一次：见《批准》） | **对 reference 一律拒绝**：那不是 AIROOT 的东西。`--apply` 是**全链唯一会真删东西的一步**（必须带 token，没有 `--force`）；`--plan` 只列可回收项。`retire` 清绑定**不清稳定入口那个文件**——入口的漂移由 `path verify` 报 |
+| "把它卸掉" | 先 `airoot tool retire <id> --json`，再 `airoot tool gc --plan --json`，**要真删才** `airoot tool gc --apply --token-file <token>`（需要本机签一次：见《批准》） | **对 reference 一律拒绝**：那不是 AIROOT 的东西。`--apply` 是**全链唯一会真删东西的一步**（必须带 token，没有 `--force`）；`--plan` 只列可回收项。`retire` 清绑定**也清它自己投影的那一个稳定入口**（入口是绑定的投影，ADR-0064）；删不掉时报 `DEGRADED`(2) 并点名路径，再跑一次即可 |
 | "AIROOT 现在管着哪些东西 / 这个还好吗" | `airoot tool list --json`、`airoot tool status <id> --json`、`airoot tool verify <id> --json` | 不把 `retired` 说成错误；`verify` **不会**修复任何东西 |
 | "以后一直用这个版本" | `airoot tool pin <cap> --version "<约束>" --json` | 不以为 pin 会立刻生效：它只写 desired 并给出计划，应用仍需批准（需要本机签一次：见《批准》） |
-| "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致） | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题 |
+| "PATH 有没有被弄乱 / 稳定入口在不在" | `airoot path verify --json`（`launcher_present` 说的是"至少有一个稳定入口"，`launchers` 逐个报是否与这个 build 会写的一致）；**缺了或漂了**就 `airoot path repair --json`（只补写/重写稳定入口，一个文件都不删，不越过授权边界） | 不手工改 PATH（写 PATH 属 P2）；`info` 级发现不是问题。`path repair` 报 `orphans` 时退出码是 2（有入口、没有绑定——那是**再跑一次 `tool retire`** 的事，不是手工删文件）|
 | "某个文件在哪 / 它叫什么名字" | `airoot search <query> --json` | **`search` 不是 `where`**：前者定位文件，后者解析能力。要按名搜一个叫 `status` 的文件用 `airoot search --query status --json` |
 | "搜得太慢 / 想要它快点" | `airoot search refresh --json` 建一次索引（crawl 建的，**不是 USN 索引**），之后查询走索引 | 不声称它是 Everything 级性能；`freshness.state=current` 只表示"上次遍历是最近做的" |
 | "这个索引是什么状态 / 为什么报了 stale" | `airoot search status --json`、`airoot search explain <query> --json` | `stale` 只说明索引比 `--max-staleness-ms` 旧：refresh 或放宽约束，不要说它"坏了" |

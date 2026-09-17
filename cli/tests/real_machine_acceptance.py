@@ -631,8 +631,11 @@ def closed_loop() -> int:
 
     * **idempotence** -- the second `install` of the same plan must be terminal already and must not bump
       the registry generation again;
-    * **the entry outliving the binding** -- after `retire`, `path verify` must report exactly the drift
-      ADR-0050 named (a stable entry with no binding), not a clean bill of health.
+    * **the entry goes with the binding** -- after `retire`, the derived stable entry is gone with it, so
+      `path verify` reports a clean exposure surface rather than drift. "An entry exists if and only if
+      an active machine-level binding projects it" is the invariant (draft §165); the drift reading for
+      an entry with no binding is still what `path verify` reports for a root that was retired before
+      this rule existed.
     """
 
     import sys as _sys
@@ -771,14 +774,18 @@ def closed_loop() -> int:
         instance = new_instance  # the rest of the loop retires and collects what is bound now
 
         code, retired = call("tool", "retire", instance)
-        show("tool retire", code, retired, ("payload_removed", "reason_code"))
+        show("tool retire", code, retired, ("payload_removed", "launcher_removed", "reason_code"))
         check("retiring clears the binding and keeps the payload", retired.get("payload_removed") is False)
+        check(
+            "and removes the stable entry that binding projected",
+            retired.get("launcher_removed") is True and not entry.exists(),
+        )
 
         code, drifted = call("path", "verify")
         show("path verify (after retire)", code, drifted, ("launcher_present", "violations"))
         check(
-            "an entry with no binding is reported as drift, not as healthy",
-            code == 2 and drifted.get("violations") == 1,
+            "retiring leaves no entry behind, so path verify has no drift to report",
+            code == 0 and drifted.get("violations") == 0 and drifted.get("launcher_present") is False,
         )
 
         code, gc_plan = call("tool", "gc", "--plan")
@@ -949,8 +956,13 @@ def online_install() -> int:
         )
 
         code, retired = call("tool", "retire", instance)
-        show("tool retire", code, retired, ("payload_removed", "reason_code"))
+        show("tool retire", code, retired, ("payload_removed", "launcher_removed", "reason_code"))
         check("retiring clears the binding and keeps the payload", retired.get("payload_removed") is False)
+        check(
+            "and removes the stable entry that binding projected (draft §165)",
+            retired.get("launcher_removed") is True
+            and not (root / "cli" / "exposure" / "bin" / "build.cmd").exists(),
+        )
 
         code, gc_plan = call("tool", "gc", "--plan")
         plans = gc_plan.get("plans") or []

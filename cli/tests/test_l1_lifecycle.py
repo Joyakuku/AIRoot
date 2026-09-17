@@ -154,6 +154,153 @@ def test_retire_is_idempotent(registry, clock, root) -> None:
     assert registry.instance(instance_id)["lifecycle_status"] == "retired"
 
 
+def test_retire_removes_the_entry_its_binding_projected(registry, clock, root) -> None:
+    """Draft §165: the stable entry is a *projection* of the binding, so it goes with it.
+
+    Before this rule, `retire` cleared the binding and left the file, manufacturing an entry that
+    resolves nothing — drift `path verify` could report and nothing could clear. "An entry exists if
+    and only if an active machine-level binding projects it" is the invariant; this is the first half.
+    """
+
+    from airoot.caps.launcher import launcher_path
+
+    instance_id = install(registry, clock, root)
+    entry = launcher_path(root.path, CAPABILITY)
+    assert entry.is_file(), "the EXPOSED step of the install wrote it"
+
+    document = retire(registry, instance_id, clock=clock, root=root.path)
+
+    assert document["launcher_removed"] is True
+    assert document["launcher_path"] == str(entry)
+    assert not entry.exists(), "an entry with no binding is exactly the drift this avoids"
+    assert store_dir(root, instance_id).is_dir(), "the payload is still there: retire never deletes it"
+
+
+def test_re_running_retire_clears_an_entry_an_older_retire_left_behind(registry, clock, root) -> None:
+    """The convergence path for a root retired before draft §165 existed.
+
+    `retire` is idempotent, and the second call is the one an operator can actually make: the binding
+    write has nothing left to do, but the projection an older build left behind is still there. If the
+    early-return path skipped the cleanup, that leftover would be unclearable by any verb.
+    """
+
+    from airoot.caps.launcher import launcher_path, write_launcher
+
+    instance_id = install(registry, clock, root)
+    entry = launcher_path(root.path, CAPABILITY)
+    retire(registry, instance_id, clock=clock, root=root.path)
+    assert not entry.exists()
+    # What the old behaviour would have left: an entry with no binding, for a retired instance.
+    write_launcher(root.path, CAPABILITY)
+    assert entry.is_file()
+
+    document = retire(registry, instance_id, clock=clock, root=root.path)
+
+    assert document["idempotent"] is True, "the registry half has nothing left to do"
+    assert document["launcher_removed"] is True, "the projection is still cleaned up"
+    assert not entry.exists()
+
+
+def test_retire_reports_a_refused_entry_removal_instead_of_swallowing_it(
+    registry, clock, root, monkeypatch, capsys
+) -> None:
+    """A file that cannot be removed is reported — as a **degraded** outcome, not as a failure.
+
+    Windows holds a `PermissionError` for a locked file exactly the way this fake one does, so the shape
+    is the real one. The binding half of the verb has already been committed at that point, so what is
+    left is not "a step of an install was refused" (that is what `INSTALL_IO_FAILED` means) but the
+    drift `path verify` reports and either verb can retry. Hence `DEGRADED` (exit 2), the path, and a
+    warning — the honest report, without borrowing a code because its exit number happens to match.
+    """
+
+    from airoot.caps.launcher import launcher_path
+    from airoot.cli import main
+
+    instance_id = install(registry, clock, root)
+    entry = launcher_path(root.path, CAPABILITY)
+    real_unlink = Path.unlink
+
+    def refuse(self, *args, **kwargs):
+        if Path(self) == entry:
+            raise PermissionError(13, "the file is in use")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+
+    code = main(["--json", "--root", str(root.path), "tool", "retire", instance_id])
+    document = json.loads(capsys.readouterr().out)
+
+    assert code == 2, document
+    assert document["reason_code"] == "DEGRADED", document
+    assert document["launcher_removed"] is False
+    assert document["launcher_path"] == str(entry)
+    assert document["warnings"], document
+    assert str(entry) in " ".join(document["warnings"]), document["warnings"]
+    assert entry.is_file(), "nothing was hidden: the leftover is still there and was reported"
+    assert registry.instance(instance_id)["lifecycle_status"] == "retired", (
+        "the binding half is committed; the degraded outcome is about the projection"
+    )
+
+
+def test_retire_keeps_an_entry_another_machine_binding_still_projects(registry, clock, root) -> None:
+    """The other direction: removing the entry would trade an orphan for a binding with no entry.
+
+    The instance being retired is bound for a *session* only, while the machine-level binding to the
+    first instance still projects the entry. A retire that deleted the file by capability name would
+    break the exposure of an instance nobody asked to touch.
+    """
+
+    from airoot.caps.launcher import launcher_path
+    from airoot.registry import Binding, binding_key
+    from airoot.registry.entities import Instance
+
+    machine_instance = install(registry, clock, root)
+    session_instance = f"{CAPABILITY}/fake-tool/2.0.0/win-x64"
+    directory = store_dir(root, session_instance)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "fake-tool.bin").write_bytes(b"second instance\n")
+    with registry.write(expected_generation=registry.generation) as connection:
+        registry.add_instance(
+            connection,
+            Instance(
+                instance_id=session_instance,
+                kind="managed_tool",
+                capability_id=CAPABILITY,
+                version="2.0.0",
+                platform="windows",
+                architecture="x64",
+                install_backend_id="fake_fixture",
+                artifact_digest="sha256:" + "d" * 64,
+                store_path=f"store/{session_instance}",
+                lifecycle_status="active",
+                health="healthy",
+                created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        registry.bind_active(
+            connection,
+            Binding(
+                binding_key(CAPABILITY, "session", session_id="s1"),
+                session_instance,
+                "session",
+                "W",
+                "session_env",
+                registry.generation + 1,
+                True,
+            ),
+        )
+    entry = launcher_path(root.path, CAPABILITY)
+    assert entry.is_file()
+
+    document = retire(registry, session_instance, clock=clock, root=root.path)
+
+    assert document["binding_key"] == binding_key(CAPABILITY, "session", session_id="s1")
+    assert document["launcher_removed"] is False, "the machine binding to the other instance still stands"
+    assert entry.is_file()
+    active = {str(row["binding_key"]) for row in registry.bindings(active_only=True)}
+    assert binding_key(CAPABILITY, "machine") in active, machine_instance
+
+
 def test_a_retired_instance_is_no_longer_selected(registry, clock, root) -> None:
     """S-036 (first half): where stops finding it once the binding is cleared."""
 
@@ -231,12 +378,15 @@ def test_gc_apply_removes_only_the_store_payload(registry, clock, root) -> None:
 
     instance_id = install(registry, clock, root)
     directory = store_dir(root, instance_id)
+    retire(registry, instance_id, clock=clock)
+    # The snapshot is taken **after** the retire half on purpose: since draft §165 `retire` also
+    # removes the stable entry that binding projected, so a snapshot taken before it would charge
+    # that (deliberate) removal to `gc` and this guard would be measuring the wrong verb.
     root_tree_before = {
         path.relative_to(root.path).as_posix()
         for path in Path(root.path).rglob("*")
         if path.is_file()
     }
-    retire(registry, instance_id, clock=clock)
     plan = build_gc_plan(registry, instance_id, clock=clock)
     token = approve_gc(registry, root, plan)
 

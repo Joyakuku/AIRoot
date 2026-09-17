@@ -50,6 +50,31 @@ def test_cli_retire_keeps_the_payload(capsys, cli_root: Path, installed: str, re
     assert (cli_root / "store" / installed).is_dir(), "retire never deletes"
 
 
+def test_cli_retire_removes_its_own_stable_entry(capsys, cli_root: Path, installed: str, registry) -> None:
+    """Draft §165 through the CLI: the projection goes with the binding, so `path verify` stays green.
+
+    The reading this replaces was "an entry with no binding is reported as drift": true while `retire`
+    left the file behind, and the drift it reported was one this build had just manufactured. The
+    entry directory is now empty after a retire, and the exposure surface agrees with the registry.
+    """
+
+    entry = cli_root / "cli" / "exposure" / "bin" / f"{CAPABILITY}.cmd"
+    assert entry.is_file(), "the EXPOSED step of the install wrote the stable entry"
+
+    code, document = run(capsys, "--json", "--root", str(cli_root), "tool", "retire", installed)
+
+    assert code == 0, document
+    assert document["launcher_removed"] is True, document
+    assert document["launcher_path"] == str(entry)
+    assert not entry.exists()
+    assert [item.name for item in entry.parent.glob("*.cmd")] == []
+
+    code, verified = run(capsys, "--json", "--root", str(cli_root), "path", "verify")
+    assert code == 0, verified
+    assert verified["expected_launchers"] == [] and verified["violations"] == 0, verified
+    assert verified["launcher_present"] is False
+
+
 def test_cli_gc_plan_then_apply_needs_a_token(capsys, cli_root: Path, installed: str, registry) -> None:
     run(capsys, "--json", "--root", str(cli_root), "tool", "retire", installed)
 

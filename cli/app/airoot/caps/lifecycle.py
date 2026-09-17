@@ -11,6 +11,12 @@ verb                         deletes?    approval    applies to
 ``env forget``               no (restore) no         what AIROOT persisted
 ===========================  ==========  ==========  ==========================
 
+``retire``'s "no" is about the **payload**: it never deletes what it manages. It does remove the one
+derived file that binding projected — ``cli/exposure/bin/<capability>.cmd`` (ADR-0050) — because an
+entry with no binding resolves nothing, and `path verify` reports it as drift forever. That file is
+not a payload, is not under a data root and is not in the store; clearing the binding without
+clearing it is how orphaned entries were manufactured (draft §165).
+
 The hard rules this module exists to enforce (draft §14.2):
 
 1. a reference never offers ``uninstall`` — AIROOT does not own it, so it only *prints* the
@@ -39,6 +45,7 @@ from ..paths import from_root_relative, is_within
 from ..registry.entities import STORE_PREFIX, is_store_path
 from ..schema_io import validate_self
 from ..tx.approval import load_keyring, verify_approval
+from .launcher import launcher_path
 
 # Kept as the name this module has always exported; the spelling itself lives in one place now
 # (`registry/entities.STORE_PREFIX`), so doctor/where/toolstate and deletion grading cannot drift
@@ -67,6 +74,32 @@ def is_owned(row: Any) -> bool:
     store_path = str(row["store_path"] or "")
     backend = str(row["install_backend_id"] or "")
     return is_store_path(store_path) and backend not in EXTERNAL_BACKENDS
+
+
+def expected_launchers(registry: Any) -> list[str]:
+    """Capabilities whose active machine-level binding must have a stable entry (ADR-0050).
+
+    This is the **one** derivation of "which entries this root should have". Three readers depend on
+    it and none of them may spell it again: `path verify` reports the entries it cannot find,
+    `path repair` writes exactly those, and `retire` asks whether the entry it projected still has a
+    source before it removes it. A second copy of the rule is how the reporter, the writer and the
+    remover would start disagreeing about the same root — the defect this repository keeps paying for
+    (`tx/rollback.py`, `tx/registration.py`).
+
+    The predicate is ADR-0050's: scope ``machine`` and an instance AIROOT owns. A session or project
+    binding is exposed through its own activation, not through a version-independent file name, and an
+    instance AIROOT does not own (a reference row) has no stable entry either.
+    """
+
+    expected: list[str] = []
+    for row in registry.bindings(active_only=True):
+        if str(row["scope"]) != "machine":
+            continue
+        instance = registry.instance(str(row["instance_id"]))
+        if instance is None or not is_owned(instance):
+            continue
+        expected.append(str(instance["capability_id"]))
+    return sorted(set(expected))
 
 
 def find_target(registry: Any, target: str) -> tuple[str, Any]:
@@ -125,23 +158,46 @@ def require_owned(registry: Any, target: str) -> Any:
 # --------------------------------------------------------------------------- #
 
 
-def retire(registry: Any, target: str, *, clock: Clock = SYSTEM_CLOCK) -> dict[str, Any]:
+def retire(
+    registry: Any,
+    target: str,
+    *,
+    clock: Clock = SYSTEM_CLOCK,
+    root: Path | None = None,
+) -> dict[str, Any]:
     """Clear the active binding and mark the instance retired. The payload stays.
 
-    This is deliberately **not** a transaction: nothing moves and nothing is deleted, so it
+    This is deliberately **not** a transaction: nothing moves and no payload is deleted, so it
     is a single declarative change. The binding write and the generation bump still happen in
     one SQLite transaction, which is what "only one commit point may change the active
     binding" actually protects (draft §19.3-1).
+
+    The **projection** of that binding goes with it: the stable entry in ``cli/exposure/bin`` is one
+    file derived from "this capability has an active machine-level binding" (ADR-0050), so leaving it
+    behind manufactures an entry that resolves nothing — drift `path verify` can only report, never
+    fix. ``root`` is the AIROOT root the entry lives in; it defaults to the same derivation
+    ``build_gc_plan`` uses, so a caller with the root in hand should pass it.
+
+    A projection the filesystem refuses to remove is a **degraded** outcome, not a failure of the verb:
+    the binding half is committed, and what is left is exactly the drift `path verify` reports, which
+    re-running this verb or `path repair` can retry. So it is reported as ``DEGRADED`` with the path and
+    a warning — never as a borrowed install code, and never silently (draft §165 ruling).
     """
 
     row = require_owned(registry, target)
     instance_id = str(row["instance_id"])
+    capability_id = str(row["capability_id"])
+    root = Path(root) if root is not None else Path(registry.path).parent.parent
     key = next(
         (str(item["binding_key"]) for item in registry.bindings() if item["instance_id"] == instance_id),
         None,
     )
     already = str(row["lifecycle_status"]) == "retired" and row["retired_at"] is not None
     if already and (key is None or not _is_active(registry, key, instance_id)):
+        # Already retired: nothing to write in the registry, but the projection may still be there
+        # (a root whose entries were written before this rule existed). Re-running the verb is how an
+        # operator converges such a root, so the cleanup runs here too.
+        projection = _clear_projection(registry, root, capability_id)
         return {
             "schema_version": 1,
             "operation": RETIRE_TOOL,
@@ -150,7 +206,7 @@ def retire(registry: Any, target: str, *, clock: Clock = SYSTEM_CLOCK) -> dict[s
             "lifecycle_status": "retired",
             "payload_removed": False,
             "idempotent": True,
-            "reason_code": "SUCCESS",
+            **projection,
         }
 
     stamp = clock.timestamp()
@@ -170,6 +226,9 @@ def retire(registry: Any, target: str, *, clock: Clock = SYSTEM_CLOCK) -> dict[s
             outcome="ok",
         )
     registry.update_projection()
+    # After the binding is gone, so the question "does anything still project this entry?" is asked
+    # about the state the registry is now in.
+    projection = _clear_projection(registry, root, capability_id)
     return {
         "schema_version": 1,
         "operation": RETIRE_TOOL,
@@ -178,8 +237,58 @@ def retire(registry: Any, target: str, *, clock: Clock = SYSTEM_CLOCK) -> dict[s
         "lifecycle_status": "retired",
         "payload_removed": False,
         "retired_at": stamp,
-        "reason_code": "SUCCESS",
+        **projection,
     }
+
+
+def _clear_projection(registry: Any, root: Path, capability_id: str) -> dict[str, Any]:
+    """The projection half of a retire result: what happened to the stable entry, and how loudly."""
+
+    removed, entry, refusal = _remove_projected_entry(registry, root, capability_id)
+    return {
+        "launcher_removed": removed,
+        "launcher_path": entry,
+        "warnings": [refusal] if refusal else [],
+        "reason_code": "DEGRADED" if refusal else "SUCCESS",
+    }
+
+
+def _remove_projected_entry(registry: Any, root: Path, capability_id: str) -> tuple[bool, str, str | None]:
+    """Remove the stable entry ``capability_id`` projected, unless something still projects it.
+
+    Returns ``(removed, path, refusal)``: ``refusal`` is a warning line when the file is there but
+    could not be removed, and ``None`` otherwise.
+
+    Exactly one file is in scope — ``cli/exposure/bin/<capability>.cmd``. It is not a payload, not
+    under a data root and not in the store, so "nothing under a data root is ever deleted" and "only
+    the store is collected" are untouched by this.
+
+    Two things it deliberately does **not** do:
+
+    * it does not remove the entry when another active machine-level binding still projects it (the
+      retired instance may have been bound only for a session), because that would trade an orphan for
+      a binding with no entry — the other direction of the same drift;
+    * it does not swallow a filesystem refusal: the caller reports it. On the **reason code**, that
+      answer is `DEGRADED` (exit 2) rather than `INSTALL_IO_FAILED`: the binding half of the verb
+      succeeded and what is left is the drift `path verify` reports, so "a step of an install was
+      refused" would be a borrowed code — borrowing one because the exit number happens to match is
+      how a code table stops meaning anything (draft §115).
+    """
+
+    path = launcher_path(root, capability_id)
+    if capability_id in expected_launchers(registry):
+        return False, str(path), None
+    if not path.is_file():
+        return False, str(path), None
+    try:
+        path.unlink()
+    except OSError as error:
+        return False, str(path), (
+            f"the stable entry {path} could not be removed ({error}); the binding is already cleared, "
+            "so this is the drift `path verify` reports — re-run `tool retire`, or remove the file by "
+            "hand (`path repair` writes and never deletes)"
+        )
+    return True, str(path), None
 
 
 def _is_active(registry: Any, key: str, instance_id: str) -> bool:
@@ -534,6 +643,7 @@ __all__ = [
     "apply_gc_plan",
     "build_gc_plan",
     "check_payload_removable",
+    "expected_launchers",
     "find_target",
     "gc_candidates",
     "is_owned",
