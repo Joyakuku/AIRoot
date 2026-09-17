@@ -2783,3 +2783,60 @@ binding。" 本节**不推翻它**，而是把设计做成它的字面意思。
 
 **状态：已裁决（A —— 相对路径，且拒绝 `..` 与冒号）。** 实现与实测记录见草案 **§145**。
 
+## ADR-0053 — **脚本入口点这一版不冻结**（身份词表没有能说它的值）
+
+### 背景
+
+能力面「冻结并识别真正在用的能力」的结账读数（§149 实测，临时 root，全程只读）：
+
+| 数据根 | 识别到的对象 |
+|---|---|
+| `D:\env` | `build`(cmake)、`ffmpeg`、`java`(Java)、`node`(nvm4w) |
+| `D:\env_apps` | `git`(Git)、`python`(miniconda3) |
+
+**这台机器上每一个以 PE 镜像为入口点的能力都已经被冻结并被识别。** 唯一在用的例外是 `flutter` 与
+`flutter_oh`：它们的入口点是 `bin\flutter.bat` 与 `bin\dart.bat`，是**脚本**。
+
+三处实测，都不是推断：
+
+1. `caps/discovery.py` 的对象入口点匹配在 `if not metadata.is_pe: continue` 处**跳过任何非 PE 候选**，
+   所以 `.bat` 无论白名单条目怎么写都不会被匹配；`probe_executable` 对脚本返回 `is_pe=False`、其余字段全空。
+2. **执行面不需要改**：`caps/runtime.run_once` 拼的命令是 `[entrypoint, *arguments]`，而实测
+   `subprocess.run(["<synthetic>.bat", "arg"])` 在这台 Windows 上**成功**（退出码与 stdout 都对）。
+   所以"脚本能不能被 AIROOT 跑起来"不是障碍。
+3. 障碍是**身份词表**：`common.schema.json` 的 `externalReference.source_kind` 只有
+   `declared† / pe_static / public_locator† / extension_handler† / approved_execution†` 五个值，而这一版
+   **只写 `pe_static`**，它的含义是"这条引用的身份来自只读 PE 静态探测"。一个脚本的身份来自"名字 + 同目录
+   下的兄弟文件"，**没有值能说这件事**。把 `pe_static` 借给它，正是 §115 记下的那个模式：借一个值只因为
+   看起来差不多，正是词表开始失去意义的方式。
+
+### 决定
+
+**A —— `flutter` 与 `dart` 这一版不冻结；障碍记在词表上，不在扫描上。**
+
+分工要写清楚：**不是**"脚本不能当入口点"（第 2 条实测说能跑），**不是**"谓词写不出来"（既有的
+`executable_name` + `sibling_file` 两条就够：两份发行版的 `bin\` 共有 `dart`/`dart.bat`/`flutter`），
+而是"识别出来的东西没法被如实记账"。
+
+**B —— 放宽扫描的门要连带改词表，所以不顺手做。** 把那条 `is_pe` 门放宽成"条目只要声明了非 PE 证据就允许
+匹配"是很小的改动（`pe_static` 谓词对非 PE 本来就返回 `False`，那条门对正确性是冗余的）——但改完之后
+`source_kind` 只能填 `pe_static`，而那是假的；改枚举按 AGENTS §7 要**新的 schema id**，那是一次契约动作，
+不该塞在一个"识别 flutter"的条目里捎带做。
+
+**C —— 但把缺口做成可查的读数。** 真机验收脚本现在（§149）：
+
+1. 把 `D:\env_apps` **加进隔离快照**（顶层清单）——它此前既不是数据根、也不在快照里，而 `python`/`git`
+   就住在那里；
+2. 登记它（只读）并断言能力账本 `{build, ffmpeg, java, node, git, python}`；
+3. 断言 `flutter`/`flutter_oh` **被看见但没有被命名**——这既是诚实的当前状态，也是词表将来长出新值时的
+   **绊线**：那一天这条断言会红，提示去把它认下来，而不是去放宽过滤。
+
+### 代价与解锁
+
+- 代价：这台机器上有一个在用的能力面对象**记不进账**。§141 修的是"看得见却没人命名"，这一条是
+  "看得见、也说得出为什么还不能命名"。
+- 解锁的最小一步：给身份字段加一个"静态名字 + 兄弟文件匹配"的值 → 新 schema id → 加白名单条目 → 冻结
+  `flutter`。**`dart` 不单独冻结**：它随 Flutter SDK 一起发布，与草案 §11 把 conda 发行版当"既 runtime
+  又是包管理器"属于同一类问题，先按"属于 flutter 发行版"处理。
+
+**状态：已裁决（A —— 不冻结；B —— 不顺手放宽扫描门；C —— 缺口进真机验收）。** 实现与实测记录见草案 **§149**。

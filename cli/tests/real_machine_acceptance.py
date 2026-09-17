@@ -41,6 +41,9 @@ from airoot.registry import Registry  # noqa: E402
 from airoot.root import init_root  # noqa: E402
 
 DATA_ROOT = Path(r"D:\env")
+#: The tree the machine's own `python` and `git` live in (§149). Not part of the AIROOT root, not
+#: written by anything here, and only ever read: registered read-only, then re-observed.
+DATA_ROOT_APPS = Path(r"D:\env_apps")
 OBJECT = DATA_ROOT / "java"
 
 #: Opt-in. See the draft §59 block at the end of `main_run` for why the network is not the default.
@@ -130,18 +133,21 @@ def main_run() -> int:
     show("scope decide <unknown>", code, doc, ("scope", "reason_code"))
     check("unknown capability is not routable", doc.get("reason_code") == "CAPABILITY_NOT_DECLARED")
 
-    # Steward domain: real D:\env ---------------------------------------------
+    # Steward domain: the two real trees this machine keeps its tools in ---------------------
     code, doc = run("data-root", "add", str(DATA_ROOT), "--role", "runtime", "--id", "dr-env")
     show("data-root add " + str(DATA_ROOT), code, doc, ("files_touched",))
     check("adding a data root touches no file", doc.get("files_touched") == 0)
+
 
     code, doc = run("discover")
     reports = doc.get("reports") or []
     show("discover", code, doc, ("whitelist_revision", "files_touched"))
     print(f"    counts={reports[0].get('counts') if reports else None} revision={doc.get('whitelist_revision')}")
     # §141: the ledger has to describe *this* machine, so the capabilities this machine really
-    # has under D:\env are named and asserted, not merely counted. `ffmpeg` is the one that used
-    # to come out `unmanaged` purely because no capability named it.
+    # has are named and asserted, not merely counted. `ffmpeg` is the one that used to come out
+    # `unmanaged` purely because no capability named it. §149 extended this to the second tree, so
+    # the set below is the machine's whole PE-entrypoint capability surface: cmake/ffmpeg/java/node
+    # under D:\env, python/git under D:\env_apps.
     recognised = {
         str(obj.get("capability_id"))
         for report in reports
@@ -149,10 +155,8 @@ def main_run() -> int:
         if obj.get("management") == "external_reference"
     }
     print(f"    recognised={sorted(recognised)}")
-    check(
-        "every capability this machine actually has under D:\\env must be recognised",
-        {"build", "java", "node", "ffmpeg"} <= recognised,
-    )
+    check("every capability this machine actually has under D:\\env must be recognised",
+          {"build", "java", "node", "ffmpeg"} <= recognised)
 
     code, doc = run("adopt", str(OBJECT), "--mode", "reference")
     show("adopt D:\\env\\java --mode reference", code, doc, ("ownership", "files_touched"))
@@ -538,6 +542,49 @@ def main_run() -> int:
             )
         except Exception as exc:  # noqa: BLE001 - an acceptance run reports, it does not explode
             check(f"online acquisition failed: {type(exc).__name__}: {exc}", False)
+
+    # §149: the capability surface, closed out ---------------------------------
+#
+# `python` and `git` live in `D:\env_apps`, which was neither a registered data root nor inside
+# the isolation snapshot — so "this machine's capabilities are accounted for" rested on two one-off
+# measurements (draft §141/§142) rather than on a check. It is registered *here*, after every
+# section that builds a search index, and that placement is measured rather than tidy: with this
+# tree in the registered set, `search refresh` built **248 058** records with `coverage: partial`
+# (`D:\env_apps` is 900 959 files) and the search section above then correctly reported
+# `SEARCH_INDEX_DEGRADED` instead of a healthy index. The capability ledger and the search index
+# want different sets of roots, so they get them.
+    code, doc = run("data-root", "add", str(DATA_ROOT_APPS), "--role", "tool", "--id", "dr-env-apps")
+    show("data-root add " + str(DATA_ROOT_APPS), code, doc, ("files_touched",))
+    check("adding the second data root touches no file", doc.get("files_touched") == 0)
+
+    code, doc = run("discover")
+    reports = doc.get("reports") or []
+    recognised = {
+        str(obj.get("capability_id"))
+        for report in reports
+        for obj in (report.get("candidates") or [])
+        if obj.get("management") == "external_reference"
+    }
+    unnamed = {
+        str(obj.get("directory_name"))
+        for report in reports
+        for obj in (report.get("candidates") or [])
+        if not obj.get("capability_id")
+    }
+    print(f"    capability ledger: recognised={sorted(recognised)} unnamed={len(unnamed)}") 
+    check(
+        "every PE-entrypoint capability this machine actually has is recognised",
+        {"build", "java", "node", "ffmpeg", "git", "python"} <= recognised,
+    )
+    # ...and the one in-use object that is *seen* and deliberately not named. `flutter`'s entrypoint
+    # is `bin\flutter.bat` — a script, not a PE image — and `externalReference.source_kind` has no
+    # value that could describe a statically matched script (ADR-0053). Asserting that it stays
+    # visible-but-unnamed is the honest account of that gap, and the tripwire for the day the
+    # vocabulary grows: this check goes red, and the fix is to name it, not to widen the filter.
+    check(
+        "a script-entrypoint SDK is reported as seen rather than dropped",
+        {"flutter", "flutter_oh"} <= unnamed,
+    )
 
     # Leaving the registry clean, then removing the scratch root --------------
     registry = Registry.open(ROOT)
@@ -959,12 +1006,15 @@ WATCHED_TREES = (DATA_ROOT / ".airoot", Path.home() / ".cargo", Path.home() / ".
 
 MACHINE_ENVIRONMENT = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 
-#: Two directories whose *top level* is compared, because the watched trees above are a list I wrote
+#: Directories whose *top level* is compared, because the watched trees above are a list I wrote
 #: down and this is the surface around them. A verb that dropped a file into the home directory or into
 #: this checkout would have gone unnoticed by every other check here — the same shape §131 found when a
 #: hand-written list of banned values met a value nobody had written down. Names, not mtimes: editing a
 #: file inside does not change the listing, and this is about things *appearing*.
-WATCHED_LISTINGS = (Path.home(), Path(__file__).resolve().parents[2])
+#: `D:\env_apps` is here rather than above because a full manifest of it is 900 959 files and a
+#: 50-second walk (measured, §149); the top level is what catches the thing this contract is about
+#: — a launcher or a directory appearing in a tree AIROOT has no business writing to.
+WATCHED_LISTINGS = (Path.home(), Path(__file__).resolve().parents[2], DATA_ROOT_APPS)
 
 
 def _listing(path: Path) -> list[str]:

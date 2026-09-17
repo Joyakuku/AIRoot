@@ -12772,3 +12772,70 @@ isolation: PASS (0 difference(s))
 
 **同时保留下来的是那两次失败和第一版的缺陷**：它们说明这条 phase 的"红"是可操作的（不传 flag 报 not
 run、上游不可达报传输层原文、异常不穿过隔离审计），而不是一次通过就再没人量过它。
+## 149. 能力面结账：这台机器真正在用的能力，现在是一条被断言的读数（ADR-0053）
+
+目标里的第一件事是「能力面扩展（冻结并识别真正在用的能力）」。这一节把它**结账**：先量出这台机器上到底有
+什么在用的能力对象、哪些已经被命名、哪些没有，再把这份账变成真机验收脚本里的一条断言——而不是留在两次
+一次性测量里（§141/§142）。
+
+### 149.1 先量：两棵树的完整映射
+
+临时 root（跑完即删）、两棵树都**只读**登记之后 `discover` 的读数：
+
+| 数据根 | 被命名的对象 | 看见但**没有**命名的对象 |
+|---|---|---|
+| `D:\env` | `build`(cmake)、`ffmpeg`、`java`(Java)、`node`(nvm4w) | **`flutter`**、**`flutter_oh`**、VisualStudio、`.airoot` |
+| `D:\env_apps` | `git`(Git)、`python`(miniconda3) | （无） |
+
+`dr-env` 的其余候选落在**逃逸名单**里（`cc_switch`、`Huawei_SDK`、`llama-swap`、`pip-cache`、`uv-cache`、
+`Xshell`/`Xftp`…），名单之外、又没被命名的只有 `flutter`/`flutter_oh` 与 `VisualStudio`。
+
+**结论：以 PE 镜像为入口点的能力，这台机器上一个都不缺。** 唯一在用的例外是 `flutter`/`flutter_oh`——
+入口点是 `bin\flutter.bat`／`bin\dart.bat`，是**脚本**。
+
+### 149.2 障碍在哪一层：三处实测
+
+| 问 | 读数 |
+|---|---|
+| 扫描能不能匹配脚本？ | **不能**：`caps/discovery.py` 在 `if not metadata.is_pe: continue` 处跳过任何非 PE 候选；`probe_executable` 对 `.bat` 返回 `is_pe=False`、其余字段全空 |
+| AIROOT 能不能**跑**脚本？ | **能**：`run_once` 拼 `[entrypoint, *args]`，实测 `subprocess.run([<synthetic>.bat, "arg"])` 成功（退出码与 stdout 都对） |
+| 那障碍在哪？ | **身份词表**：`externalReference.source_kind` 只写得出 `pe_static`（"身份来自只读 PE 静态探测"），没有值能说"名字 + 兄弟文件" |
+
+谓词本身不是问题：既有的 `executable_name` + `sibling_file` 两条就够（两份发行版的 `bin\` 共有
+`dart`/`dart.bat`/`flutter`）。所以这是一条**记账**上的缺口，不是扫描能力上的缺口——裁决见 **ADR-0053**：
+这一版**不冻结** `flutter`/`dart`，并写清解锁它需要什么（给身份字段加一个值 → 新 schema id）。
+
+### 149.3 改了什么
+
+1. `cli/tests/real_machine_acceptance.py`：`D:\env_apps` **进隔离快照**（顶层清单，不是逐文件清单——见
+   149.4 的尺寸读数），并在**所有建索引的段之后**登记它（只读），然后断言
+   - 能力账本 `{build, ffmpeg, java, node, git, python}` 全部被识别；
+   - `flutter`/`flutter_oh` **被看见但没有被命名**。
+2. 新增 **ADR-0053**（不做冻结的裁决 + 解锁条件）。
+3. 上面第 1 条里"放在建索引的段之后"不是排版，是一次被读数纠正的错误——见下一节。
+
+### 149.4 一次被读数纠正的放置错误
+
+第一版把 `D:\env_apps` 直接登记在 `D:\env` 旁边（看起来是纯增量）。跑真机验收，**search 段红了**：
+
+```text
+search refresh      exit=2 {"records": 248058, "coverage": "partial"}
+!! FAILED: an index answer is a healthy answer
+```
+
+`D:\env_apps` 是 **900 959 个文件**（全量走一遍 49.5 秒），登记它之后索引只能到 `coverage: partial`，
+于是"索引答案就是健康答案"这条**正确地**报红。修法**不是**放宽那条断言，而是把两件事分开：**能力账本与
+搜索索引要的 root 集合不同**。这也说明"加一个数据根"从来不是纯增量——它改变的是 search 的覆盖面。
+
+同一次读数还给了快照的粒度选择：逐文件清单对 `D:\env` 是 191 750 项、对 `D:\env_apps` 是 900 959 项，
+而这条契约要抓的是"AIROOT 往一棵它没资格写的树里写了东西"，**顶层清单就够**。
+
+### 149.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 不动**（改的是真机验收脚本；套件保持离线和自足，不加 pytest 用例） |
+| 契约层 | **不动**：没有 schema、没有枚举、没有退出码、没有 reason code。ADR-0053 是一条"**不做**"的裁决 |
+| 语料 | **不动** |
+| 真机 | 能力账本 **6 个**能力 + **16 个**看见未命名；`isolation: PASS`（且快照多了一个面） |
+| 没有做 | 冻结 `flutter`（要新 schema id，见 ADR-0053）；`VisualStudio` 仍是 unmanaged——它是一棵 IDE 树，逃逸名单里没有它，**下一轮处理**；`D:\env_apps` 仍然 `truncated=True` |
