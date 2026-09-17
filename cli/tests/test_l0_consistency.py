@@ -4361,6 +4361,36 @@ STAGE_RECORD_MARKER = "逐阶段的实现记录"
 FIRST_DELEGATED_SECTION = "§31"
 
 
+def _stage_numbers(text: str) -> list[int]:
+    """Every ``## N.`` section number in the record document, in order of appearance."""
+
+    return [int(match) for match in re.findall(r"(?m)^## (\d+)\.", text)]
+
+
+def test_each_stage_record_is_written_once() -> None:
+    """§142.6: a stage record that lands twice is worse than a missing one — the range says one.
+
+    The draft grows by exactly one numbered section per stage, and the delegation sentence in
+    AGENTS.md names a range whose upper end is the highest number. If a section is appended twice
+    (a re-run of a non-idempotent append is how this was found), every other reading still looks
+    right — the range names the number, the newest section is the right one, the counts are the
+    counts — and the record simply says everything twice. Nothing compared the numbers with each
+    other before.
+    """
+
+    numbers = _stage_numbers(STAGE_RECORD.read_text(encoding="utf-8"))
+    assert numbers, "the record document has no numbered sections"
+    duplicated = sorted({number for number in numbers if numbers.count(number) > 1})
+    assert duplicated == [], f"these stage numbers are written more than once: {duplicated}"
+
+    # Non-vacuity: the shape that produced this guard — a second copy of the newest section.
+    newest = max(numbers)
+    copied = _stage_numbers(
+        STAGE_RECORD.read_text(encoding="utf-8") + f"## {newest}. a second copy\n"
+    )
+    assert sorted({number for number in copied if copied.count(number) > 1}) == [newest]
+
+
 def _newest_stage_section() -> str:
     """The highest ``## N.`` in the record document — derived, so this cannot go stale.
 
@@ -4370,10 +4400,7 @@ def _newest_stage_section() -> str:
     "points somewhere real but no longer correct" failure this file exists to catch.
     """
 
-    numbers = [
-        int(match)
-        for match in re.findall(r"(?m)^## (\d+)\.", STAGE_RECORD.read_text(encoding="utf-8"))
-    ]
+    numbers = _stage_numbers(STAGE_RECORD.read_text(encoding="utf-8"))
     assert numbers, "the record document has no numbered sections"
     return f"§{max(numbers)}"
 
