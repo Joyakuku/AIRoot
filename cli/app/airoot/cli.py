@@ -2174,6 +2174,8 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 source_verifiable=not args.source_unverifiable,
             )
         )
+        # Both the recorded answer and the refusal below read this, so it is computed before either.
+        answered = args.scope is not None or args.target is not None
         routing = {
             "requested_scope": scope,
             "decided_scope": decision.scope,
@@ -2187,6 +2189,10 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
             "manifest_hits": list(decision.manifest_hits),
             "decision_reason": decision.reason_code,
         }
+        if decision.confirmation_required and answered:
+            # `confirmation_required` alone reads as "nobody confirmed"; this says who did, and
+            # how. It is why the plan below exists at all (ADR-0055).
+            routing["confirmation_answered_by"] = "explicit_scope" if args.scope else "explicit_target"
         if decision.reason_code == "CAPABILITY_NOT_DECLARED":
             raise AirootError(
                 "CAPABILITY_NOT_DECLARED",
@@ -2246,7 +2252,11 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                     "run with --dry-run to see the plan, then approve the scope upgrade explicitly",
                 ],
             )
-        if decision.confirmation_required:
+        # ADR-0055 / §153: the refusal is for the case where **nobody answered**, not for the class.
+        # The gate exists so a human decides where a runtime lives (draft §12.1), and a caller who
+        # names the scope or the target has decided — refusing them printed three options and made
+        # every one of them unanswerable. `answered` is computed above, where the routing is built.
+        if decision.confirmation_required and not answered:
             # Deliberately no plan file: an unconfirmed plan on disk could be approved by another
             # path, and "not decided yet" must be provable on the filesystem too (draft §20.3-2).
             raise AirootError(

@@ -144,10 +144,17 @@ def test_widening_is_reported_by_the_dry_run_too(capsys, cli_root: Path, project
 
 
 def test_confirmation_is_required_and_no_plan_is_written(capsys, cli_root: Path, data_root: str) -> None:
+    """§153: the refusal is for **nobody answered** — so this invocation names no scope at all.
+
+    It used to pass `--scope data-root --target ...` and still expect the refusal, which is what
+    ADR-0055 measured: the gate listed project-isolated / data-root / cancel, and naming one of
+    them changed nothing. The invitation to answer is still asserted here; the answer itself is
+    the next test.
+    """
+
     code, document = run(
         capsys, "--json", "--root", str(cli_root),
-        "plan", "archive", "--scope", "data-root", "--target", f"data-root:{data_root}",
-        "--creates-environment",
+        "plan", "archive", "--creates-environment",
     )
 
     assert code == 4
@@ -159,12 +166,36 @@ def test_confirmation_is_required_and_no_plan_is_written(capsys, cli_root: Path,
 def test_the_threshold_is_what_triggers_the_question(capsys, cli_root: Path, data_root: str) -> None:
     code, document = run(
         capsys, "--json", "--root", str(cli_root),
-        "plan", "archive", "--scope", "data-root", "--target", f"data-root:{data_root}",
-        "--size-bytes", str(400 * 1024 * 1024),
+        "plan", "archive", "--size-bytes", str(400 * 1024 * 1024),
     )
 
     assert code == 4
     assert document["reason_code"] == "SCOPE_CONFIRMATION_REQUIRED"
+    assert plan_files(cli_root) == []
+
+
+def test_naming_the_scope_is_the_answer_that_produces_the_plan(
+    capsys, cli_root: Path, data_root: str
+) -> None:
+    """ADR-0055 / §153: the gate asks *where*; naming it answers, and the answer is recorded.
+
+    Both checks above name no scope and are still refused. This one names it, and the plan exists —
+    with `confirmation_answered_by` in its routing, because "confirmation_required: true" on its own
+    reads as "nobody confirmed", which is exactly what the metadata must not say about an answered
+    question.
+    """
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "archive", "--scope", "data-root", "--target", f"data-root:{data_root}",
+        "--creates-environment",
+    )
+
+    assert code == 0, document
+    routing = document["metadata"]["routing"]
+    assert routing["confirmation_required"] is True
+    assert routing["confirmation_answered_by"] == "explicit_scope"
+    assert plan_files(cli_root), "an answered plan must exist on disk"
 
 
 def test_an_unknown_capability_never_gets_a_plan(capsys, cli_root: Path) -> None:

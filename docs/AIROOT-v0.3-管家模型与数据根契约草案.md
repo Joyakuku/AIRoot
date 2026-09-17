@@ -12999,3 +12999,63 @@ if decision.confirmation_required and not args.scope:
 | 语料 | **不动** |
 | 真机 | `source resolve node` 真解析成功（`portable_archive`、digest 与上游逐字相同）；`plan` 两次都被同一道门拒 |
 | 没有做 | ADR-0055 的最小修法本身；以及它之后的整链（`plan --scope …` → `install` → `run --capability node -- --version` → `gc` 真删）——**那是下一轮的第一件事** |
+## 153. 确认门接受显式答案：owned runtime 真的装进去了（ADR-0055 落地）
+
+§152 量出**§12.1 的确认门没有作答机制**，ADR-0055 定下"记成缺口、最小修法留给下一阶段"。这一节把它落地，
+并让 P5 那条路第一次走到头。
+
+### 153.1 改了什么（两处读数缺一不可）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| `caps/planner.py:347-366` | 高危三类一律 `confirmation=True` | **不动**——那道门问的问题是对的 |
+| `cli.py` 的拒绝条件 | `if decision.confirmation_required:`，**从不读 `args.scope`** | `if decision.confirmation_required and not answered:`，`answered = args.scope is not None or args.target is not None` |
+| `metadata.routing` | 只有 `confirmation_required: true`（读起来像"没人确认过"） | 有答案时多一条 `confirmation_answered_by`（`explicit_scope` / `explicit_target`） |
+
+**门本身没有动**：既没给 scope 也没给 target 的调用**照旧被拒**，照旧不落计划文件。动的只是它的**触发
+条件**——从"这一类需要确认"变成"**没有人作答**"。
+
+### 153.2 守卫怎么红的：三条，而且三条都是对的
+
+| 红的用例 | 为什么它本来就该红 |
+|---|---|
+| `test_confirmation_is_required_and_no_plan_is_written` | 它传了 `--scope data-root --target …` **却仍期望被拒**——正是 ADR-0055 量到的现象 |
+| `test_the_threshold_is_what_triggers_the_question` | 同上 |
+| `test_adopt_import_refuses_a_high_risk_class_the_routing_gate_asks_about` | 它走 `import` 那条路（那条拒绝**不变**），说的是同一道门的另一面 |
+
+两条 `plan` 的用例被**拆开**而不是删掉：一条继续断言"**没作答**就被拒、且磁盘上没有计划"，另一条新的
+`test_naming_the_scope_is_the_answer_that_produces_the_plan` 断言"**给了答案**就出计划"，并且它的断言里
+刻意保留 `confirmation_required is True`——**问题仍然被问过，只是被回答了**。两个方向都有守卫。
+
+### 153.3 真机：owned runtime 第一次真的装进去（全程临时 root）
+
+| 步骤 | 读数 |
+|---|---|
+| `source resolve node --version 22.14.0` | `portable_archive`，`expected_digest=sha256:55b639295920b219…f217`（与上游 `SHASUMS256.txt` 逐字相同） |
+| `plan node … --scope data-root --target data-root:dr-node` | **`exit=0`、`reason=SUCCESS`、`kind=runtime`** |
+| `install` | **`FINALIZED`**，`instance=node/node-v22.14.0-win-x64/22.14.0/win-x64` |
+| 载荷 | **3017 个条目**，入口点 `node-v22.14.0-win-x64/node.exe`（**83344536 字节**，真在） |
+| **payload 文档** | **`kind=runtime`、`runtime_family=node`、`runtime_id=node`** —— 第一份由**真实安装**写出的 `runtime-instance` |
+| 绑定 | `machine/node/windows/x64`、`scope=machine`、`zone=R`、`exposure=stable_launcher`、`generation=1` |
+| `run --capability node -- --version` | **`exit=0`、子进程 `0`、stdout `v22.14.0`** —— 装的这一份真的跑起来了 |
+| `where node` | `managed`、`version=22.14.0`、`launcher` 在 |
+| `tool retire` → `gc --plan` → `gc --apply` | **`payload_removed=True`**，store 只剩三级父目录 |
+
+**P5 那条判据到这里是走通了的**：真实上游 → 真校验和 → 解压 3017 个条目 → `kind=runtime` 的实例 →
+真跑 → 真删。
+
+**一处没有追下去的读数（留给下一轮，不假装它没问题）**：计划里 `requested_scope` 与 `decided_scope` 都是
+`data-root`（我给的是 `--scope data-root --target data-root:dr-node`），而**绑定的 binding key 是
+`machine/node/windows/x64`、`scope=machine`**。两者对不上——要么计划的 scope 没被带到绑定上，要么
+`node` 的默认 scope 覆盖了它。**这一轮不追**：它是"计划说的"与"绑定做的"之间的不一致，属于要先量清楚
+再改的东西，写在这里以免被当成已解决。
+
+### 153.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1395 → 1396**（+1：那两条拆成"没作答被拒"，并新增"给了答案就出计划"一条） |
+| 契约层 | **不动**：没有 schema、没有枚举、没有退出码、没有 reason code；`plan.metadata` 本来就是 `additionalProperties: true`，新键不需要契约变更 |
+| 语料 | **0 个 fixture 变化**（计划文档形状没变，只是 `metadata.routing` 多一个键；语料里那份 plan fixture 不带 `--creates-environment`） |
+| 真机 | §153.3 那张表：第一个真实 owned runtime，含真跑与真删 |
+| 没有做 | §153.3 末尾那条 scope 不一致；以及 `health` 的"重新观测并记录"写者（P5 的另一半） |
