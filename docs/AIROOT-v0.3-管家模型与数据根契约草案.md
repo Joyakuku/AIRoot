@@ -13059,3 +13059,59 @@ if decision.confirmation_required and not args.scope:
 | 语料 | **0 个 fixture 变化**（计划文档形状没变，只是 `metadata.routing` 多一个键；语料里那份 plan fixture 不带 `--creates-environment`） |
 | 真机 | §153.3 那张表：第一个真实 owned runtime，含真跑与真删 |
 | 没有做 | §153.3 末尾那条 scope 不一致；以及 `health` 的"重新观测并记录"写者（P5 的另一半） |
+## 154. 回答被收下了，却没有被执行：`--scope project` 装进了机器级（§153 暴露出来的第二处）
+
+### 154.1 读数：三种调用、一个 binding key
+
+§153 让确认门接受显式答案之后，**一次调用给出三种 scope 会怎样**，实测（临时 root）：
+
+| 调用 | `routing.requested_scope` | `routing.decided_scope` | `target.target_path` | **`target.binding_key`** |
+|---|---|---|---|---|
+| `plan node --scope data-root --target data-root:dr-node` | `data-root` | `data-root` | 那个数据根目录 | **`machine/node/windows/x64`** |
+| `plan node --scope project --project <dir>` | `project` | **`data-root`** | 那个 project 目录 | **`machine/node/windows/x64`** |
+
+两件事因此分开：
+
+1. **`data-root` 根本不是"绑定 scope"**：`caps/inventory.py` 的
+   `SCOPES = {"system", "machine", "session", "project"}` 里没有它，而 `tx/artifact.py:506` 的计划构造器写的是
+   `binding_key(capability_id, "machine")`——**硬写死**。所以"计划决定装到某个数据根"与"绑定是机器级"**可以并存**，
+   这不是缺陷，是两套词汇（`plan --scope` 说"装给谁用"，binding scope 说"哪个 key 上的 active 实现"）。
+2. **但 `--scope project` 被收下、却没有被执行**：`routing.requested_scope=project`（记下来了），
+   `decided_scope=data-root`（planner 的高危规则**无条件**返回 `SCOPE_DATA_ROOT`，`planner.py:361-366` 从不看请求的
+   scope），而 `target_path` 是那个 project 目录、`binding_key` 是 machine。**答"项目内隔离"，装的是别的地方、
+   绑的是机器级。**
+
+**第二件是缺陷，而且它比 §152 记的那处更糟**：§152 是"答案给不出来所以拒绝"，这一处是"**答案给出来了、
+被记下来了、然后按别的做**"。§153 之前不会有这个问题——那时任何 scope 都被拒；§153 让"给了答案就出计划"，
+于是这条路径第一次真的走到了。
+
+### 154.2 已有的规则本来能管这件事，只是只装了一半
+
+`cli.py` 里那条 `upgrading` 判据是"**请求的 scope 比决定的更宽**要批准"：
+
+```text
+upgrading = scope == "data-root" and decision.scope == SCOPE_PROJECT
+```
+
+它只覆盖了 **project → data-root** 的**一个方向**（"你自己收窄不用批"）。这一处正是**反方向**：
+请求 `project`、决定 `data-root`，那是**放宽**，本该报 `SCOPE_UPGRADE_REQUIRES_APPROVAL`——而不是
+静默按 data-root 做、再把 binding 写成 machine。
+
+### 154.3 决定：记成缺陷，修法写清，**本阶段不实现**
+
+修法的形状（下一阶段）：**已作答但答的不是路由决定的那一个 scope 时，拒绝**，并复用已有的码与理由——
+`SCOPE_UPGRADE_REQUIRES_APPROVAL`（"请求的 scope 比决定的更宽，要单独批准"），证据里写清
+`requested_scope` 与 `decided_scope` 各是什么。**不选的方案**：直接按请求的 scope 做——那会把 planner 的
+高危规则（"运行时装环境 ⇒ data-root"）架空，而那条规则是 §12.1 的一部分。
+
+不在本阶段实现的理由与 §152 同：它改的又是一条拒绝路径，而这一轮要先把读数记准。
+
+### 154.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1396 不动**（只记读数与裁决，不改代码） |
+| 契约层 | **不动** |
+| 语料 | **不动** |
+| 真机 | 三次 `plan` 的完整读数（含 `binding_key` 与 `routing`）见 §154.1 |
+| 没有做 | 修法本身；以及它之后要重跑的那次真机整链（`--scope data-root` 那条**是**对的，§153.3 已跑通） |
