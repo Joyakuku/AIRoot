@@ -3368,7 +3368,71 @@ C 的守卫是 `test_cli.py::test_a_root_marker_with_a_bom_is_still_readable`，
 
 **状态：已裁决并已落地（草案 §163）**：守卫是改写后的
 `test_l1_plan_routing.py::test_an_unknown_data_root_target_is_refused`（含三动词一致性），验红为把那一行
-改回 `DATA_ROOT_MISSING` → `assert 6 == 1`。：A 的守卫是
+改回 `DATA_ROOT_MISSING` → `assert 6 == 1`。
+
+## ADR-0063 — **绑定是唯一权威：它不得被指向一个已经不成立的 payload，也不得被别人替它改写**
+
+### 背景
+
+F6 的调查顺带量到一组数据完整性问题（专门复现见草案 §164，读数原文在 `%TEMP%\airoot-scratch\f12\`）。
+四条一条形状：**一个值被允许描述一件已经不再成立的事**。
+
+**A —— 回滚可以复活一个已被批准删除的绑定。** `tx/rollback.py` 选前驱用
+`MAX(generation) WHERE binding_key=? AND generation<?`：对 `active`/`lifecycle_status`/`retired_at`/
+`collected_at` **没有任何谓词**，也不看 payload 在不在。实测（`retire 9.9.10` → `gc --apply` 真删 store
+目录 → 重装 → 再装一次失败）：绑定被切回**那个已被删掉 payload 的 generation**，于是这个能力从此
+`where` 报 exit 3 / `BROKEN` / `MANAGED_NOT_HEALTHY`，而诚实的答案是 `NOT_FOUND`(1)。**指向一个已经不在的
+payload 比没有绑定更糟**：它把"这里什么都没有"变成"这里有个坏掉的东西"。
+
+**B —— 回滚会改写不是它注册的那一行。** 同一版本重装：`add_instance` 对已存在的 instance 是 no-op，
+事务走到 `COMMITTED`，后端才拒绝，失败落在提交点**之后** ⇒ 回滚 ⇒ 把**它自己那个 instance** 标成
+`broken`。而那个 instance 就是几秒前还 `active`/`healthy` 的那一行。实测：exit 7 / `INSTANCE_CONFLICT` /
+`ROLLED_BACK`、generation 2→3、活行被写坏、能力退回上一版。
+
+**C —— `collected_at` 是单向闩锁。** 被 `gc` 收走的实例重装之后 payload 真的回到盘上，而 `collected_at`
+永不清除：`tool verify` 报 `verified=false` / `actual_digest=null`（"there is nothing left to verify"），
+`tool status` 一直报 `PAYLOAD_COLLECTED`——登记表对一份**就在 `store/` 里的** payload 断言了一件假事。
+
+**D（量过之后判为不是缺陷）** —— `run --capability` 在失败时"stdout 为空"是探针少了 `--json` 造成的：
+带 `--json` 一直是 `PAYLOAD_MISSING` 信封，不带时散文在 stderr 上、退出码 3，那是该模式的既定行为。
+代码一行未改，只留一条回归锁（§164.3）。
+
+### 决定
+
+**A —— 回滚的前驱必须"还成立"**：未被 `gc` 收走、未被 retire、payload 还在盘上；按 generation 从新到旧
+逐个判。**没有合格前驱时不激活任何一个**——不发明绑定，这一版也不会为此新增 `transaction` 字段
+（`additionalProperties: false`，加字段是契约变更）。回滚做了什么、拒绝了谁、为什么，通过新的
+`RevertOutcome` 进入**失败证据**：除了"最后是什么状态"，还要能回答"为什么是这个状态"。
+
+**B/E —— 占用必须在提交点之前判死，而且 `STAGED` 属于提交点之下。** 两半缺一不可（只加前置检查，
+后端仍拒绝、分类仍回滚、generation 仍会动；只改分类，前端仍会把 payload 搬进已占用的目录）。**没有动
+状态机**：`STAGED → FAILED` 本来就是 `tx/states.py` 记录过的边，所以 `states.py`、`scenario_ledger.json`、
+`transaction_transitions.json` 一个字都没改。
+**对"从 `STAGED` 恢复且 store 被占"这一情形的裁决**：判 `FAILED`、不进回滚。store 是 append-only 的，
+而"这些字节可能是我们上次崩溃留下的"与"别人占着这个路径"在当时**无法区分**——宁可拒绝，不要猜。
+
+**C —— 重装一个被收走的实例时清掉闩锁**（`Registry.clear_collected`；`set_instance_status` 表达不了
+这件事，它把 `None` 当作"别动这一列"）。而这条修复**只允许有一份实现**：两个 runner 各写一遍的那一版
+被收敛成 `tx/registration.py`（连"这一行是不是本事务注册的"那个读取也在里面）——因为守卫实测抓到了
+"抄成两份"的后果（§164.3）。
+
+### 代价
+
+- **一处行为变更**：一条从 `STAGED` 恢复且 store 被占的事务，现在判 `FAILED` 而不是回滚——原来那条路会让
+  后端在提交点之后拒绝、然后回滚并动 generation。**改动前后都没有测试覆盖这条路径**，如实记录。
+- **一处保守处（有意）**：`retired_at` 保留成历史时间戳，重装**不清它**；于是一个"曾经被 retire、后来重装"
+  的实例，它更早的那个 generation 仍会被当作已退役而跳过。保守方向（宁可说"没有合格前驱"），无守卫。
+- **不动** schema、状态机、契约目录与 golden 语料；`INSTANCE_CONFLICT` 的码与退出码 7 不变（只是**在哪一步**
+  判死变了）。
+- **§164 剔掉了一处不属于本阶段的改动**：`source_digest`（有列、有写者、**没有读者**）曾被顺手补进两次
+  `add_instance` 调用，已改回。
+- **没有做的**：`lifecycle_status` 是记录值导致的两行同时读 `active`（F12 §1.1），与 `where` 在僵尸绑定下
+  的诊断——它们与 F6 是同一个"绑定是唯一权威、其余是投影"的问题，留给 §165。
+
+**状态：已裁决并已落地（草案 §164）**：守卫是新文件
+`cli/tests/test_f12_lifecycle_fixes.py` 的 6 条；三处合成变异各自命中它该命中的守卫（A 的前驱过滤器、
+B/E 的 `STAGED` 分类、C 的共享注册规则），其中 C 的第一版守卫**没有**抓到 artifact runner 里的那一份
+——那次失败促成了 `tx/registration.py`，也写进 §164.3 当作一个可复用的教训。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

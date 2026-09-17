@@ -623,6 +623,26 @@ class Registry:
         row = self.instance(instance_id)
         return bool(row is not None and row["collected_at"])
 
+    def clear_collected(self, connection: sqlite3.Connection, instance_id: str) -> bool:
+        """Drop the "collected" latch, because the payload is back on disk (draft §164).
+
+        ``collected_at`` records one thing: an approved ``gc --apply`` removed this instance's
+        payload. Everything downstream reads it that way — ``tool verify`` refuses to verify and
+        ``tool status`` reports ``PAYLOAD_COLLECTED`` — so it is a statement about the bytes, not a
+        permanent property of the row. Re-installing the same version puts the same bytes back (the
+        runner's commit step wrote them), and leaving the latch set made the registry assert
+        something false about a payload that was sitting in ``store/``. `set_instance_status` cannot
+        express this: it treats ``None`` as "leave this column alone", which is what every other
+        caller needs.
+        """
+
+        cursor = connection.execute(
+            "UPDATE instances SET collected_at = NULL, collected_approval_id = NULL "
+            "WHERE instance_id = ? AND collected_at IS NOT NULL",
+            (instance_id,),
+        )
+        return cursor.rowcount > 0
+
     def bind_active(self, connection: sqlite3.Connection, binding: Any) -> None:
         """Make ``binding`` the single active binding for its key (deactivate others)."""
 

@@ -35,6 +35,7 @@ from ..registry.entities import (
 )
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
+from .registration import register_instance
 from .rollback import revert_own_activation
 from .simulate import PROPAGATING_CODES, _evidence_objects
 from .states import is_terminal
@@ -58,6 +59,13 @@ class ArtifactRunner:
         self.root = Path(registry.path).parent.parent
         self.journal = TransactionJournal(registry, clock=clock, injector=injector)
         self._keyring = keyring
+        #: ``None`` until this run's ``REGISTERED`` step answers it, then whether this run *inserted*
+        #: the instance row (draft §164) — the step reads the registry *before* it registers, so the
+        #: answer is about the row's origin and not about what exists afterwards. `None` is a real
+        #: answer: a resume may start at or past ``ACTIVE_BOUND``, where the step never re-runs, so
+        #: the rollback treats this as one signal among several rather than as a default. See
+        #: ``_row_is_live_for_another_transaction``.
+        self._registered_payload: bool | None = None
 
     def keyring(self) -> dict[str, bytes]:
         return self._keyring if self._keyring is not None else load_keyring(self.root)
@@ -191,11 +199,18 @@ class ArtifactRunner:
                 # The schema follows the kind (draft §150). The helper owns both names literally,
                 # which is what keeps the standing writer census able to see them.
                 validate_instance(instance.payload, kind=str(instance.kind))
+                # Read *before* the row is written: this is the only moment at which "did this
+                # transaction create the instance, or did it find one?" is still answerable (draft
+                # §164). `tx/registration.py` owns that read for both runners, along with the
+                # collected-latch correction that belongs to the same step.
+                def _register(connection: Any) -> None:
+                    self._registered_payload = register_instance(self.registry, connection, instance)
+
                 self.journal.advance(
                     tx,
                     "REGISTERED",
                     "instance registered inactive",
-                    apply=lambda connection: self.registry.add_instance(connection, instance),
+                    apply=_register,
                 )
 
             if tx["state"] == "REGISTERED":
@@ -292,7 +307,12 @@ class ArtifactRunner:
         facts = list(evidence or [])
         facts.append(f"failure_cleanup={declared} stage_cleaned={cleaned}")
 
-        if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED"}:
+        # `STAGED` belongs with the states below `COMMITTED`, not with the states above it: the
+        # `STAGED` step's whole job is the payload move, and §164 made that move refuse **before** it
+        # happens when the store path is occupied. Nothing moved and nothing was bound, so there is
+        # nothing to revert — and routing it to a rollback is what made a duplicate install bump the
+        # generation and rewrite the live instance row to `broken`.
+        if tx["state"] in {"PROPOSED", "APPROVED", "FETCHED", "VERIFIED", "STAGED"}:
             return self._fail(tx, code, message, evidence=facts)
         return self._rollback(tx, code, message, evidence=facts)
 
@@ -305,7 +325,38 @@ class ArtifactRunner:
         return stage_dir
 
     def _commit_stage(self, tx: dict[str, Any], store_dir: Path) -> None:
+        """Move the staged payload into the store — or say who is already there (draft §164).
+
+        The occupied-store refusal exists in the backend and stays there (`portable_file` and
+        `portable_archive` both raise `INSTANCE_CONFLICT`). What this adds is **where** it is
+        decided. Before §164 the runner only called ``backend.commit`` at the end of the ``STAGED``
+        step and let that error escape, so the caller classified it by *state*: the failure became a
+        rollback, bumped the generation, and — for a duplicate install of a version that was already
+        active — rewrote the live instance row to ``broken``. Measured (F12): a byte-identical
+        re-install of the active version exited 7 with ``ROLLED_BACK``, ``generation 2 -> 3``, the
+        previously working instance marked ``broken/broken`` in both ``lifecycle_status`` and
+        ``health``, and the capability moved back to the version the successful install had
+        displaced.
+
+        Asking first turns that into a **state** the attempt can report rather than a move that
+        failed half-way: nothing is moved, nothing is bound, no generation is bumped, the transaction
+        row is the only thing that changes, and the caller's existing pre-``COMMITTED`` classification
+        reports it without a rollback. Guessing here would be worse than refusing: the store is
+        append-only by construction (a new payload gets a new id), and "these bytes might be ours
+        from a crashed attempt" cannot be told apart from "someone else holds this path" without
+        trusting a backend-specific layout.
+        """
+
         self._ensure_stage(tx)
+        if store_dir.exists():
+            raise AirootError(
+                "INSTANCE_CONFLICT",
+                f"the store path is already occupied: {store_dir}",
+                evidence=[
+                    "an existing payload is never overwritten; a new instance gets a new id",
+                    "refused before the payload was moved, so no binding and no generation changed",
+                ],
+            )
         self.backend.commit(store_dir=store_dir, stage_dir=self.journal.stage_path(str(tx["transaction_id"])))
         self.journal.advance(tx, "COMMITTED", "payload moved into the immutable store")
 
@@ -419,30 +470,96 @@ class ArtifactRunner:
         The revert is the shared `tx/rollback.py` rule, not a copy of it: a rollback undoes its own
         activation and leaves a binding that a concurrent transaction committed after us alone
         (draft §109). This runner used to carry its own copy of the same three buggy lines.
+
+        Two facts about *what the revert did* go into the failure record rather than being inferred
+        from the final state (draft §164): which predecessor came back, or why none could, and
+        whether the instance row was left alone. ``set_instance_status(..., "broken")`` is scoped to
+        the rows this rollback may speak for, and the rule is stated in
+        :meth:`_row_is_live_for_another_transaction`.
         """
 
         instance_id = str(tx["instance_id"])
+        #: Whether this run inserted the instance row, read by the ``REGISTERED`` step *before* it
+        #: wrote it. `None` here means the machine never reached that step — a resume may start at or
+        #: past ``ACTIVE_BOUND`` — so it is only one of the two signals below, never a default.
+        inserted_here = self._registered_payload
+
+        def _row_is_live_for_another_transaction(reverted: Any) -> bool:
+            """Whether the row is a working payload that belongs to a different transaction.
+
+            This is the §164 rule, stated in facts the rollback can actually see. "Did this run
+            register the row" cannot answer it: a transaction interrupted at or after
+            ``ACTIVE_BOUND`` (T-010's loser) is resumed by a fresh runner that starts at that state,
+            so ``REGISTERED`` never re-runs and the resumed run would answer "not ours" about the
+            row its own earlier process created.
+
+            Two facts do answer it. ``generation_after`` is non-null exactly when this transaction
+            passed ``ACTIVE_BOUND`` — the one commit point — and the payload under this instance id
+            is then necessarily its own. And the revert reports whether the key's binding came back
+            to **this** instance. So a row that is not this transaction's own work, that no restore
+            pointed at, and that still reads ``active`` **and** ``healthy``, belongs to another
+            transaction: rewriting it would take a working version out of service to report a
+            failure that was never about it, which is exactly what F12 measured on the
+            duplicate-install path (the row was `active`/`healthy` one command earlier and came
+            back `broken`/`broken` in both columns).
+            """
+
+            if str(tx.get("generation_after")) not in {"None", ""}:
+                return False  # this transaction passed ACTIVE_BOUND: the row is its own work
+            if reverted.restored_instance_id == instance_id:
+                return False
+            if inserted_here:
+                return False
+            row = self.registry.instance(instance_id)
+            return bool(
+                row is not None
+                and str(row["lifecycle_status"]) == "active"
+                and str(row["health"]) == "healthy"
+            )
 
         def _revert(connection: Any) -> None:
-            revert_own_activation(self.registry, connection, instance_id=instance_id)
-            self.registry.set_instance_status(
-                connection, instance_id, health="broken", lifecycle_status="broken"
-            )
+            reverted = revert_own_activation(self.registry, connection, instance_id=instance_id)
+            outcome["evidence"] = reverted.evidence()
+            if not _row_is_live_for_another_transaction(reverted):
+                self.registry.set_instance_status(
+                    connection, instance_id, health="broken", lifecycle_status="broken"
+                )
+            else:
+                outcome["evidence"] = [
+                    *outcome["evidence"],
+                    f"instance {instance_id} reads active/healthy and this transaction did not "
+                    "register it, so its row was left as it was (draft §164)",
+                ]
+
+        failure: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "retryable": False,
+            "evidence": _evidence_objects(evidence),
+        }
+
+        def _apply(connection: Any) -> None:
+            _revert(connection)
+            # The failure record and the revert share one SQLite transaction, so the evidence is
+            # built by the code that did the work and written with it.
+            failure["evidence"] = [
+                *(failure["evidence"] or []),
+                *_evidence_objects([str(item) for item in outcome.get("evidence", [])]),
+            ]
 
         self.journal.advance(
             tx,
             "ROLLBACK_PENDING",
             message,
-            failure={
-                "code": code,
-                "message": message,
-                "retryable": False,
-                "evidence": _evidence_objects(evidence),
-            },
+            failure=failure,
             bump=True,
-            apply=_revert,
+            apply=_apply,
         )
-        self.journal.advance(tx, "ROLLED_BACK", "active binding switched back; new payload retained as evidence")
+        self.journal.advance(
+            tx,
+            "ROLLED_BACK",
+            "active binding switched back; new payload retained as evidence",
+        )
         tx["outcome"] = code
         return tx
 

@@ -14005,3 +14005,81 @@ FAILED test_an_unknown_data_root_target_is_refused
 | 操作者决定 | 环境收尾已按裁决执行：用户级 `AIROOT_HOME`（原来指着测试 root `D:\env_test\.airoot`）**已删除**；用户 PATH 里的 `D:\AIRoot\cli\bin` 保留 |
 | 入口文档预算 | **§163 顺手做了一件必须记录的事**：`AGENTS.md` 的 ADR 那一行**手抄了 30 多条 ADR 的摘要**（2301 字节），而这一行的最后一句话自己就写着"括号里是范围，不是内容清单——别在这里补一份手抄的目录（§85）"。§162 结束时它只剩 **229 字节**，而下一个阶段要在同一份文档里写一个新动词。现在那一行只留**范围 + 四个锚点**（`ADR-0004`/`ADR-0021`/`ADR-0025` 与"此后每一条"）：**63259 → 61148 字节**，省下 **2111 字节**。丢掉的只是抄本——每一条 ADR 的标题仍在决策记录里，而 `test_the_repo_map_states_the_decision_log_range_not_a_hand_copy_of_it` 量的就是"这一行有没有点名范围的两端"，不是它抄了几条 |
 | 没有做 | `plan --target <dir>`（被当成 project）那条 `INVALID_INPUT` 的证据里没有"已知数据根"这类指针——记着，不假装做了；F6 见下一阶段 |
+
+## 164. F12：绑定不得指向一个已经不成立的 payload
+
+裁决见 **ADR-0063**。这一节是 F6 的调查**顺带**量出来的一组数据完整性问题（F6 的读数在 §165）：
+§162.7 只记了它的一个候选读数，专门复现之后发现它比 F6 严重——一条指向已删 payload 的绑定，会让
+"这里什么都没有"变成"这里有个坏掉的东西"。
+
+### 164.1 四条缺陷（一条形状，四个地方）
+
+一条形状：**一个值被允许描述一件已经不再成立的事**。
+
+| # | 缺陷 | 修法前的实测读数 | 修法后 |
+|---|---|---|---|
+| **A** | 回滚选前驱只问 `MAX(generation)`，不看 retired / collected / payload 在不在 | `retire 9.9.10` → `gc --apply`（store 目录真删）→ 重装 → 再装失败 ⇒ 绑定被切回**那个已被批准删除的 generation**；`where archive` = exit 3 / `BROKEN` / `MANAGED_NOT_HEALTHY`（本该是诚实的 `NOT_FOUND`），`run --capability` = exit 3 | 前驱必须**还成立**（未收走、未退役、payload 在盘上）；没有合格前驱时这个 binding key **结束为没有 active binding**，并把"跳过了谁、为什么"写进失败证据 |
+| **B** | 回滚会改写**不是它注册的**那一行 | 同版本重装 ⇒ exit 7 / `INSTANCE_CONFLICT` / `ROLLED_BACK`，generation 2→3，**几秒前还 `active`/`healthy` 的那一行被写成 `broken`/`broken`**，能力退回上一版 | 拒绝发生在**提交点之前**：generation 不变、绑定不动、那一行保持 `active`/`healthy` |
+| **C** | `collected_at` 是单向闩锁 | 收走后重装：payload 真的回到盘上，而 `tool verify` 仍报 `verified=false` / `actual_digest=null` / "there is nothing left to verify"，`tool status` 仍报 `PAYLOAD_COLLECTED` | 重装时清掉闩锁（`collected_at`/`collected_approval_id`），`tool verify` 给出真实 digest |
+| **D** | `run --capability` 失败时"没有信封" | ——**不是缺陷**：F12 的探针漏了 `--json`。`--json` 下一直是 `PAYLOAD_MISSING` 信封（exit 3），不带 `--json` 时散文在 stderr 上，那是这一模式的既定行为 | 没有改任何一行；改为**留一条回归锁**（见 §164.3） |
+
+### 164.2 修法
+
+- **A（`tx/rollback.py`）**：候选改成"按 generation 从新到旧、逐个判是否还成立"，判据是 `collected_at`、
+  `retired_at`/`lifecycle_status=retired`、以及 payload 是否还在盘上（`is_store_path` + 解析得到目录）。
+  它**仍然不发明前驱**：没有合格候选就**不激活任何一个**，并把这次回滚做了什么、拒绝了什么、为什么
+  通过新的 `RevertOutcome` 落进失败记录——"最后是什么状态"之外，还要能回答"为什么是这个状态"。
+- **B/E（`tx/artifact.py`）**：`_commit_stage` 在**移动 payload 之前**问一次 store 路径是否已被占用
+  （被占即 `INSTANCE_CONFLICT`），并且 `STAGED` 归到**提交点之下**那一档分类（`_fail`，不是 `_rollback`）。
+  这两半缺一不可：只加前置检查，后端仍会拒、分类仍会回滚、generation 仍会动；只改分类，前端仍会把 payload
+  搬进一个已占用的目录再报错。**没有动状态机**——`STAGED → FAILED` 本来就是 `tx/states.py` 里已经记录的边，
+  所以 `tx/states.py`、`scenario_ledger.json`、`transaction_transitions.json` 一个字都没改。
+- **C（`registry/db.py` + `tx/registration.py`）**：新增 `Registry.clear_collected`（`set_instance_status`
+  表达不了这件事——它把 `None` 当作"这一列别动"）。
+- **D**：不改代码。F12 的探针读的是不带 `--json` 的那次调用；那次的散文在 stderr、退出码 3，本来就是这个
+  模式的行为。
+
+### 164.3 我自己的验收（不是转抄，而且抓到一个守卫缺口）
+
+三处合成变异都用**字节级**脚本做（备份 → 替换一行 → 跑守卫 → 写回），跑完核对文件字节与改动前相同：
+
+```text
+A  把 _unusable_reason 开头插一行 `return None`（让每个前驱都合格）
+   → FAILED test_a_rollback_without_a_live_predecessor_leaves_the_key_unbound
+   → "no candidate below this generation still stands, so the key must end with no active binding"
+B  把 STAGED 从"提交点之下"那一档删掉
+   → FAILED test_the_occupied_store_path_is_refused_before_the_commit_point
+   → FAILED test_reinstalling_the_active_version_leaves_that_versions_row_alone
+C  把 registration.py 的 `if not inserted:` 改成 `if False and not inserted:`
+   → FAILED test_reinstalling_a_collected_instance_clears_collected_at
+```
+
+**第一次跑 C 的变异时它没有变红**（6 passed）：那一次我破坏的是 `tx/artifact.py` 里那一份清除调用，而
+C 的守卫走的是 **simulate runner**——也就是说这条修复当时在**两个 runner 里各有一份**，守卫只盯住了其中
+一份。这正是 ADR-0035 当年对回滚做过的那件事的翻版（"一份规则抄成两份，就一定会有一份是错的"），所以
+这条修复被收敛成**一份实现** `tx/registration.py`（两个 runner 都调它，连"这一行是不是本事务注册的"那个
+读取也在里面），C 的变异随即变红。**修完再量**：三个变异各自命中它该命中的守卫。
+
+另外两件我自己动手的事：
+
+- **剔掉一处不属于本阶段的改动**：subagent 顺手把 `source_digest`（一个 `ddl.sql` 里有、`db.py` 里写、
+  **全树没有任何读者**的列）在两次 `add_instance` 调用里补上了。它不影响任何行为，但它改了**存进去的数据**，
+  而这一阶段是缺陷修复——已改回原样（`add_instance(connection, instance)`），并留在这里记录。
+- **独立核对 D**：在 F12 留下的一次性 root 上（绑定仍然指着被收走的 9.9.10）实测：
+  带 `--json` → `PAYLOAD_MISSING` 信封、exit 3、证据三行；不带 `--json` → 散文在 stderr、exit 3。
+  再加两条：`caps/runtime.py` 最后一次改动是 `173f0cb`（本阶段没碰它），`cli.py` 也不在本阶段的改动里——
+  所以那条信封不是这次修出来的。D 的守卫是**回归锁**，不是修复的证人（记录在此，免得后来的读者把它
+  当成一次修复）。
+
+### 164.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1417 → 1423**（+6：`cli/tests/test_f12_lifecycle_fixes.py`） |
+| 代码 | `tx/rollback.py`（+155/−28）、`tx/artifact.py`、`tx/simulate.py`、`registry/db.py`（+20）、**新增** `tx/registration.py` |
+| 契约层 | **不动**（`tx/states.py`、两个契约目录、20 个 schema 都没改；`STAGED → FAILED` 本已记录） |
+| 语料 | **不动**（无相关 fixture，`test_golden.py` 全绿） |
+| 隔离 | subagent 与我用的 root 都在 `%TEMP%\airoot-scratch\` 与 `cli/tests/.tmp/` 内；没有碰 `D:\env*`、HKCU、PATH、注册表 |
+| 行为变更（已写进 ADR-0063） | 一条**从 `STAGED` 恢复**且 store 被占的事务，现在判 `FAILED` 而不是回滚（原来会让后端在提交点之后拒、然后回滚并动 generation）。理由是 store 是 append-only，"这些字节可能是我们上次崩溃留下的"与"别人占着这个路径"在当时**无法区分**——宁可拒绝，不要猜 |
+| 已知的保守处（有意，无守卫） | `retired_at` 保留成历史时间戳，重装**不清它**；于是一个"曾经被 retire、后来重装"的实例，它更早的那个 generation 仍会被当作已退役而跳过回滚。保守方向（宁可说"没有合格前驱"），记录下来 |
+| 没有做 | F12 §1.1（`lifecycle_status` 是记录值 ⇒ 两行同时读 `active`）**不在本阶段**：它与 F6 是同一个"绑定是唯一权威、其余是投影"的问题，随 §165 一起做；`_row_is_live_for_another_transaction` 那条防御分支在 E 之后**不可达**，因此没有红的运行——如实记录，它是纵深防御而不是承重结构 |

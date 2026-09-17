@@ -36,6 +36,7 @@ from ..registry.entities import (
 )
 from .approval import load_keyring, verify_approval
 from .journal import TransactionJournal, classify
+from .registration import register_instance
 from .rollback import revert_own_activation
 from .states import HAPPY_PATH, is_terminal
 
@@ -214,6 +215,11 @@ class SimulationRunner:
         self.journal = TransactionJournal(registry, clock=clock, injector=injector)
         self.backend = SimulationBackend(self.root, clock=clock)
         self._keyring = keyring
+        #: ``None`` until this run's ``REGISTERED`` step answers it, then whether this run *inserted*
+        #: the instance row — read *before* registering, so the answer is about the row's origin and
+        #: not about what exists afterwards (draft §164). `None` is a real answer on a resume that
+        #: starts at or past ``ACTIVE_BOUND``. Same rule as the artifact runner.
+        self._registered_payload: bool | None = None
 
     # ------------------------------------------------------------------ guards #
 
@@ -363,11 +369,18 @@ class SimulationRunner:
                 # Same rule as the real runner (draft §150). This runner's own plan builder fixes
                 # kind=managed_tool, so the payload below is still that shape.
                 validate_instance(instance.payload, kind=str(instance.kind))
+
+                # Same rule as the real runner (draft §164), and the same one implementation of it:
+                # `tx/registration.py` reads the row before writing it and clears the collected
+                # latch when the row was already there.
+                def _register(connection: Any) -> None:
+                    self._registered_payload = register_instance(self.registry, connection, instance)
+
                 self.journal.advance(
                     tx,
                     "REGISTERED",
                     "instance registered inactive",
-                    apply=lambda connection: self.registry.add_instance(connection, instance),
+                    apply=_register,
                 )
 
             if tx["state"] == "REGISTERED":
@@ -544,29 +557,71 @@ class SimulationRunner:
 
         "Back" means **this transaction's own activation**, never the key as a whole: a concurrent
         transaction that committed after us owns the key now and must survive our rollback. The
-        rules live in one place, `tx/rollback.py`, shared with `artifact.py` (draft §109).
+        rules live in one place, `tx/rollback.py`, shared with `artifact.py` (draft §109) — including
+        the candidate filter that stops a rollback restoring a retired or `gc`-collected predecessor
+        (draft §164), and the evidence that records what the revert chose or refused.
         """
 
         instance_id = str(tx["instance_id"])
+        outcome: dict[str, Any] = {}
+        #: Whether this run inserted the instance row (read by ``REGISTERED`` before it wrote it).
+        #: `None` on a resume that starts at or past ``ACTIVE_BOUND``, which is why it is a signal
+        #: and not the answer.
+        inserted_here = self._registered_payload
+
+        def _row_is_live_for_another_transaction(reverted: Any) -> bool:
+            """Same rule as `artifact.py` (draft §164): a live, healthy row that is not this
+            transaction's own work — it never passed ``ACTIVE_BOUND`` and no restore pointed at it —
+            is left alone instead of being rewritten to `broken`."""
+
+            if str(tx.get("generation_after")) not in {"None", ""}:
+                return False
+            if reverted.restored_instance_id == instance_id:
+                return False
+            if inserted_here:
+                return False
+            row = self.registry.instance(instance_id)
+            return bool(
+                row is not None
+                and str(row["lifecycle_status"]) == "active"
+                and str(row["health"]) == "healthy"
+            )
 
         def _revert(connection: Any) -> None:
-            revert_own_activation(self.registry, connection, instance_id=instance_id)
-            self.registry.set_instance_status(
-                connection, instance_id, health="broken", lifecycle_status="broken"
-            )
+            reverted = revert_own_activation(self.registry, connection, instance_id=instance_id)
+            outcome["evidence"] = reverted.evidence()
+            if not _row_is_live_for_another_transaction(reverted):
+                self.registry.set_instance_status(
+                    connection, instance_id, health="broken", lifecycle_status="broken"
+                )
+            else:
+                outcome["evidence"] = [
+                    *outcome["evidence"],
+                    f"instance {instance_id} reads active/healthy and this transaction did not "
+                    "register it, so its row was left as it was (draft §164)",
+                ]
+
+        failure: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "retryable": False,
+            "evidence": _evidence_objects(evidence),
+        }
+
+        def _apply(connection: Any) -> None:
+            _revert(connection)
+            failure["evidence"] = [
+                *(failure["evidence"] or []),
+                *_evidence_objects([str(item) for item in outcome.get("evidence", [])]),
+            ]
 
         self.journal.advance(
             tx,
             "ROLLBACK_PENDING",
             message,
-            failure={
-                "code": code,
-                "message": message,
-                "retryable": False,
-                "evidence": _evidence_objects(evidence),
-            },
+            failure=failure,
             bump=True,
-            apply=_revert,
+            apply=_apply,
         )
         self.journal.advance(tx, "ROLLED_BACK", "active binding switched back; new payload retained as evidence")
         tx["outcome"] = code
