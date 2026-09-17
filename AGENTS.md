@@ -283,6 +283,7 @@ python cli\tests\real_machine_acceptance.py --online   # 外加 §59 的解析+�
 - **`cli/bin/airoot.cmd` 必须是 CRLF 行尾**，否则 `cmd.exe` 会把 `rem` 行切碎成命令。用文件工具重写它之后要确认行尾。
 - **不要用 `Get-Content` 校验 UTF-8 中文文件**：本环境的 pwsh 把它按 GBK 解码，会输出 `锛氱瀹舵ā鍨` 这类乱码并**少算行数**（实测同一文件 `ReadAllLines=630` 而 `Get-Content=465`）。要核对内容用 `read`/`grep` 工具，或用 `[System.IO.File]::ReadAllText(...)` / `ReadAllLines(...)`。
 - **标准输出也是 GBK**：`print()` 非 GBK 字符（如 `®`）会抛 `UnicodeEncodeError`。CLI 的 JSON 用 `ensure_ascii` 默认值所以安全；自己写调试脚本时用 `.encode('ascii','replace').decode()` 包一层。
+- **不要把 `where <cap> --version ">=3"` 这类约束直接写进 `cmd /c` 的引号里**：`cmd` 会把 `>` 当重定向，于是当前目录多出一个名为 `22` 的文件（内容是一份 `INVALID_INPUT` 信封），而命令本身安静地失败。§159 的实测就是这么在仓库根留下一个杂散文件的——`git add -A` 之前先看 `git status`。
 - **`cli/tests/.tmp/` 会被 pytest 的会话夹具整个删掉**：不要把任何需要跨运行保留的 root/数据根放进去（放进去的示例 root 会在下次跑测试时消失）。它也是唯一允许建测试 root 的地方。
 - **文件工具会把被编辑的文件整体转成 CRLF**，而本仓库是 `* -text`、109 个 `.py` 里有 108 个存的是 LF：一次 **66 行**的改动可以变成 **4293 行**的重写（实测：`git diff --stat` 说 8533 行，`git diff --ignore-cr-at-eol --stat` 说 79 行——差别全是行尾）。**改完 `.py` 之后核一下行尾**（`[System.IO.File]::ReadAllText` 数 `\r\n` 与孤立 `\n`），是 LF 的用字节级读写把它转回去；CRLF 本身合法（`* -text` 允许两种），但整份换行尾会让这次改动的 diff 变成整份文件。
 
