@@ -299,7 +299,7 @@
         "data.fallback",
         "data.next_cursor"
       ],
-      "notes": "bounded crawl, not an index: status=degraded + SEARCH_FALLBACK_USED(2) + data.fallback.kind=crawl + freshness=unknown/none mean 'this is a live walk, not a healthy index'. `search --query status` searches for a file literally named status; `search status|explain|implementations` are the reserved subcommands. Never present search as capability resolution — that is `where`.",
+      "notes": "bounded crawl, not an index: status=degraded + SEARCH_FALLBACK_USED(2) + data.fallback.kind=crawl + freshness=unknown/none mean 'this is a live walk, not a healthy index' (a *corrupt* index answers as SEARCH_INDEX_DEGRADED(2), the same word status/explain/doctor use, and still reports data.fallback.kind=crawl). index'. `search --query status` searches for a file literally named status; `search status|explain|implementations` are the reserved subcommands. Never present search as capability resolution — that is `where`.",
       "document_schema": "search-response"
     },
     {

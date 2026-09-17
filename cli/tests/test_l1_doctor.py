@@ -446,6 +446,50 @@ def test_a_corrupt_search_index_is_reported_without_crashing(registry, clock, ro
     diagnostic = diagnostics_by_code(document)["SEARCH_INDEX_DEGRADED"]
     assert diagnostic["remediation"] == "rebuild"
     assert any("live crawl" in item for item in diagnostic["evidence"])
+    # §168 defect 2: `remediation` is the published enum word for "rebuild the derived state", and
+    # the verb that rebuilds **this** derived file is not `airoot rebuild` — measured: that one
+    # exits 0 and leaves `cache/search/index.db` at 0 bytes. The evidence has to name the real one,
+    # the same way the neighbouring `SEARCH_RESULT_STALE` already does.
+    assert any("airoot search refresh" in item for item in diagnostic["evidence"]), diagnostic["evidence"]
+
+
+def test_a_damaged_projection_is_reported_even_with_the_right_generation(registry, clock, root) -> None:
+    """§168 defect 6: the D7 verdict compared the generation stamp, not the file.
+
+    Measured before the fix: emptying `state/registry.json` (every list) while leaving `generation`
+    in place made `doctor` report nothing and `rebuild --plan` report `stale_projection: false`;
+    changing *only* the stamp made both report drift. The stamp answers "did the registry move",
+    which is not the same question as "is this projection what the build would write".
+    """
+
+    install(registry, clock, root)
+    projection = Path(root.path) / "state" / "registry.json"
+    original = projection.read_text(encoding="utf-8")
+
+    # Non-vacuity first: an untouched projection must come back current under the new rule, or the
+    # rule would simply be "always stale".
+    assert "REGISTRY_PROJECTION_STALE" not in codes(doctor(root.path, clock=clock, registry=registry))
+
+    damaged = json.loads(original)
+    damaged["instances"] = []
+    damaged["bindings"] = []
+    damaged["external_references"] = []
+    damaged["data_roots"] = []
+    projection.write_text(json.dumps(damaged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    document = doctor(root.path, clock=clock, registry=registry)
+    assert "REGISTRY_PROJECTION_STALE" in codes(document), "the stamp still agrees; the body does not"
+    diagnostic = diagnostics_by_code(document)["REGISTRY_PROJECTION_STALE"]
+    assert any("content" in item for item in diagnostic["evidence"]), diagnostic["evidence"]
+
+    # A stamp that changed while the content stayed damaged is drift too — the content comparison
+    # subsumes the old check rather than replacing the question it answered.
+    damaged["generation"] = int(damaged["generation"]) + 99
+    projection.write_text(json.dumps(damaged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    assert "REGISTRY_PROJECTION_STALE" in codes(doctor(root.path, clock=clock, registry=registry))
+
+    projection.write_text(original, encoding="utf-8")
+    assert "REGISTRY_PROJECTION_STALE" not in codes(doctor(root.path, clock=clock, registry=registry))
 
 
 def test_audit_projection_drift_is_reported(registry, clock, root) -> None:

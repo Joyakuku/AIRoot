@@ -3616,7 +3616,61 @@ AIROOT 该做的做了（它把子进程的 PATH 拼对了），是环境没有�
 
 **状态：已裁决并已落地（草案 §167）**：三处独立字节级变异（`except OSError`、`shutil.which(path=…)`、
 证据上限）各自命中它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` /
-`isolation: PASS`；全套 1457 项里唯一红的是计数守卫（文档同步后转绿）。：A 的守卫是
+`isolation: PASS`；全套 1457 项里唯一红的是计数守卫（文档同步后转绿）。
+
+## ADR-0067 — **"最新"是内容，不是戳；同一个状态只有一个词；指针要指向真能修它的那个动词**
+
+### 背景
+
+第三轮全表面测试里有六条属于同一族：**报告与事实不一致**（草案 §168 的读数）。最重的一条是
+**索引路径静默越界**——`search java --search-root <tree>\sub` 返回了 `<tree>\java_outside.txt`，
+`status=ok`、`reason_code=null`；把索引截断后**同一命令**只返回范围里的两条，因为 crawl 路径按
+root 过滤而索引路径从来不按 roots 过滤行（`covers()` 只判"请求 root 在被索引 root 之内"）。
+第二条是**判据说没事**：把 `state/registry.json` 的内容清空、只保留 `generation`，
+`rebuild --plan` 说 `stale_projection:false`、`doctor` 不报 `REGISTRY_PROJECTION_STALE`；只改
+`generation`（内容仍是空的）反而报 `true`。其余四条是同一件事的小号：`doctor` 对索引损坏指的修复
+动词是 `rebuild`（照做返回 `SUCCESS`、索引一个字节没改）、索引损坏时查询报 `SEARCH_FALLBACK_USED`
+而同状态的其它三个读者报 `SEARCH_INDEX_DEGRADED`、证据教 `or pass --root <dir>`（照做撞
+`ROOT_MARKER_MISSING`——**代码自己重新制造 ADR-0017/0018 记过的坑**）、人可读输出无条件宣称
+"本 build 没有索引"而与同屏刚由索引作答的结果自相矛盾。
+
+### 决定
+
+**A —— 索引的答案必须按请求收窄。** 过滤规则抽成 `path_within_roots()`（沿用 `covers` 一直在用的
+拼写：小写、去尾部分隔符、`\` 边界），`covers` 与 `query_index` **共用同一个函数**：`covers` 回答
+"这份索引能不能为这个范围作答"，过滤回答"行要不要收窄到请求里"，两件事，一份路径比较。
+**没有把两个词合并**：没有索引 / 索引不覆盖 roots 仍然是 `SEARCH_FALLBACK_USED`。
+
+**B —— "最新"的定义是内容，generation 戳只是第一道便宜的检查。** `registry/projection.py::projection_is_current()`
+比较"**盘上这份**"与"**这个 build 现在会写出来的那份**"，`doctor` 的 D7 与 `rebuild --plan` **共用
+这一个函数**；唯一被排除的易变字段是 `generated_at`（写入时刻的时钟读数——不排除会让健康投影永远 stale），
+`generation` **参与**比较，所以"戳动了、内容没动"照样是 stale。**三条性质都要有守卫**：改了内容要报、
+**没动过的不许报**、只动 generation 仍要报——缺一条这个判据就可能只是"永远都是脏的"。
+
+**C —— 同一个状态只有一个词。** 索引 present 但不可读 → `SEARCH_INDEX_DEGRADED`（查询、status、
+explain、doctor 四处一致）；没有索引 / 不覆盖 → `SEARCH_FALLBACK_USED`。`remediation` 的**取值**不改
+（它是已发布枚举，"重建派生状态"这个词是对的），改的是**证据必须点名真能修它的动词**
+（`airoot search refresh`），并且 `rebuild` 自己要新增 `not_rebuilt` 明说搜索索引不归它管。**指针必须
+指向真能修它的动词**，这是从 §159 F3（`recover` 分两种）一路下来的同一条规则。
+
+**D —— 代码不许重新制造已记录的坑。** 证据里的 flag 改成 `--search-root <dir>` 并补一句说清它与
+`--root` 的区别；`SEARCH_ROOT_UNAVAILABLE`(2) 的档位不动（"环境没准备好"这一档，调用方下一步明确）。
+
+### 代价
+
+- **一处对外行为修正**：索引路径的匹配集与 crawl 路径统一（越界结果消失）；索引损坏时的 `reason_code`
+  在查询侧由 `SEARCH_FALLBACK_USED` 变成 `SEARCH_INDEX_DEGRADED`（**一处既有断言随之取代**，同用例早已
+  断言 `status` 侧是 DEGRADED）。
+- **`rebuild` 的文档新增 `not_rebuilt`**（增量字段），`doctor` 的 `remediation` 枚举与码表**未改**，
+  golden 语料**逐字节不变**。
+- **一处实测但没有改的残余**：`stale_audit` 的**包装字段**（`event_count`/`last_seq`）可被改而不被发现
+  ——它的 digest 判据本身看内容，只有非 digest 的包装字段有这个缺口；收紧要用 B 同一条规则，属于本阶段
+  之外，**记在 §168.3 而不是假装关了它**。
+- **没有做的**：`projection_is_current` 多吃的一次 clock tick（实测没有影响任何 golden 或时钟断言）。
+
+**状态：已裁决并已落地（草案 §168）**：三处独立字节级变异（行过滤、损坏索引的码、内容判据）各自命中
+它该命中的守卫；`real_machine_acceptance.py` 重跑 `closed loop: PASS` / `isolation: PASS`（真机索引
+51187 条、索引路径查询 exit 0）。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 

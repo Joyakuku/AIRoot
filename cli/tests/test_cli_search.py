@@ -156,6 +156,30 @@ def test_an_explicit_search_root_wins_over_the_data_roots(
     assert any("roots came from the request" in json.dumps(item) for item in document["evidence"])
 
 
+def test_a_search_root_inside_the_indexed_tree_is_not_widened_to_the_index(
+    capsys, cli_root: Path, registered: Path
+) -> None:
+    """§168 defect 1, end to end: the index must answer the **requested** scope, like the crawl.
+
+    Measured before the fix: with an index built over the whole data root, `search exe --ext .exe
+    --search-root <data>/java` returned `loose.exe` too — a file outside the requested root — while
+    the same query with the index made unusable returned only `java\\bin\\java.exe`.
+    """
+
+    code, refreshed = search(capsys, cli_root, "refresh")
+    assert code == 0 and refreshed["coverage"] == "complete_for_roots"
+
+    code, document = search(capsys, cli_root, "exe", "--ext", ".exe", "--search-root", str(registered / "java"))
+
+    assert code == 0, document.get("reason_code")
+    assert document["data"]["fallback"] is None, "this guard is about the index answering"
+    assert document["data"]["stats"]["matched"] == 1
+    assert [Path(item["path"]) for item in document["data"]["results"]] == [
+        registered / "java" / "bin" / "java.exe"
+    ]
+    assert any(str(registered / "java") in item["detail"] for item in document["evidence"])
+
+
 def test_a_limit_above_the_policy_bound_is_refused(capsys, cli_root: Path, registered: Path) -> None:
     code, document = search(capsys, cli_root, "java", "--limit", "9999")
 
@@ -384,7 +408,11 @@ def test_a_corrupt_index_falls_back_to_a_crawl_and_says_so(
 
     code, document = search(capsys, cli_root, "java")
     assert code == 2
-    assert document["reason_code"] == "SEARCH_FALLBACK_USED"
+    # §168 defect 3: an index that is **present but unreadable** is a degraded index, not "there was
+    # no index". `search status`/`explain`/`doctor` already said SEARCH_INDEX_DEGRADED about this
+    # exact state; the query path was the one voice calling it something else. Exit code 2 either
+    # way — this is which word is accurate.
+    assert document["reason_code"] == "SEARCH_INDEX_DEGRADED"
     assert document["data"]["fallback"]["kind"] == "crawl"
     assert any("unusable" in warning for warning in document["warnings"])
 
@@ -392,6 +420,143 @@ def test_a_corrupt_index_falls_back_to_a_crawl_and_says_so(
     assert status_code == 2
     assert status["reason_code"] == "SEARCH_INDEX_DEGRADED"
     assert status["index"]["problem"]
+
+
+def test_every_search_reader_agrees_that_a_corrupt_index_is_degraded(
+    capsys, cli_root: Path, registered: Path
+) -> None:
+    """§168 defect 3: the four readers of one state used to disagree about its name."""
+
+    search(capsys, cli_root, "refresh")
+    (cli_root / "cache" / "search" / "index.db").write_bytes(b"not a database" * 32)
+
+    query_code, query = search(capsys, cli_root, "java")
+    status_code, status = search(capsys, cli_root, "status")
+    explain_code, explain = search(capsys, cli_root, "explain", "java")
+    doctor_code, doctor_document = run(capsys, "--json", "--root", str(cli_root), "doctor")
+    doctor_codes = {item["code"] for item in doctor_document["diagnostics"]}
+
+    assert (query_code, status_code, explain_code, doctor_code) == (2, 2, 2, 2)
+    assert query["reason_code"] == "SEARCH_INDEX_DEGRADED"
+    assert status["reason_code"] == "SEARCH_INDEX_DEGRADED"
+    assert explain["reason_code"] == "SEARCH_INDEX_DEGRADED"
+    assert "SEARCH_INDEX_DEGRADED" in doctor_codes
+
+    # The other word still has its own state: remove the file entirely and the same query on the
+    # same root is a fallback, not a degraded index. Without this half the guard would also pass for
+    # a build that renamed every degraded answer.
+    (cli_root / "cache" / "search" / "index.db").unlink()
+    fallback_code, fallback = search(capsys, cli_root, "java")
+    assert fallback_code == 2
+    assert fallback["reason_code"] == "SEARCH_FALLBACK_USED"
+
+
+def test_the_degraded_index_remediation_points_at_the_verb_that_rebuilds_it(
+    capsys, cli_root: Path, registered: Path
+) -> None:
+    """§168 defect 2: `remediation: rebuild` sends its reader to a verb that cannot help.
+
+    Measured before the fix: truncating `cache/search/index.db` made `doctor` report
+    `SEARCH_INDEX_DEGRADED` with `remediation: rebuild`; running `airoot rebuild` exited 0 and left
+    the file at 0 bytes. The pointer to the verb that *does* rebuild it is therefore load-bearing,
+    and the second half of this guard proves it is not decoration.
+    """
+
+    search(capsys, cli_root, "refresh")
+    index_db = cli_root / "cache" / "search" / "index.db"
+    index_db.write_bytes(b"")
+
+    code, doctor_document = run(capsys, "--json", "--root", str(cli_root), "doctor")
+    diagnostic = next(
+        item for item in doctor_document["diagnostics"] if item["code"] == "SEARCH_INDEX_DEGRADED"
+    )
+    assert diagnostic["remediation"] == "rebuild", "the published enum word is unchanged"
+    assert any("airoot search refresh" in item for item in diagnostic["evidence"]), diagnostic["evidence"]
+
+    # Following `remediation` literally: success, no repair.
+    rebuild_code, rebuilt = run(capsys, "--json", "--root", str(cli_root), "rebuild")
+    assert rebuild_code == 0
+    assert index_db.stat().st_size == 0, "`rebuild` does not own the search index"
+    assert any("airoot search refresh" in item for item in rebuilt["not_rebuilt"]), rebuilt["not_rebuilt"]
+    plan_code, planned = run(capsys, "--json", "--root", str(cli_root), "rebuild", "--plan")
+    assert plan_code == 0
+    assert any("airoot search refresh" in item for item in planned["not_rebuilt"]), planned["not_rebuilt"]
+    status_code, status = search(capsys, cli_root, "status")
+    assert status_code == 2 and status["reason_code"] == "SEARCH_INDEX_DEGRADED"
+
+    # The verb the evidence names: repaired.
+    refresh_code, refreshed = search(capsys, cli_root, "refresh")
+    assert refresh_code == 0 and refreshed["reason_code"] == "SUCCESS"
+    status_code, status = search(capsys, cli_root, "status")
+    assert status_code == 0 and status["reason_code"] == "SUCCESS"
+
+
+def test_the_no_root_evidence_names_the_search_root_flag(capsys, cli_root: Path) -> None:
+    """§168 defect 4: the evidence used to teach `--root <dir>`, which is the AIROOT root.
+
+    Following it literally returned `ROOT_MARKER_MISSING`(6) — ADR-0017/0018 record that confusion
+    as the search protocol's own trap, and the CLI was printing it.
+    """
+
+    code, document = search(capsys, cli_root, "refresh")
+
+    assert code == 2
+    assert document["reason_code"] == "SEARCH_ROOT_UNAVAILABLE"
+    text = " ".join(document["evidence"])
+    assert "--search-root <dir>" in text, text
+    assert "pass --root" not in text, text
+
+
+def test_the_human_readable_answer_names_the_source_that_answered(
+    capsys, cli_root: Path, registered: Path
+) -> None:
+    """§168 defect 5: the line under the result contradicted the result.
+
+    Measured before the fix: after `search refresh`, `airoot search java` printed two matches
+    answered by the index and then "no index in this build: results come from a bounded crawl",
+    while the same command's `--json` said `fallback: null` / `search_source: index`.
+    """
+
+    search(capsys, cli_root, "refresh")
+    code, document = run(capsys, "--root", str(cli_root), "search", "java")
+    answered_from_index = document["raw"]
+
+    assert code == 0
+    assert "answered from the search index" in answered_from_index
+    assert "generation=" in answered_from_index
+    assert "no index" not in answered_from_index
+
+    # ...and the crawl case still says a crawl: making the index unusable must flip the line.
+    (cli_root / "cache" / "search" / "index.db").write_bytes(b"")
+    code, document = run(capsys, "--root", str(cli_root), "search", "java")
+    answered_by_crawl = document["raw"]
+
+    assert code == 2
+    assert "no index answered this request" in answered_by_crawl
+    assert "answered from the search index" not in answered_by_crawl
+
+
+def test_the_search_help_text_describes_both_answering_paths(capsys) -> None:
+    """§168 defect 5, the same claim in the help text: "this build ships no index" was false.
+
+    argparse wraps help at the terminal width, so the text is whitespace-folded before matching —
+    otherwise a phrase the old help text did contain could slip through because a newline landed in
+    the middle of it.
+    """
+
+    with pytest.raises(SystemExit) as subcommand:
+        main(["search", "--help"])
+    assert subcommand.value.code == 0
+    subcommand_help = " ".join(capsys.readouterr().out.split())
+    assert "no resident index in this build" not in subcommand_help
+    assert "crawl-built index" in subcommand_help
+
+    with pytest.raises(SystemExit) as top_level:
+        main(["--help"])
+    assert top_level.value.code == 0
+    top_level_help = " ".join(capsys.readouterr().out.split())
+    assert "ships no index" not in top_level_help
+    assert "crawl-built index" in top_level_help
 
 
 def test_refresh_without_a_root_to_walk_is_refused(capsys, cli_root: Path) -> None:

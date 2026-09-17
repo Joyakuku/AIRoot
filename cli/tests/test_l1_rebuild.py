@@ -88,6 +88,42 @@ def test_rebuild_repairs_a_stale_projection(registry, clock, root) -> None:
     assert json.loads(projection.read_text(encoding="utf-8"))["generation"] == registry.generation
 
 
+def test_a_damaged_projection_is_stale_even_when_the_stamp_agrees(registry, clock, root) -> None:
+    """§168 defect 6, the `rebuild --plan` half of the same verdict `doctor` gives under D7.
+
+    Measured before the fix: emptying the projection's body while leaving `generation` in place made
+    `rebuild --plan` report `stale_projection: false` and `derived_state_stale: false`; changing only
+    the stamp made it `true`. Both readers now share `projection_is_current`, so they cannot drift
+    apart again.
+    """
+
+    install(registry, clock, root)
+    projection = Path(root.path) / "state" / "registry.json"
+    original = projection.read_text(encoding="utf-8")
+
+    # Non-vacuity: the untouched projection must be current, or "stale" means nothing.
+    assert rebuild_plan(registry, root.path).stale_projection is False
+
+    damaged = json.loads(original)
+    damaged["instances"] = []
+    damaged["bindings"] = []
+    damaged["external_references"] = []
+    damaged["data_roots"] = []
+    projection.write_text(json.dumps(damaged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    findings = rebuild_plan(registry, root.path)
+    assert findings.stale_projection is True
+    assert findings.derived_stale is True
+
+    # Only the stamp moved (content still damaged): still drift.
+    damaged["generation"] = int(damaged["generation"]) + 99
+    projection.write_text(json.dumps(damaged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    assert rebuild_plan(registry, root.path).stale_projection is True
+
+    projection.write_text(original, encoding="utf-8")
+    assert rebuild_plan(registry, root.path).stale_projection is False
+
+
 def test_rebuild_repairs_a_stale_audit_projection(registry, clock, root) -> None:
     install(registry, clock, root)
     audit = Path(root.path) / "logs" / "audit" / "events.json"

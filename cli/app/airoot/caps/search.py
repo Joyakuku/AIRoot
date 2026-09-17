@@ -3,8 +3,10 @@
 `search-request.schema.json` / `search-response.schema.json` are the frozen contract; the search
 protocol document (layer 4) fixes the boundary behaviour. What this module deliberately does **not**
 contain is the fast path: a resident NTFS index built from volume metadata and the USN journal is
-P3 proper. This build walks directories, and it *says so* in every answer — `status=degraded`,
-`reason_code=SEARCH_FALLBACK_USED`, `data.fallback.kind="crawl"` and `freshness.coverage="none"`
+P3 proper. There are two answering paths, and each answer says which one it was: the crawl-built
+index of `caps/searchindex.py` when it covers the request, otherwise a bounded directory walk that
+confesses in `status=degraded`, `reason_code=SEARCH_FALLBACK_USED` (or `SEARCH_INDEX_DEGRADED` when
+the index is present but unreadable), `data.fallback.kind="crawl"` and `freshness.coverage="none"`
 (ADR-0017). A slow path dressed up as an index would be the one unforgivable outcome here.
 
 Two shapes in this file are easy to get wrong and are called out where they matter:
@@ -42,8 +44,9 @@ CONSISTENCIES = ("best_effort", "bounded_staleness", "refresh_then_read", "physi
 FRESHNESS_STATES = ("current", "stale", "degraded", "rebuilding", "unknown")
 COVERAGES = ("complete_for_roots", "partial", "none")
 
-#: This build has no index. It is still part of a cursor's binding, so that the day an index exists
-#: a cursor minted against "no index" can never be replayed against one.
+#: The generation a **crawl** answer is bound to (nothing was read from an index). It is still part
+#: of a cursor's binding, so a cursor minted against a crawl can never be replayed against an index
+#: answer, and vice versa.
 NO_INDEX_GENERATION = "no-index"
 
 MAX_ROOTS = 64
@@ -345,7 +348,9 @@ def resolve_roots(
         if not available:
             raise _root_unavailable(
                 "no root to search and no registered data root to fall back to",
-                "register a data root (airoot data-root add <dir>) or pass --root <dir>",
+                "register a data root (airoot data-root add <dir>) or pass --search-root <dir>",
+                "--search-root <dir> searches that directory; --root is the AIROOT root, not a "
+                "search root (ADR-0017/0018)",
             )
         return available, "policy"
 
@@ -817,10 +822,15 @@ def execute_search(
         index_state = searchindex.read_state(index_root, policy=rules)
 
     indexed: list[dict[str, Any]] | None = None
+    index_unusable = False
     if index_state is not None:
         from . import searchindex
 
         if index_state.present and not index_state.readable:
+            # Remember *why* the index did not answer: "present but unreadable" and "there is no
+            # index for these roots" are two different states, and the answer names the right one
+            # (draft §168, defect 3).
+            index_unusable = True
             warnings.append(
                 f"the search index is unusable ({index_state.problem}); answering from a live crawl"
             )
@@ -936,7 +946,12 @@ def execute_search(
         exit_code = EXIT_DEGRADED
     else:
         status = "degraded"
-        reason_code = "SEARCH_FALLBACK_USED"
+        # Which word is right depends on *why* the index did not answer (draft §168, defect 3): an
+        # index that is **present but unreadable** is a degraded index — the code `search status`,
+        # `search explain` and `doctor` already give that state — while "no index at all" or "the
+        # index does not cover these roots" is the fallback. Both are exit 2, so this is which word
+        # is accurate, not which tier.
+        reason_code = "SEARCH_INDEX_DEGRADED" if index_unusable else "SEARCH_FALLBACK_USED"
         exit_code = EXIT_DEGRADED
         if outcome.timed_out:
             status = "timed_out"

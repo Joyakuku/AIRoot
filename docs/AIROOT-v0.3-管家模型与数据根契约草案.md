@@ -14302,3 +14302,66 @@ C  `shown = searched[:EVIDENCE_HEAD_LIMIT]` → `= searched` → 证据有界的
 | 契约层 / 语料 | **不动**（`exec` 与 `extension` 的报告面都没有 schema 钉；`resolved_command` 是**新增**字段，没有断言键集的测试） |
 | 既有期望被取代 | **0 条** |
 | 没有做 | 另外 30+ 条发现按主题排进 §168–§171（诊断与搜索说错话 / 根与身份的守卫 / 口径与匹配 / 面与文档） |
+
+## 168. 第三轮全表面测试：让诊断与搜索说真话
+
+裁决见 **ADR-0067**。这一节修的是"**报告说没事、事实有事**"与"**同一件事两个词**"：一个越界的结果、
+一条指向不会修它的动词的修复指针、一个与同状态其它读者不一致的码、一句教错的 flag、一句与同屏结果
+自相矛盾的人可读输出，以及一个只看戳不看内容的"最新"判据。
+
+### 168.1 六条
+
+| # | 修法前（实测） | 修法后 |
+|---|---|---|
+| **①** | `search java --search-root <tree>\sub` → exit 0 / `status ok` / `reason_code null` / `returned 3`，**含请求范围之外的 `<tree>\java_outside.txt`**；把索引截断后同命令 → `returned 2`（crawl 路径**是**按 root 过滤的） | 同命令 `matched:2 returned:2`，两条都在 `<tree>\sub` 下。根因是 `covers()` 只判"请求 root 在被索引 root 之内"，而查询从不按 roots 过滤行；现在过滤规则抽成 `path_within_roots()`（沿用 `covers` 一直在用的拼写：小写、去尾分隔符、`\` 边界），`covers` 与 `query_index` **共用同一个函数**——没有发明第二套路径比较 |
+| **②** | `doctor` 对索引损坏给 `remediation:"rebuild"`，而照做 `rebuild` 返回 `SUCCESS` 却一个字节没改（真能修的是 `search refresh`） | **不改 `remediation` 的取值**（它是已发布枚举，且"重建派生状态"这个**词**是对的），而是在 `evidence` 里补 `rebuild it with: airoot search refresh`——与隔壁 `SEARCH_RESULT_STALE` 同形；并且 `rebuild` 自己的文档新增 `not_rebuilt`，**明说搜索索引不归它管**。非空性用例证明那句指针必要：照字面跑 `rebuild` 修不好、`refresh` 修得好 |
+| **③** | 索引**损坏**时查询报 `SEARCH_FALLBACK_USED`，而同状态的 `search status`/`explain`/`doctor` 与文档都报 `SEARCH_INDEX_DEGRADED` | present 但不可读 → `SEARCH_INDEX_DEGRADED`；**没有索引 / 不覆盖这些 root** → 仍 `SEARCH_FALLBACK_USED`。两个词都在，只是各归各位；四读者一致由一条守卫钉住，删掉索引后同 root 同查询仍回到 `FALLBACK_USED`（证明没有把两个词合并） |
+| **④** | 无根可搜时证据教 `or pass --root <dir>`，照做得到 `ROOT_MARKER_MISSING`(6)——**代码自己重新制造了 ADR-0017/0018 记过的那个坑** | 改成 `--search-root <dir>`，并补一行说清两者区别；码与退出码（`SEARCH_ROOT_UNAVAILABLE`(2)）**不动** |
+| **⑤** | 人可读输出**无条件**追加 "no index in this build…"，而同屏刚由索引作答（`--json` 里 `fallback:null`、`search_source:index`）；顶层 `--help` 与 `search --help` 也都写着"本 build 没有索引" | 按 `data.fallback` 条件输出：索引答 → `answered from the search index (generation=…)`；crawl 答 → `no index answered this request…`；两处帮助文本同步改（守卫按**空白折叠**匹配，防 argparse 换行把旧话藏过去） |
+| **⑥** | **D7 与 `rebuild --plan` 只比 generation**：把 `state/registry.json` 内容清空但保留 generation → `stale_projection:false`、`doctor` 不报 `REGISTRY_PROJECTION_STALE`；只把 generation 改成 99（内容仍是空的）→ `true` | `stale` 的定义改成"**盘上这份不是这个 build 现在会写出来的那份**"：判据抽成 `registry/projection.py::projection_is_current()`，**D7 与 `rebuild_plan` 共用同一个函数**；只有 `generated_at`（写入时刻的时钟读数）被排除，`generation` **参与**比较，所以"戳动了、内容没动"照样算 stale |
+
+### 168.2 我自己的验收
+
+```text
+A  `if not path_within_roots(str(path), scope):` → `if False and …`   → ① 的模块守卫 + CLI 守卫 变红
+B  `reason_code = "SEARCH_INDEX_DEGRADED" if index_unusable else …` → 恒 FALLBACK_USED → ③ 两条 变红
+C  `return _comparable_projection(document) == …(build_projection(registry))` → `return True` → ⑥ 两条 变红
+```
+
+三处都是字节级变异并按字节写回（跑完核对文件与改动前相同）。真机验收脚本我自己跑了：`closed loop:
+PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`，其中真机索引 **51187 条**、索引路径的
+`search java --ext .exe` exit 0。
+
+### 168.3 一处**测得但没有改**的残余（记在这里，不假装关了它）
+
+`stale_audit`（`logs\audit\events.json`）**不是同一个洞**：它的判据是对权威 events 行取的内容摘要
+（`audit_projection()["digest"]`），实测改 `event_count`/`last_seq` 而保留 digest → `stale_audit:false`、
+doctor 不报 `AUDIT_PROJECTION_DRIFT`；换掉 digest → 两者都报。也就是说：**只有那几个非 digest 的包装字段
+可以被改而不被发现**。收紧它要用 ⑥ 同一条"整份文档减 `generated_at`"的规则——那是本阶段要求之外的一步，
+**留作残余**并写在这里。
+
+### 168.4 没有改的东西与理由
+
+- **`remediation` 的取值域**：它是 `doctor-response` schema 的枚举，且 `rebuild` 这个词本身是对的（"重建
+  派生状态"）；错的是"这一条诊断该由哪个动词执行"，所以修的是**证据**而不是词表。
+- **`covers()` 的包含性语义**：它回答的是"这份索引能不能为这个范围作答"，与"行要不要按请求收窄"是两件事；
+  这次加的是后者。
+- **`SEARCH_ROOT_UNAVAILABLE`(2) 的档位**：它是"这台机器现在没有可搜的根"，调用方下一步明确（注册数据根
+  或 `--search-root`），与 `--search-root` 那条一起构成"环境没准备好"这一档；改档要动已发布码表与语料，
+  收益不抵成本。
+- **一处既有断言被取代**（这就是 ③ 本身）：`test_a_corrupt_index_falls_back_to_a_crawl_and_says_so` 里
+  `reason_code == "SEARCH_FALLBACK_USED"` → `== "SEARCH_INDEX_DEGRADED"`；同用例早已断言 `status` 侧是
+  DEGRADED，现在是两侧一致。**没有为变绿放宽任何断言**，`test_l1_searchindex.py` 里那条断言"嵌套 root
+  被 `covers` 覆盖"的用例**必须照旧**（它测的是另一个问题）。
+- 顺带只改注释（零行为）：`caps/search.py` 的模块 docstring 与 `NO_INDEX_GENERATION` 原本写着"这个 build
+  没有索引 / 每个答案都是 crawl"，与索引路径矛盾。
+
+### 168.5 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1457 → 1467**（+10） |
+| 代码 | `caps/searchindex.py`、`caps/search.py`、`caps/doctor.py`、`caps/rebuild.py`、`registry/projection.py`、`cli.py`（10 个文件含测试，+528/−29） |
+| 契约层 / 语料 | **不动**（`remediation` 枚举与码表未改；golden 逐字节不变——doctor 的 generation 分支保持原证据两行，搜索语料是 crawl 答案） |
+| 文档面欠账（我在这一阶段一并处理） | `agents/airoot.json` 里描述 crawl 答案形状的那条 notes 在 ③ 之后不再穷尽（损坏索引的 crawl 答案是 DEGRADED）；`real_machine_acceptance.py` 第 565-566 行的注释说"索引不覆盖新数据根时报 `SEARCH_INDEX_DEGRADED`"，而那条路实际走 `SEARCH_FALLBACK_USED`——**这不是本次引入的**，一并改对 |
+| 没有做 | `stale_audit` 的包装字段（§168.3）；把 `projection_is_current` 多吃的那一次 clock tick 优化掉（实测没影响任何 golden 与时钟断言） |

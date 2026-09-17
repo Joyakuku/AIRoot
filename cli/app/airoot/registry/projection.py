@@ -137,6 +137,44 @@ def projection_generation(root: Path) -> int | None:
     return int(generation) if isinstance(generation, int) else None
 
 
+#: Fields of the projection that are **not** part of "what this build would write right now":
+#: `generated_at` is the clock reading at write time, so two otherwise identical projections written
+#: a second apart differ there and nowhere else. Comparing it would report every healthy projection
+#: as drift — the non-vacuity half of the §168 guard (an untouched projection must come back
+#: current). Everything else, `generation` included, is compared.
+_VOLATILE_PROJECTION_FIELDS = frozenset({"generated_at"})
+
+
+def _comparable_projection(document: dict[str, Any]) -> str:
+    return json.dumps(
+        {key: value for key, value in document.items() if key not in _VOLATILE_PROJECTION_FIELDS},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def projection_is_current(registry: "Registry", root: Path) -> bool:
+    """True when the projection on disk is the document this build would write **right now**.
+
+    The generation stamp alone (what D7 and `rebuild --plan` compared before §168) answers "did the
+    registry move since the projection was written", not "is this projection what it should be": a
+    projection whose body was emptied while its stamp was left intact compared equal, so both
+    readers called a damaged projection current. This compares the content as well; the stamp stays
+    as the cheap first check, and because it is part of the compared document a bumped stamp with
+    unchanged content is still drift.
+    """
+
+    document = read_projection(root)
+    if not isinstance(document, dict):
+        # Missing, unreadable, or JSON that is not even an object: none of those is the document
+        # this build would write.
+        return False
+    generation = document.get("generation")
+    if not isinstance(generation, int) or generation != registry.generation:
+        return False
+    return _comparable_projection(document) == _comparable_projection(build_projection(registry))
+
+
 def require_projection(root: Path) -> dict[str, Any]:
     document = read_projection(root)
     if document is None:
@@ -153,6 +191,7 @@ __all__ = [
     "binding_to_schema",
     "build_projection",
     "projection_generation",
+    "projection_is_current",
     "projection_path",
     "read_projection",
     "require_projection",

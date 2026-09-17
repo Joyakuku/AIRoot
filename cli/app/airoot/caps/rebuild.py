@@ -33,14 +33,26 @@ from ..exits import AirootError
 from ..registry.projection import (
     audit_projection,
     audit_projection_path,
+    projection_is_current,
     projection_path,
-    read_projection,
 )
 from .layout import misdeclared_payloads, mislocated_payloads, store_orphans
 
 REBUILD_DIR = "state/rebuild"
 REGISTRY_BACKUP = "registry.json"
 AUDIT_BACKUP = "audit-events.json"
+
+#: The derived file `rebuild` does **not** own. `doctor`'s D7 gives the search index the same
+#: `remediation: rebuild` as the projections, so an operator who follows that word literally runs
+#: this verb — which rewrites two other files and leaves `cache/search/index.db` exactly as broken
+#: as it found it (measured §168). The pointer belongs in this output, or the one word the diagnosis
+#: offers sends its reader to a command that cannot help.
+SEARCH_INDEX_PATH = "cache/search/index.db"
+SEARCH_INDEX_REFRESH_COMMAND = "airoot search refresh"
+NOT_REBUILT = (
+    f"{SEARCH_INDEX_PATH} is not derived state this verb owns; "
+    f"rebuild it with: {SEARCH_INDEX_REFRESH_COMMAND}",
+)
 
 
 @dataclass
@@ -105,8 +117,10 @@ def rebuild_plan(registry: Any, root: Path) -> RebuildFindings:
         str(row["transaction_id"]) for row in registry.transactions(unfinished_only=True)
     ]
 
-    projection = read_projection(root)
-    if projection is None or int(projection.get("generation", -1)) != registry.generation:
+    # Content, not just the generation stamp (draft §168, defect 6): the stamp says the registry did
+    # not move, not that the file is what this build would write. Both readers of this verdict use
+    # `projection_is_current` so `doctor`'s D7 and `rebuild --plan` can never disagree about it.
+    if not projection_is_current(registry, root):
         findings.stale_projection = True
 
     expected_audit = audit_projection(registry)["digest"]
@@ -176,6 +190,7 @@ def apply_rebuild(
         "operation": "rebuild",
         "generation": registry.generation,
         "rebuilt": ["state/registry.json", "logs/audit/events.json"],
+        "not_rebuilt": list(NOT_REBUILT),
         "archived_to": str(archived) if archived else None,
         "findings": findings.to_document(),
         "database_touched": False,

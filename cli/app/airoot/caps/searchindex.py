@@ -66,6 +66,31 @@ _DDL = (
 )
 
 
+def _root_key(value: str) -> str:
+    """The spelling roots and paths are compared in: lowercase, no trailing separator."""
+
+    return str(value).lower().rstrip("\\")
+
+
+def path_within_roots(path: str, roots: Iterable[str]) -> bool:
+    """True when `path` **is** one of `roots` or sits below one of them.
+
+    Both answering paths narrow an answer through this function, so "which files are in scope" has
+    one definition. It is the spelling rule `covers` always used — lowercase, trailing separators
+    stripped, a `\\` boundary so `...\\sub` never matches `...\\subway` — not a new path comparison
+    (draft §111 measured the spellings that matter).
+
+    Why it exists: `covers()` answers "is the request inside what the index walked", which is *true*
+    for a request that is a **subdirectory** of an indexed root. Treating that as "the index can
+    answer this request" made the index path return rows from outside the request — the live crawl
+    filters by the requested roots, so the same query returned different files depending on whether
+    an index happened to exist (draft §168, defect 1).
+    """
+
+    needle = _root_key(path)
+    return any(needle == root or needle.startswith(root + "\\") for root in map(_root_key, roots))
+
+
 @dataclass(frozen=True)
 class IndexState:
     """What is on disk right now — including the answer "something is wrong with it"."""
@@ -90,16 +115,16 @@ class IndexState:
         return f"{INDEX_GENERATION_PREFIX}:{self.built_at}:{self.records}"
 
     def covers(self, roots: Iterable[str]) -> bool:
-        """True when every requested root is inside a root this index walked."""
+        """True when every requested root is inside a root this index walked.
+
+        **Inclusion only** — this says the index *may* be able to answer, never that it did. It is
+        deliberately not the scope filter: an index that walked a parent of the request covers it,
+        and the rows still have to be narrowed to the request itself (see `path_within_roots`).
+        """
 
         if not self.readable or not self.roots:
             return False
-        indexed = [str(root).lower().rstrip("\\") for root in self.roots]
-        for root in roots:
-            needle = str(root).lower().rstrip("\\")
-            if not any(needle == item or needle.startswith(item + "\\") for item in indexed):
-                return False
-        return True
+        return all(path_within_roots(root, self.roots) for root in roots)
 
     def to_document(self) -> dict[str, Any]:
         return {
@@ -315,11 +340,16 @@ def query_index(
     `None` is not an error: it means "ask the live crawl instead", and the caller says so in
     `data.fallback`. The two reasons are a corrupt index and a root set the index never walked —
     pretending either one was covered would be the failure this whole module is written to avoid.
+
+    Rows outside the **requested** roots are dropped (`path_within_roots`): being inside the walk is
+    what `covers` establishes, and only that filter makes the index answer the same scope as a crawl
+    of the same roots (draft §168, defect 1).
     """
 
     rules = policy or load_search_policy()
     current = state or read_state(root, policy=rules)
-    if not current.readable or not current.covers(roots):
+    scope = [str(item) for item in roots]
+    if not current.readable or not current.covers(scope):
         return None
 
     target = index_path(root, rules)
@@ -333,6 +363,8 @@ def query_index(
 
     matched: list[dict[str, Any]] = []
     for path, name, kind, size, modified_at, attributes in rows:
+        if not path_within_roots(str(path), scope):
+            continue
         try:
             parsed_attributes = list(json.loads(attributes))
         except ValueError:
@@ -404,6 +436,7 @@ __all__ = [
     "build_index",
     "freshness_for",
     "index_path",
+    "path_within_roots",
     "query_index",
     "read_state",
 ]

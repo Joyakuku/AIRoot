@@ -113,6 +113,82 @@ def test_a_request_outside_the_indexed_roots_is_not_answered_by_the_index(
     assert si.query_index(airoot, request=request, roots=[str(other)], policy=policy, state=state) is None
 
 
+def _scope_tree(base: Path, name: str) -> Path:
+    """A tree for the two scope guards below, private to them.
+
+    The shared `tree` fixture is one fixed path that no test cleans, so a file one test adds stays
+    for every test after it — and the two guards here need to know exactly what is inside. This
+    builder is idempotent and lives in its own directory for the same reason the CLI module's data
+    root does (draft §109/§168).
+    """
+
+    root = base / name
+    for relative in ("apps", "apps/deep", "vendored", "uv-cache"):
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    for relative in ("apps/python.exe", "apps/deep/python.exe", "vendored/python.exe", "uv-cache/python.exe"):
+        (root / relative).write_bytes(b"MZ")
+    return root
+
+
+def test_a_subdirectory_request_is_narrowed_to_that_subdirectory(airoot: Path, tests_tmp: Path) -> None:
+    """§168 defect 1: "the index walked a parent of this root" is not "answer for this root".
+
+    Measured before the fix: a query whose `--search-root` was `<tree>\\apps` also returned
+    `<tree>\\vendored\\python.exe` — a file outside the request — while the same query with the index
+    made unusable returned only the two files under `apps`. One request, two scopes, depending on
+    whether an index happened to exist.
+    """
+
+    tree = _scope_tree(tests_tmp, "index-scope-tree")
+    policy = load_search_policy()
+    si.build_index(airoot, roots=[str(tree)], policy=policy)
+    state = si.read_state(airoot, policy=policy)
+    nested = tree / "apps"
+    request = build_request("python", policy=policy, roots=[str(nested)], extensions=[".exe"])
+
+    assert state.covers([str(nested)]), "the index walked the parent, so it covers this root"
+    rows = si.query_index(airoot, request=request, roots=[str(nested)], policy=policy, state=state)
+    from_crawl = crawl(request, [str(nested)], policy=policy)
+
+    assert rows is not None
+    assert all(si.path_within_roots(item["path"], [str(nested)]) for item in rows), rows
+    assert [item["path"] for item in rows] == [item["path"] for item in from_crawl.records]
+    assert not any(si.path_within_roots(item["path"], [str(tree / "vendored")]) for item in rows), (
+        "a file outside the requested root came back"
+    )
+    assert len(rows) == 2
+
+
+def test_a_request_for_the_indexed_root_itself_narrows_nothing_away(
+    airoot: Path, tests_tmp: Path
+) -> None:
+    """The non-vacuity half of the guard above: equal roots must not lose a single record.
+
+    The tree holds three matching files (`apps`, `apps/deep`, `vendored`) and one cache-like
+    directory, which the walk excludes structurally (`uv-cache` is derived data). The whole-tree
+    answer must be exactly those three: nothing dropped by the new scope filter, and nothing added
+    by the old accidental widening.
+    """
+
+    tree = _scope_tree(tests_tmp, "index-equal-roots-tree")
+    policy = load_search_policy()
+    si.build_index(airoot, roots=[str(tree)], policy=policy)
+    state = si.read_state(airoot, policy=policy)
+    request = build_request("python", policy=policy, roots=[str(tree)], extensions=[".exe"])
+
+    rows = si.query_index(airoot, request=request, roots=[str(tree)], policy=policy, state=state)
+    from_crawl = crawl(request, [str(tree)], policy=policy)
+
+    assert rows is not None
+    assert [item["path"] for item in rows] == [item["path"] for item in from_crawl.records]
+    assert sorted(Path(item["path"]).relative_to(tree).as_posix() for item in rows) == [
+        "apps/deep/python.exe",
+        "apps/python.exe",
+        "vendored/python.exe",
+    ]
+    assert not any("uv-cache" in item["path"] for item in rows)
+
+
 def test_a_corrupt_index_is_a_diagnosis_not_a_crash(airoot: Path, tree: Path) -> None:
     policy = load_search_policy()
     si.build_index(airoot, roots=[str(tree)], policy=policy)

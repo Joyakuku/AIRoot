@@ -26,7 +26,7 @@ from ..paths import from_root_relative
 from ..posture import SECURITY_MODE, enforcement_for
 from ..registry import Registry
 from ..registry.entities import load_json
-from ..registry.projection import projection_generation
+from ..registry.projection import projection_generation, projection_is_current
 from ..root import marker_path, read_marker
 from ..schema_io import errors_for, load_schema
 from ..paths import volume_serial
@@ -34,6 +34,12 @@ from .acl import AclSnapshot, acl_digest, capture_acl, differences
 from .layout import misdeclared_payloads, mislocated_payloads, store_orphans
 
 AUDIT_RELATIVE = f"{LOGS_DIR}/audit/events.json"
+
+#: The one verb that rebuilds ``cache/search/index.db``. D7 gives the search index the same
+#: `remediation="rebuild"` as the JSON projections, so both search diagnostics name the command that
+#: actually rebuilds *this* derived file: `airoot rebuild` rewrites `state/registry.json` and
+#: `logs/audit/events.json` and leaves the index exactly as broken as it found it (measured §168).
+SEARCH_INDEX_REFRESH_COMMAND = "airoot search refresh"
 
 # The D1-D10 invariant catalogue referenced by the verification plan §8 but never
 # defined by it. Every diagnostic code the core can emit must appear here.
@@ -646,7 +652,13 @@ def _check_transactions(registry: Registry, diagnostics: list[dict[str, Any]]) -
 
 
 def _check_projection(registry: Registry, root: Path, diagnostics: list[dict[str, Any]]) -> None:
-    """D7: the JSON projection is derived; drift is reported, not silently repaired."""
+    """D7: the JSON projection is derived; drift is reported, not silently repaired.
+
+    Drift is judged on **content**, not on the generation stamp alone (draft §168, defect 6): a
+    projection whose body was emptied but whose stamp was left intact compared equal before, so this
+    check and `rebuild --plan` both called it current. The stamp is still the cheap first check; the
+    content comparison is what makes the verdict true (see `projection_is_current`).
+    """
 
     generation = projection_generation(root)
     if generation is None:
@@ -659,13 +671,25 @@ def _check_projection(registry: Registry, root: Path, diagnostics: list[dict[str
                 "rebuild",
             )
         )
-    elif generation != registry.generation:
+    elif not projection_is_current(registry, root):
+        stamp_agrees = generation == registry.generation
+        evidence = [
+            f"projection generation={generation}",
+            f"registry generation={registry.generation}",
+        ]
+        if stamp_agrees:
+            # Only possible once content is compared: with the stamp alone this state was invisible.
+            evidence.append(
+                "the projection's content is not what this build would write for this registry"
+            )
         diagnostics.append(
             _diagnostic(
                 "warning",
                 "REGISTRY_PROJECTION_STALE",
-                [f"projection generation={generation}", f"registry generation={registry.generation}"],
-                "the projection does not describe the current generation",
+                evidence,
+                "the projection does not describe the current generation"
+                if not stamp_agrees
+                else "the projection's content no longer describes the registry",
                 "rebuild",
             )
         )
@@ -699,6 +723,12 @@ def _check_search_index(root: Path, diagnostics: list[dict[str, Any]], *, clock:
                     f"the search index is unusable: {state.problem}",
                     f"path={searchindex.index_path(root, policy)}",
                     "a live crawl still answers queries, so results are not lost",
+                    # `remediation` is the published enum word for "rebuild the derived state", and
+                    # the verb that actually rebuilds **this** derived file is not `airoot rebuild`
+                    # — that one rewrites the two projections and leaves the index exactly as it was
+                    # (measured §168). Naming the real verb here is what makes `rebuild` actionable,
+                    # and it is the same shape the neighbouring `SEARCH_RESULT_STALE` already uses.
+                    f"rebuild it with: {SEARCH_INDEX_REFRESH_COMMAND}",
                 ],
                 "indexed searches are answered by a live crawl until it is rebuilt",
                 "rebuild",
@@ -721,7 +751,7 @@ def _check_search_index(root: Path, diagnostics: list[dict[str, Any]], *, clock:
                     f"lag_ms={fresh['lag_ms']} exceeds index.max_age_ms="
                     f"{policy.index_setting('max_age_ms', 86_400_000)}",
                     f"records={state.records} coverage={state.coverage}",
-                    "rebuild it with: airoot search refresh",
+                    f"rebuild it with: {SEARCH_INDEX_REFRESH_COMMAND}",
                 ],
                 "indexed search answers describe an older listing than the policy allows",
                 "rebuild",

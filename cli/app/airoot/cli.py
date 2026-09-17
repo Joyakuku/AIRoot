@@ -2025,7 +2025,7 @@ def cmd_source_resolve(args: argparse.Namespace, context: Context) -> tuple[dict
 def cmd_rebuild(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """Regenerate derived state from authoritative rows (draft §24)."""
 
-    from .caps.rebuild import apply_rebuild, rebuild_plan
+    from .caps.rebuild import NOT_REBUILT, apply_rebuild, rebuild_plan
 
     registry = context.registry()
     try:
@@ -2037,6 +2037,10 @@ def cmd_rebuild(args: argparse.Namespace, context: Context) -> tuple[dict[str, A
                 "generation": registry.generation,
                 "findings": findings.to_document(),
                 "would_rewrite": ["state/registry.json", "logs/audit/events.json"],
+                # The search index carries `remediation: rebuild` in `doctor` too, and this verb is
+                # not the one that rebuilds it (draft §168, defect 2). Saying so here is the
+                # difference between a remediation and a wrong turn.
+                "not_rebuilt": list(NOT_REBUILT),
                 "reason_code": "SUCCESS",
             }
             _emit(
@@ -2046,6 +2050,7 @@ def cmd_rebuild(args: argparse.Namespace, context: Context) -> tuple[dict[str, A
                     f"rebuild plan: derived state {'stale' if findings.derived_stale else 'already current'}",
                     f"  orphans={len(findings.orphans)} unmanaged={len(findings.unmanaged)} "
                     f"unfinished_transactions={len(findings.pending_transactions)}",
+                    f"  not rebuilt: {NOT_REBUILT[0]}",
                     "  nothing was written",
                 ],
             )
@@ -2064,6 +2069,7 @@ def cmd_rebuild(args: argparse.Namespace, context: Context) -> tuple[dict[str, A
             f"  reported only: {len(findings['orphans'])} orphan(s), {len(findings['unmanaged'])} unmanaged, "
             f"{len(findings['pending_transactions'])} unfinished transaction(s)",
             "  the registry database was not touched; nothing was adopted or deleted",
+            f"  not rebuilt: {NOT_REBUILT[0]}",
         ],
     )
     return document, EXIT_SUCCESS
@@ -3142,10 +3148,48 @@ def cmd_search(args: argparse.Namespace, context: Context) -> tuple[dict[str, An
             f"  [{document['status']}] {document['reason_code']}",
             *[f"  {item['management']:<19} {item['path']}" for item in document["data"]["results"]],
             *[f"  note: {warning}" for warning in document["warnings"]],
-            "  no index in this build: results come from a bounded crawl, not from a healthy index",
+            _search_source_line(document),
         ],
     )
     return document, code
+
+
+def _search_source_line(document: dict[str, Any]) -> str:
+    """One line that says how *this* answer was produced (draft §168, defect 5).
+
+    The line used to be a constant — "no index in this build: results come from a bounded crawl" —
+    printed underneath a result the index had just answered, so the human-readable answer
+    contradicted the `--json` one it was rendering. The document already carries the fact
+    (`data.fallback` plus the `search_source`/`search_index` evidence); this reads it rather than
+    asserting how the build is shaped.
+    """
+
+    evidence = {
+        item.get("kind"): str(item.get("detail"))
+        for item in document.get("evidence", [])
+        if isinstance(item, dict)
+    }
+    data = document.get("data") or {}
+    if data.get("fallback") is None:
+        index_detail = evidence.get("search_index", "")
+        suffix = f": {index_detail}" if index_detail else ""
+        return f"  answered from the search index (generation={_search_generation(document)}){suffix}"
+    return (
+        "  no index answered this request: results come from a bounded crawl, "
+        "not from a healthy index"
+    )
+
+
+def _search_generation(document: dict[str, Any]) -> str:
+    """The index generation this answer was bound to, read off its own `search_source` evidence."""
+
+    for item in document.get("evidence", []):
+        if not isinstance(item, dict) or item.get("kind") != "search_source":
+            continue
+        detail = str(item.get("detail") or "")
+        if "generation=" in detail:
+            return detail.split("generation=", 1)[1].strip().rstrip(")")
+    return "unknown"
 
 
 def _search_reserved(
@@ -3828,13 +3872,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     search_parser = subparsers.add_parser(
         "search",
-        help="find files by name (bounded crawl; this build ships no index)",
+        help="find files by name (from the crawl-built index, or a bounded crawl)",
         description=(
             "Find files by name. `status`/`explain`/`implementations` are reserved words and are "
             "recognised only as the first argument: `airoot search status` manages the index while "
             "`airoot search --query status` searches for a file named 'status'. --search-root is "
-            "the *search* root; --root is the AIROOT root. There is no resident index in this "
-            "build, so every answer is a bounded crawl reported as degraded (draft §31)."
+            "the *search* root; --root is the AIROOT root. An answer comes from the crawl-built "
+            "index when one covers the requested roots (`airoot search refresh`), otherwise from a "
+            "bounded crawl; the answer itself says which, and there is no USN/resident index in "
+            "this build (draft §31/§32)."
         ),
         parents=[common],
     )

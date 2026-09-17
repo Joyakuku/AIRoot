@@ -562,8 +562,9 @@ def main_run() -> int:
 # measurements (draft §141/§142) rather than on a check. It is registered *here*, after every
 # section that builds a search index, and that placement is measured rather than tidy: with this
 # tree in the registered set, `search refresh` built **248 058** records with `coverage: partial`
-# (`D:\env_apps` is 900 959 files) and the search section above then correctly reported
-# `SEARCH_INDEX_DEGRADED` instead of a healthy index. The capability ledger and the search index
+# (`D:\env_apps` is 900 959 files) and the search section above then answered from the crawl with
+# `SEARCH_FALLBACK_USED` (measured: an index that does not cover the requested roots is a fallback,
+# not a degraded index — `search status` is what calls it stale). The capability ledger and the search index
 # want different sets of roots, so they get them.
     code, doc = run("data-root", "add", str(DATA_ROOT_APPS), "--role", "tool", "--id", "dr-env-apps")
     show("data-root add " + str(DATA_ROOT_APPS), code, doc, ("files_touched",))
