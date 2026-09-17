@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import pathlib
 from pathlib import Path
 from typing import Any
@@ -4398,6 +4399,36 @@ def test_the_entry_document_fits_the_reader_budget() -> None:
     assert _entry_doc_marker_problems(text.rstrip().rsplit(ENTRY_DOC_END_MARKER, 1)[0]) != []
     assert _entry_doc_marker_problems(text + "\n" + ENTRY_DOC_END_MARKER) != []
     assert _entry_doc_marker_problems(text.replace(ENTRY_DOC_MARKER_ANNOUNCEMENT, "本文最后一行是别的")) != []
+
+
+def test_the_test_tree_removal_reports_a_locked_file(tests_tmp: Path) -> None:
+    """§139: the shared cleanup is an instrument too, so it gets the same treatment.
+
+    The failure it replaces was invisible: a connection still open at teardown left
+    `state/registry.db` undeletable, `shutil.rmtree(..., ignore_errors=True)` said nothing, and
+    the remains of a root sat in `cli/tests/.tmp` after **every** full run. Both directions are
+    checked here — a genuinely locked file is reported (no retry can fix it), and an unlocked
+    tree is removed without a word. The lock is a real one: `open()` on Windows does not share
+    delete, which is exactly the situation the swallowing teardown used to hide.
+    """
+
+    if sys.platform != "win32":
+        pytest.skip("only Windows refuses to delete a file that another handle has open")
+
+    from conftest import remove_test_tree
+
+    victim = Path(tempfile.mkdtemp(prefix="airoot-hygiene-", dir=tests_tmp))
+    locked = victim / "registry.db"
+    locked.write_bytes(b"held open on purpose")
+
+    with locked.open("rb"):
+        with pytest.raises(AssertionError) as failure:
+            remove_test_tree(victim, attempts=2, pause=0.0)
+    assert "could not be removed" in str(failure.value)
+
+    # And the other direction: once nothing holds it, the same call removes it silently.
+    remove_test_tree(victim, attempts=2, pause=0.0)
+    assert not victim.exists()
 
 
 def _stage_record_delegation(text: str) -> list[str]:

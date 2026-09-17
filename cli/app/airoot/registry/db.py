@@ -176,10 +176,18 @@ class Registry:
     @staticmethod
     def _connect(path: Path) -> sqlite3.Connection:
         connection = sqlite3.connect(str(path), isolation_level=None, timeout=10.0)
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA synchronous = FULL")
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA synchronous = FULL")
+        except BaseException:
+            # §139: a connection this function opened does not outlive a failed connect.
+            # This is where `file is not a database` lands, so the leaked handle used to be
+            # exactly the corrupted-database path — and the lock it left behind is what made a
+            # test root undeletable, silently, until the cycle collector got to it.
+            connection.close()
+            raise
         return connection
 
     @classmethod
@@ -241,17 +249,28 @@ class Registry:
             if not machine_id or not root_instance_id:
                 raise AirootError("INVALID_INPUT", "creating a registry requires machine_id and root_instance_id")
             return cls.initialize(root, machine_id=machine_id, root_instance_id=root_instance_id, clock=clock)
+        connection: sqlite3.Connection | None = None
         try:
             connection = cls._connect(path)
             registry = cls(connection, path, clock)
             registry._require_tables()
             registry._apply_migrations()
         except sqlite3.DatabaseError as exc:
+            if connection is not None:
+                connection.close()
             raise AirootError(
                 "REGISTRY_INTEGRITY_FAILED",
                 "registry database is unreadable",
                 evidence=[str(exc)],
             ) from exc
+        except BaseException:
+            # §139: every refusal closes what this call opened — an unreadable database, a
+            # missing table, a migration that would not apply. A leaked handle here is not
+            # cosmetic: it keeps `state/registry.db` locked, so the caller cannot even delete
+            # the root it just failed to open.
+            if connection is not None:
+                connection.close()
+            raise
         return registry
 
     def _apply_migrations(self) -> None:

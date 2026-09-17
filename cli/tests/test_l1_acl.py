@@ -53,13 +53,14 @@ from __future__ import annotations
 
 import ctypes
 import os
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from airoot.caps import acl
+from conftest import remove_test_tree
+
 from airoot.caps.acl import (
     AclEntry,
     AclSnapshot,
@@ -191,10 +192,14 @@ def _delete_directory(path: Path) -> None:
     ``BUILTIN\\Users``, which is a group this process is in, so the delete was refused — silently — and
     the directory survived. A cleanup that cannot say it happened turns one failure into a confusing
     series, so this asserts instead of hoping.
+
+    §139 turned that lesson into the shared instrument: this is now the same
+    ``conftest.remove_test_tree`` the session fixtures use, so there is **one** definition of
+    "delete a test tree" instead of one per module. It retries a transient lock and then names
+    what survived — a refused DACL still ends as a failure, just with the paths attached.
     """
 
-    shutil.rmtree(path, ignore_errors=True)
-    assert not path.exists(), f"a directory this test created could not be deleted: {path}"
+    remove_test_tree(path)
 
 
 @pytest.fixture

@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -34,6 +35,49 @@ from airoot.clock import FakeClock  # noqa: E402
 #: Point a parallel run at a subdirectory (``cli/tests/.tmp/<name>``) and it stays inside the ignored
 #: path, so nothing it leaves behind can be committed by accident.
 TESTS_TMP = Path(os.environ.get("AIROOT_TEST_TMP") or (TESTS_DIR / ".tmp"))
+
+#: How a test tree is removed. `shutil.rmtree(..., ignore_errors=True)` was the whole policy until
+#: §139, and it hid a real defect: a SQLite connection still open at teardown keeps
+#: `state/registry.db` undeletable on Windows, so the session silently left the remains of a root
+#: behind — the walk deletes everything else, then stops at the locked file, which is why every
+#: leftover contained exactly `state/registry.db` and nothing else. Cleanup that cannot clean must
+#: say so; a locked file is a defect in the test (or in its harness), not an environment quirk.
+_TREE_REMOVE_ATTEMPTS = 10
+_TREE_REMOVE_PAUSE_SECONDS = 0.15
+
+
+def remove_test_tree(
+    path: Path,
+    *,
+    attempts: int = _TREE_REMOVE_ATTEMPTS,
+    pause: float = _TREE_REMOVE_PAUSE_SECONDS,
+) -> None:
+    """Delete a test tree, retrying transient locks, then **report** what is still there.
+
+    The retry is not forgiveness: it distinguishes "another process is holding this for a moment"
+    from "something in this process never let go", and only the second one is a failure. The
+    assertion names what survived, because the alternative — the silence this replaced — cost a
+    whole stage to notice (draft §139).
+    """
+
+    last: OSError | None = None
+    for _ in range(max(attempts, 1)):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as error:  # a locked file, a refused ACL, a path that is not a tree
+            last = error
+            time.sleep(pause)
+    remaining = sorted(str(item) for item in path.rglob("*")) if path.exists() else []
+    raise AssertionError(
+        f"the test tree {path} could not be removed after {attempts} attempt(s): {last!r}; "
+        f"still present: {remaining[:5]}. A locked file means something in this process still holds "
+        "a handle, and a refused delete means a DACL is in the way — fix that instead of swallowing "
+        "the failure (draft §139)."
+    )
+
 
 _MACHINE_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 
@@ -128,7 +172,7 @@ def _environment_guard() -> Iterator[None]:
 def tests_tmp() -> Iterator[Path]:
     TESTS_TMP.mkdir(parents=True, exist_ok=True)
     yield TESTS_TMP
-    shutil.rmtree(TESTS_TMP, ignore_errors=True)
+    remove_test_tree(TESTS_TMP)
 
 
 @pytest.fixture
@@ -145,7 +189,7 @@ def clock() -> FakeClock:
 def root_dir(tests_tmp: Path) -> Iterator[Path]:
     path = Path(tempfile.mkdtemp(prefix="airoot-test-", dir=tests_tmp))
     yield path
-    shutil.rmtree(path, ignore_errors=True)
+    remove_test_tree(path)
 
 
 @pytest.fixture
@@ -168,5 +212,14 @@ def registry(root: Any, machine: MachineFixture, clock: FakeClock) -> Iterator[A
         clock=clock,
     )
     handle.update_projection()
-    yield handle
+    try:
+        yield handle
+    finally:
+        # §139: the fixture closes what the fixture opened. Left to the garbage collector this
+        # usually worked — refcounting gets there first — which is exactly why the failures
+        # were rare, silent and confusing: whichever test still held a reference at teardown
+        # kept `state/registry.db` locked, and the swallowing teardown left the remains of
+        # that root behind (the rest of the tree deletes fine, which is why the leftovers
+        # contained nothing but `state/`).
+        handle.close()
     handle.close()

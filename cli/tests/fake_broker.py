@@ -730,6 +730,22 @@ def serve(
         return _refusal_document(request, error)
 
     try:
+        return _dispatch(context, request, operation, handler)
+    finally:
+        # §139: the harness closes what it opened. This used to be left to the garbage
+        # collector, and the leak surfaced far away: a connection still alive when a test
+        # ends keeps `state/registry.db` undeletable, so `shutil.rmtree` stopped right
+        # there and the remains of the root survived — silently, because the teardown
+        # swallowed the failure. Opened here, closed here.
+        context.registry.close()
+
+
+def _dispatch(
+    context: _OperationContext, request: dict, operation: str, handler: Any
+) -> dict:
+    """Run one operation and assemble its answer. The caller owns the registry's lifetime."""
+
+    try:
         outcome = handler(context, request)
     except AirootError as error:
         # The refusal paths live here: a plan whose content moved after approval, a replayed nonce, a
