@@ -1,0 +1,9 @@
+{
+  "evidence": [
+    "usage: airoot where --help"
+  ],
+  "message": "argument --version: expected one argument",
+  "reason_code": "INVALID_INPUT",
+  "schema_version": 1,
+  "status": "failed"
+}

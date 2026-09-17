@@ -13582,3 +13582,64 @@ Copy-Item 'D:\AIRoot\references' "$dst\references" -Recurse -Force
 | 仓库外 | `%USERPROFILE%\.dsh\skills\airoot\`（即 `$DSH_HOME\skills\airoot`；副本，逐字节同源）+ 用户级 `AIROOT_HOME` 与 `PATH` 追加一项 + `D:\env_test\`（**测试用，以后删**） |
 | 人工动作 | 只有一次 root 建立、一次 `data-root add`、一次 subagent 实测；`install`/`gc`/`env persist` **没有**跑 |
 | 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |
+
+## 159. 全功能面真机测试：三个独立 root、三个只读到 skill 的 agent，以及找到的问题
+
+这一节是**读数与问题清单**，不是修法。修法各自一个阶段（见 §159.5 的顺序建议）。所有读数都来自
+`D:\env_test` 内的三个独立 root（每个 agent 一个，互不干扰），加上操作者的真 root 只读复核。
+
+### 159.1 编排
+
+| agent | root | 覆盖 | 结果 |
+|---|---|---|---|
+| 安装链 | `.airoot-install` | `source list/resolve` → `plan` → `issue` → `approve` → `install` → `run` → `where` → `tool list/verify` → `path verify` → `retire` → `gc --plan/--apply` → `doctor` | **10/10 跑通**，真上游下载一次成功、`gc` 真删 |
+| 本地导入 + 删除分级 | `.airoot-import` | `capability check` → `adopt --mode import` → 批准链 → `run` → `uninstall/retire/gc` → 高风险拒绝 | 8/9 跑通（reference 登记因对象不在白名单而无法构造） |
+| 观察/搜索/环境/错误面 | `.airoot-observe` | `root status`/`doctor(±--include-unmanaged/--verify)`/`inventory`/`where(含版本)/`discover(±--record)`/`adopt reference`/`forget`/`env activate|exec|persist --dry-run|deactivate`/`env list`/`search` 六动词/`tool pin`/`rebuild`/`path verify`/`capability`/`extension`/9 条错误路径 | 12/12 跑通 |
+
+三份报告的**共同结论**：`SKILL.md` 描述的主路径没有一条跑不通；字段名与 `agents/airoot.json` 的读法一致；
+`files_touched=0`（注册/发现/登记/忘记）、`ownership="none"`、`STEWARD_REFERENCE_HEALTHY`、
+`SIZE_ESTIMATE_UNAVAILABLE`、`policy_only` 全部原样命中；安装链真装成 `FINALIZED` 且 `gc --apply` 真删（store 目录消失）。
+
+### 159.2 已核实的问题（我自己复现或读码；证据可查）
+
+| # | 严重度 | 问题 | 证据 | 建议修法 |
+|---|---|---|---|---|
+| F1 | **高** | **`uninstall <id> --dry-run` 会改状态**：`cli.py:1712` 在 `dry_run`（1718）之前无条件 `uninstall_target()`→`retire()`。实测 `dry_run:true`/`payload_removed:false` 但 `lifecycle_status:retired`、`where` → `NOT_FOUND`(1)；**恢复只能靠版本升级**：同计划+同 token→`INVALID_APPROVAL`；同计划+新 token→`INSTANCE_CONFLICT`/`ROLLED_BACK`；同版本新计划→同样冲突；换版本→`FINALIZED` | §159.2 复现（我的）；`--help` 原文 `--dry-run  retire and print the plan` | `--dry-run` 必须什么都不改；它建不出 gc 计划（计划要求已 retired）→输出应说"要拿计划先 `tool retire`"，或把该行为改名 |
+| F2 | 中 | **`extension status <任意 id>` 用假扩展的身份作答**：`cli.py:2214` 对任何 manifest 都构造 `FakeExtension` 并 `run("status")` → 返回写死的 `"deterministic fake extension; no external state touched"` | 读码 + agent 实测（`airoot-native-search-extension` 的"体检"是假的） | 这一版明确拒绝，或只回 manifest 事实、不编自证词 |
+| F3 | 中 | **`remediation:"recover"` 覆盖两件出路不同的事**：journal 可恢复三类 → `repair` 能修；`ROOT_MARKER_*`/`VOLUME_IDENTITY_MISMATCH`/`DATA_ROOT_VOLUME_MISMATCH`/`REGISTRY_MISSING` → **没有动词能修**（`repair` 自己也在 root 解析处失败）。而 `field-values.md` 与 `SKILL.md` 只讲第一类 | 我实测：删 registry → `repair`/`rebuild` 都 `REGISTRY_MISSING`(6)；marker 坏 → `repair` `ROOT_MARKER_INVALID`(6) | 枚举冻结 → 改 `field-values.md` 的解释 + `SKILL.md` 的分支 |
+| F4 | 中 | **`DATA_ROOT_MISSING`(6) 覆盖"状态坏了"与"输入错了"**：`discovery.py:556/565`（已声明数据根的目录不见了）vs `cli.py:2266`（`--target data-root:<没注册的 id>`）。对照：`D:/somewhere`（同样不可用）报 8 `INVALID_INPUT` | agent 实测两条命令的码不同 | 被既有测试与冻结码表钉住 → **一次裁决**，不是改一行 |
+| F5 | 中 | **没人作答却记了答案**：`plan node --dry-run`（无 scope）→ `routing.requested_scope:"machine"`、`target.scope:"machine"`，同文档 `confirmation_required:true`、`required_approval:"scope_confirmation"`、**无 `confirmation_answered_by`** | 我的复现（§155 的同源问题，方向相反） | `answered` 为假时记 `null` |
+| F6 | 中 | **稳定入口是派生状态，但只有一个写入点、没有重派生路径**：`write_launcher()` 只在 install 走到 `EXPOSED` 时调用；`rebuild` 只写 `state/registry.json` + `logs/audit/events.json`。**两个方向都缺**：绑定在而入口缺（操作者真 root，ADR-0050 之前的构建）→ 没有动词能补；入口在而绑定没了（`retire`/`gc` 之后，两个 agent 都实测到）→ 没有动词能清，`path verify` 长期 exit 2 | 操作者真 root 的 `path verify`；agent 1/2 的 gc 后读数 | 让 `rebuild`（或一个新动词）按活跃绑定重派生入口；否则把"只能重装"写成明确边界 |
+| F7 | 小 | **instance 的 `health` 是登记时记录的值，不是重测**（`toolstate.py` 直接取 `row["health"]`）：payload 已被 `gc` 收走仍读 `health=healthy`（同文档另有 `payload_present=false` 与 `PAYLOAD_COLLECTED` finding，`where` 则重测并给 `NOT_FOUND`）。而 `field-values.md` **没有** `health` 这一行 | 读码 + agent 实测 | 在 `field-values.md` 写清它是记录值（`payload_digest_source: registry` 已经为摘要做过同一件事） |
+| F8 | 小 | 三条"同一个 flag，不同副作用"：①`plan --dry-run` 不落盘，而 `env persist --dry-run` **写 plan 文件**（1 304 B，信封自带 `plan_file`）；②`run <id> -- --version --json` 把 `--json` 转发给子进程 → exit 2 `CHILD_PROCESS_FAILED`；③**普通 `doctor` 看不见内容漂移**——我往被引用 PE 尾部追加 1 字节后它仍报 `healthy`，只有 `doctor --verify` 报 `REFERENCE_DRIFTED`（`degraded`），未漂移时两者逐字节相同 | 我的复现（含把文件恢复、digest 复原）；agent 1/3 的 `--json` 位置 | `SKILL.md` 补三条边界说明 |
+| F9 | 小 | `state/root.json` 带 UTF-8 BOM → `ROOT_MARKER_INVALID`（证据给了准确原因 `Unexpected UTF-8 BOM`）。AIROOT 自己写不带 BOM，所以这属于"人改过" | 我的复现 | 按 ADR-0021 的默认放宽，可考虑用 `utf-8-sig` 读 |
+| F10 | 小 | 两处 skill 没讲清：①"数据根是注册点，**payload 落在 root 的 `store/`**"（两个 agent 都得自己猜）；②`metadata.routing` 的三字段组合（`confirmation_required`/`decision_reason` 是**分类**，`confirmation_answered_by` 是**状态**） | agent 1/2 的"必须自己猜" | `SKILL.md` 与 `field-values.md` 各补一段 |
+| F11 | 小 | skill 的 `tool gc` 行没提醒 **`--apply` 是全链唯一的破坏性一步**（真删、必须带 token） | agent 1 | 命令地图补一句 |
+
+### 159.3 agent 报了、我核实后**驳回**的（照实记，免得下一轮重复查）
+
+| 指控 | 驳回理由 |
+|---|---|
+| `EXTENSION_UNAVAILABLE` 用于"未知扩展 id"该改报 `EXTENSION_NOT_FOUND` | `EXTENSION_NOT_FOUND` 的两个写者（`cli.py:2930`/`3022`）都在 `search` 路径，语义是"**没有扩展提供这个 capability**"（`exits.py:185-187` 注释原文）；拿它报"这个 id 不存在"是拉伸语义 |
+| **计划/令牌过期后 `install` 仍成功**（agent 1 的 C-3） | 检查在**提交开始时**做一次（`artifact.py:79`，`check_expiry` 默认 True；下载在其后的 `drive` 里）。它读的是**完成时间** `updated_at`。我用 `--ttl-minutes 0` 逼出该路径：`install` → `APPROVAL_EXPIRED`(4)，证据 `plan_expires_at=…`，消息 "the plan expired before the commit" |
+| `plan` 的 `artifact_digest`(源文件) ≠ instance 的(store 树) | 设计如此（`tx/artifact.py`），且 instance 那份带 `payload_digest_source: registry` 自述 |
+| `discover --record` 与 `discover` 输出逐字节相同 | 只记录 `management in {unmanaged, quarantined}`；本次唯一候选是 `external_reference`（`cli.py:548`） |
+| `retire` 之后入口文件留存 | §125 已记为有意行为（"an entry with no binding is reported as drift"）；**真正的缺口是"没有动词能清它"**，已并入 F6 |
+| `search` 0 命中 exit 0、`where` 未找到 exit 1 | 搜索阶梯的既定语义（`references/reason-codes.md`），且 `search` 的 `status=ok` 与 `where` 的 `found=false` 是两件事 |
+
+### 159.4 覆盖不到的地方（说清，不假装）
+
+- **`OWNERSHIP_REQUIRED`(7) 没有被实测**：agent 2 无法把那个 PE 登记成 reference（不在白名单）；agent 3 用的是白名单内的 `python`，但它按分工没跑 `uninstall`。该码的路径只被**读码**确认（`caps/lifecycle.py:105-115`）。
+- `repair` 的正常路径（journal 回放）本轮没有构造（要故障注入，属 `test_l2_recovery_drivers.py` 的地盘）；只测了"坏 root 上 `repair` 也无能为力"这一面（F3）。
+- `env persist` 的**真写入**没有跑（写 HKCU，超出隔离区）；只跑了 `--dry-run`。
+- 真机验收脚本没有与三个 agent 并行跑（隔离审计会互相干扰）；它在 §158 之后单独跑过一次，三段 PASS。
+
+### 159.5 成本与下一步
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1410 不动**（本节只记读数与问题清单，不改代码、不加用例） |
+| 代码 / 契约层 / 语料 | **不动** |
+| 环境 | 三个 root 与两个数据根都在 `D:\env_test` 内；操作者真 root **只被读**；我唯一改过的对象文件已按备份还原并复验 digest（`df6a2920…`） |
+| 修复顺序建议 | 1) F1（唯一会让用户**坏掉且只能升级恢复**的一条）+ 守卫；2) F3+F5（都是"记下的话不是真的"）；3) F2（不再讲别人家的故事）；4) F6（决定重派生还是写成边界）；5) F4 裁决；6) F7–F11 文档收口 |
+| 没有做 | 来源清单扩展（操作者决定暂不扩）；真装 artifact 的 agent 侧验证（见 §158.7 第 5 条）；`AIROOT_HOME` 目前**指着测试 root**，测试结束后必须改掉或删掉 |
