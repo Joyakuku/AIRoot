@@ -13262,4 +13262,93 @@ failure: the download from https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x6
 | 语料 | **不动**（`test_golden_fixtures_reproduce_exactly` 全绿） |
 | 真机 | 离线验收脚本**从 2 条假断言改成 PASS**；运行时整链重跑一次走通（§155.5），另有一次网络中断的读数也被记下来 |
 | 顺手改的文档 | `SKILL.md` 与草案 §20.4 各有一处把 `plan --scope data-root --project <项目>` 写成会报 `SCOPE_UPGRADE_REQUIRES_APPROVAL`——**它报的是 `INVALID_INPUT`**，因为那句话漏了 `--target`（两处都补上了；这是一处自 §20 起就与实现不符的说明，不由本次改动引入） |
-| 没有做 | 计划 scope 与 binding scope 的合并（§154.1 裁决为两套词汇）；**`plan --version` 与解析出来的来源文档的版本不互相校验**（§155.5 第一次实测：来源是 22.14.0、计划的实例身份里是 1.0.0）——这是**新记下的一处**，修它要给"来源与声明不一致"定一条规则，值得它自己的一轮 |
+| 没有做 | 计划 scope 与 binding scope 的合并（§154.1 裁决为两套词汇）；**`plan --version` 与解析出来的来源文档的版本不互相校验**（§155.5 第一次实测：来源是 22.14.0、计划的实例身份里是 1.0.0）——下一节就是修它 |
+
+## 156. 计划的版本来自解析结果：一个"是 3.31.6 却登记成 1.0.0"的实例
+
+裁决见 **ADR-0057**。§155.6 的"没有做"里记下的那一处，这一轮先量、再修。
+
+### 156.1 读数：一份文档里两个版本，没有一处比较它们（离线本地 release，`build` 3.31.6）
+
+`--version` 的默认值当时是 `1.0.0`：
+
+| 调用 | `target.version` | `target.instance_id` | `plan_id` |
+|---|---|---|---|
+| `plan build --source-json <resolved>` | **`1.0.0`** | `build/cmake-3.31.6-windows-x86_64/**1.0.0**/win-x64` | `plan/build/1.0.0/…` |
+| `plan build --version 3.31.6 --source-json <resolved>` | `3.31.6` | `…/3.31.6/win-x64` | `plan/build/3.31.6/…` |
+| `plan build --version 9.9.9 --source-json <resolved>` | **`9.9.9`** | `build/cmake-3.31.6-windows-x86_64/**9.9.9**/win-x64` | `plan/build/9.9.9/…` |
+| `plan build`（没有解析结果） | `1.0.0` | `build/fake-tool/1.0.0/win-x64` | `plan/build/1.0.0/…` |
+
+**解析结果自己带着 `version`**（`caps/sources.py` 的 `ResolvedSource.to_document()` 写了它，
+`source resolve` 的 JSON 里就有），而计划里没有任何一处读它：`metadata.source_catalog` 的键是
+`checksum_url` / `checksum_format` / `offline` / `provenance_and_integrity_are_separate` / `signature`。
+`locator` 指向的文件名里却写着真版本。**两个版本，一份文档，零次比较。**
+
+**用户可见的症状**（同一次实测，装完之后）：
+
+```text
+install                            → FINALIZED，instance=build/cmake-3.31.6-windows-x86_64/1.0.0/win-x64
+where build                        → found=True，version=1.0.0
+where build --version ">=3.31"     → exit=1  VERSION_UNSATISFIED
+tool list                          → version=1.0.0
+```
+
+也就是**刚装好的 cmake 3.31.6 用版本查询找不到**。`where` 的版本判据读的是实例身份，而身份写错了。
+
+**它为什么活到现在**：§148、§153、§155 三次真机链**每次都显式传了 `--version`**（所以历史记录里的
+`plan_id` 都是 `plan/build/3.31.6/…`、`plan/node/22.14.0/…`），而 `AGENTS.md` §6 教的命令是**不传**的那条：
+`plan build --source-json <resolved.json> --json`。**每一次都传对，不等于不传也对**——要验的是文档上那条写法。
+
+### 156.2 修法：解析结果是版本的唯一来源
+
+- `--version` 的默认值从 `1.0.0` 改成 `None`（`cli.py` 的 `plan_parser`）。
+- 新增 `_load_source_resolution(path)`：读 `--source-json` 指的文档。**它不是 `_load_document`**——解析结果
+  是 CLI 自己的报告面、没有已发布 schema 可校验，所以它只检查"是个 JSON 对象"，并给出 `INVALID_INPUT`。
+- `cmd_plan` 在**路由之后、dry run 之前**读这份文档（保持这个函数自己的顺序"先路由、再计划"），于是：
+  `--version` 缺省 ⇒ 用 `source_document["version"]`；两者都给且不一致 ⇒ `INVALID_INPUT`(8)，证据写
+  `requested_version` / `resolved_version` / `resolution`；没有 `--source-json` ⇒ 仍是 `1.0.0`
+  （模拟路径的 payload 就叫 `cache/fixtures/<cap>/1.0.0`，语料钉着它）。
+- dry run 的 `document.version`、以及两个计划构造器的 `version=`，现在都读同一个 `plan_version`。
+- 代价（有意）：`--dry-run --source-json <不存在的文件>` 从"静默通过"变成 `INVALID_INPUT`(8)——那正是
+  真调用会给的答案。
+
+### 156.3 守卫与验红
+
+四条新用例在 `cli/tests/test_l1_sources.py`，外加全链测试里一条症状断言：
+
+| 用例 / 断言 | 盯的是 |
+|---|---|
+| `test_a_real_artifact_plan_takes_its_version_from_the_resolution` | 不传 `--version` 时 `target.version == 3.31.6` 且身份里没有 `1.0.0` |
+| `test_a_version_that_disagrees_with_the_resolution_is_refused` | `--version 9.9.9` ⇒ exit=8、两个版本都在证据里、**盘上没有计划文件** |
+| `test_the_dry_run_reports_the_version_the_real_call_would_use` | dry run 的 `document.version == 3.31.6` |
+| `test_a_dry_run_from_a_missing_resolution_is_refused` | 不存在的解析文件 ⇒ exit=8 `INVALID_INPUT` |
+| 全链测试新增：装完之后 `where build --version ">=3.31"` | **症状本身**（修法前它是 `VERSION_UNSATISFIED`） |
+
+**三处合成变异，各自只把自己那一半变红**：
+
+```text
+# 变异一：plan_version = args.version or "1.0.0"（回到默认值）
+FAILED test_a_real_artifact_plan_takes_its_version_from_the_resolution
+FAILED test_the_dry_run_reports_the_version_the_real_call_would_use
+FAILED test_cli_plan_from_a_resolved_source_installs_a_real_artifact
+       assert 1 == 0            ← where --version ">=3.31" 又变成 VERSION_UNSATISFIED
+3 failed, 32 deselected
+
+# 变异二：去掉不一致就拒绝那一段
+FAILED test_a_version_that_disagrees_with_the_resolution_is_refused   (assert 0 == 8)
+
+# 变异三：`_load_source_resolution` 不检查文件在不在
+FAILED test_a_dry_run_from_a_missing_resolution_is_refused
+       assert 'file not found' in '…absent.json is not readable JSON'
+```
+
+### 156.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1401 → 1405**（+4：`cli/tests/test_l1_sources.py` 四条新用例；另在全链测试里加了症状断言，不新增计数） |
+| 契约层 | **不动**——20 个 schema 全没动（解析结果本来就不是已发布契约；`plan` 的对外 JSON 是 CLI 报告面） |
+| 语料 | **不动**（模拟路径的 `1.0.0` 保持原样，`test_golden_fixtures_reproduce_exactly` 全绿） |
+| 真机 | 不需要新真机读数：这一处是**离线可复现**的（本地 release + 本地校验和文件），全链测试就是那条链；§155.5 的真机链读数（`plan/node/22.14.0/…`）不受影响 |
+| 顺手做的 | `AGENTS.md` §6 那条 `plan build --source-json <resolved.json>` 的注释补上"版本来自解析结果"——它以前是正确的命令配着错的默认值 |
+| 没有做 | `plan` 仍不校验 `--version` 与 `artifact_url` 里嵌的版本；`metadata` 里仍没有"版本从哪来"的字段（`version_source` 只属于 `adopt` 的信封）——ADR-0057 的代价一节写了这一条 |

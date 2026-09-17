@@ -3020,3 +3020,68 @@ ADR-0055 的 B 让确认门接受显式答案，§153 落地之后，§154 量�
 的五条新用例，五条都做了合成变异验红（两半各自把自己的用例变红）。**同一轮里修掉并重跑了真机验收脚本那两条
 陈旧断言**（§155.4）。
 
+## ADR-0057 — **计划的版本来自解析结果，而不是一个默认值**（一个"是 3.31.6 却登记成 1.0.0"的实例）
+
+### 背景
+
+§148、§153、§155 三次真实 artifact 链**每次都显式传了 `--version`**（§148 的 `plan build --version 3.31.6
+--source-json`、§153.3 的 `--version 22.14.0`），所以"不传会怎样"从来没被量过。而 `AGENTS.md` §6 教的命令
+恰恰是不传的那一条：
+
+```text
+python -m airoot --root <root> plan build --source-json <resolved.json> --json   # 构造真实 artifact 计划
+```
+
+§156 量了它（离线本地 release，`build` 3.31.6；`--version` 的默认值是 `1.0.0`）：
+
+| 调用 | `target.version` | `target.instance_id` | `plan_id` |
+|---|---|---|---|
+| `plan build --source-json <resolved>` | **`1.0.0`** | `build/cmake-3.31.6-windows-x86_64/**1.0.0**/win-x64` | `plan/build/1.0.0/…` |
+| `plan build --version 3.31.6 --source-json <resolved>` | `3.31.6` | `…/3.31.6/win-x64` | `plan/build/3.31.6/…` |
+| `plan build --version 9.9.9 --source-json <resolved>` | **`9.9.9`** | `build/cmake-3.31.6-windows-x86_64/**9.9.9**/win-x64` | `plan/build/9.9.9/…` |
+
+解析结果**自己带着 `version`**（`ResolvedSource.to_document()` 第 142 行），而计划里没有任何一处读它：
+`metadata.source_catalog` 只有 `checksum_url`/`checksum_format`/`offline`/`provenance_and_integrity_are_separate`/
+`signature`。于是**一份文档里两个版本可以不一致**，而**没有任何一处比较它们**。
+
+**用户可见的症状**（同一次实测，装完之后）：
+
+```text
+install → FINALIZED  instance=build/cmake-3.31.6-windows-x86_64/1.0.0/win-x64
+where build                      → version=1.0.0
+where build --version ">=3.31"   → exit=1 VERSION_UNSATISFIED
+tool list                        → version=1.0.0
+```
+
+**刚装的 cmake 3.31.6 用版本查询找不到。** 这不是显示问题：artifact 的名字是 3.31.6，实例的身份说 1.0.0，
+而 `where` 的版本选择读的是身份。
+
+### 决定
+
+**A —— 有解析结果时，解析结果是版本的唯一来源。** `--source-json` 给出时：`--version` 缺省 ⇒ 取
+`source_document["version"]`；两者都给且不一致 ⇒ `INVALID_INPUT`(8)，证据写 `requested_version` 与
+`resolved_version`（同 §155 对 `--scope`/`--target` 矛盾的处置：**两个版本是一条调用的两个答案**，
+不是偏好问题，所以按诚实规则走，不走 ADR-0021 的放宽）。
+
+**B —— 没有解析结果时保持 `1.0.0`。** 模拟路径的 payload 就是 `cache/fixtures/<cap>/1.0.0`，语料钉着
+`plan/fake-tool/1.0.0`；把默认值改成 `None` 只是为了让"这个 `1.0.0` 是兜底"这件事写在代码里，而不是
+写在 argparse 的默认参数里。
+
+**C —— dry run 也读这份解析文档**（在路由之后、dry run 之前），所以它报的版本就是真调用会用的版本
+（§155 的同一条规则）。代价是一处收紧：`--dry-run --source-json <不存在的文件>` 从"静默通过"变成
+`INVALID_INPUT`(8)——而那正是真调用会给出的答案。
+
+### 代价
+
+- **`--version` 的默认值不再是 `1.0.0`**：给了 `--source-json` 的调用会拿到解析结果的版本（这正是要修的），
+  没给的调用行为不变。
+- **一次"三次真机链都传了参数"的教训**：§148/§153/§155 都没有漏，所以这条缺陷在**文档教的那条命令**上
+  活了很久。**链上每一处都传了某个参数，不等于不传也对**——要验的是文档上的写法。
+- **没有做**：`plan` 仍不校验 `--version` 与 `artifact_url` 里嵌的版本（URL 由 `sources.json` 的模板拼装，
+  与解析结果自洽）；不新增来源签名/证明；`metadata` 里仍然没有"版本从哪来"的字段（`version_source` 只属于
+  `adopt` 的信封，见 `references/field-values.md`）——**这一条留在这里，免得下一个读者以为它被声明过**。
+
+**状态：已裁决并已落地（A、B、C，草案 §156）**：守卫是 `cli/tests/test_l1_sources.py` 的四条新用例
+加全链测试里的 `where --version ">=3.31"` 断言，三处合成变异各自只把自己那一半变红。
+
+

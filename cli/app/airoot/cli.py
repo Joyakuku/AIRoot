@@ -2225,6 +2225,32 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
         # "Nobody answered" is its own case and survives all of the above: the gate exists for it.
         unconfirmed = decision.confirmation_required and not answered
 
+        # §156 / ADR-0057: a resolution is the **source of truth** for the version it resolved.
+        # Reading it here — after routing, before both the dry run and the plan — is what makes the dry
+        # run report the version the real call would use, and it keeps this function's own order
+        # ("route, then plan") intact. `--version` selects which version `source resolve` fetches; a
+        # `--version` that disagrees with the document it plans is a caller error, not a silent
+        # relabel: the artifact is named for one version and the instance would be registered as
+        # another, so `where <cap> --version '>=<that version>'` would not find what was just installed.
+        source_document: dict[str, Any] | None = None
+        plan_version = args.version or "1.0.0"
+        if args.source_json:
+            source_document = _load_source_resolution(Path(args.source_json))
+            resolved_version = str(source_document.get("version") or "")
+            if args.version is not None and resolved_version and args.version != resolved_version:
+                raise AirootError(
+                    "INVALID_INPUT",
+                    f"--version {args.version} disagrees with the resolution, which is {resolved_version}",
+                    evidence=[
+                        f"requested_version={args.version}",
+                        f"resolved_version={resolved_version}",
+                        f"resolution={args.source_json}",
+                        "planning one version from a resolution of another would register an instance "
+                        "whose version is not the version of its artifact",
+                    ],
+                )
+            plan_version = resolved_version or args.version or "1.0.0"
+
         if args.dry_run:
             # The dry run must report the verdict the real call has (§155), in both directions: a
             # diverging answer is refused there too, and an answer that *is* the routing's answer
@@ -2246,7 +2272,7 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
                 "options": list(decision.options),
                 "required_approval": approval,
                 "side_effects": ["writes_store", "writes_registry", "derived_cache"],
-                "version": args.version,
+                "version": plan_version,
                 "reason_code": dry_reason,
             }
             document["size_estimate_bytes"] = decision.size_estimate_bytes
@@ -2332,16 +2358,17 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
         if args.source_json:
             # A real artifact plan: the digest comes from the resolved source document, which got
             # it from a published checksum file — never from the artifact itself (draft §23.3-1).
+            # The document itself was read above, together with the version it resolved (§156).
             from .caps.backends import resolve_backend
             from .tx.artifact import create_artifact_plan
 
-            source_document = json.loads(Path(args.source_json).read_text(encoding="utf-8"))
+            assert source_document is not None  # read above, in the same `args.source_json` branch
             backend = resolve_backend(str(source_document.get("backend_id") or "https_artifact"), root=context.path())
             plan = create_artifact_plan(
                 registry,
                 backend,
                 capability_id=args.capability,
-                version=args.version,
+                version=plan_version,
                 kind=plan_kind_for(args.capability),
                 locator=str(source_document["artifact_url"]),
                 source_digest=str(source_document["expected_digest"]),
@@ -2364,7 +2391,7 @@ def cmd_plan(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any]
         else:
             plan = create_plan(
                 registry,
-                version=args.version,
+                version=plan_version,
                 clock=context.clock,
                 ttl_minutes=args.ttl_minutes,
                 requested_by=args.requested_by,
@@ -2985,6 +3012,32 @@ def _search_refresh(
 # --------------------------------------------------------------------------- #
 
 
+def _load_source_resolution(path: Path) -> dict[str, Any]:
+    """Read the document `source resolve --source-out` wrote (draft §23.3, §156).
+
+    Deliberately not `_load_document`: a resolution is the CLI's own report face, not a published
+    contract, so there is no schema to validate it against. What can be checked without one is that it
+    is a JSON object, and that is what this does. Both the dry run and the plan go through it, so
+    "there is no resolution to plan from" is one answer rather than two.
+    """
+
+    if not path.is_file():
+        raise AirootError(
+            "INVALID_INPUT",
+            f"file not found: {path}",
+            evidence=["--source-json names the resolution to plan from"],
+        )
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise AirootError(
+            "INVALID_INPUT", f"{path} is not readable JSON", evidence=[str(exc), "this file is a resolution"]
+        ) from exc
+    if not isinstance(document, dict):
+        raise AirootError("INVALID_INPUT", f"{path} is not a JSON object", evidence=["a resolution is an object"])
+    return document
+
+
 def _plan_path(context: Context, plan_id: str) -> Path:
     return context.path() / "state" / "plans" / f"{plan_id.replace('/', '_')}.json"
 
@@ -3153,7 +3206,11 @@ def build_parser() -> argparse.ArgumentParser:
         "plan", help="create a canonical plan (P1: simulated source only)", parents=[common]
     )
     plan_parser.add_argument("capability")
-    plan_parser.add_argument("--version", default="1.0.0")
+    plan_parser.add_argument(
+        "--version",
+        default=None,
+        help="the version to plan; with --source-json the resolution supplies it (§156)",
+    )
     plan_parser.add_argument("--ttl-minutes", type=int, default=5)
     plan_parser.add_argument("--requested-by", default="airoot-cli")
     # Routing (draft §12.4): where this capability belongs, and whether a human must decide.

@@ -479,6 +479,105 @@ def test_cli_unknown_capability_has_no_source(capsys, registry, offline_release)
     assert document["reason_code"] == "NOT_FOUND"
 
 
+def test_a_real_artifact_plan_takes_its_version_from_the_resolution(
+    capsys, registry, clock, root, offline_release, tmp_path: Path
+) -> None:
+    """§156: `--version` picks what `source resolve` fetches, so the resolution carries the version.
+
+    It used to be a CLI default of `1.0.0`, so the documented `plan <cap> --source-json <resolved>`
+    produced an instance whose identity said 1.0.0 while its artifact was named 3.31.6 — a record that
+    does not describe the thing it records, in the one document everything downstream reads.
+    """
+
+    artifact, checksums = offline_release
+    cli_root = Path(registry.path).parent.parent
+
+    code, resolved = run(
+        capsys, "--json", "--root", str(cli_root),
+        "source", "resolve", "build", "--version", "3.31.6", "--offline-checksum", str(checksums),
+    )
+    assert code == 0, resolved
+    source_file = tmp_path / "resolved.json"
+    source_file.write_text(json.dumps(resolved), encoding="utf-8")
+
+    code, plan = run(capsys, "--json", "--root", str(cli_root), "plan", "build", "--source-json", str(source_file))
+
+    assert code == 0, plan
+    assert plan["target"]["version"] == "3.31.6"
+    assert "3.31.6" in plan["target"]["instance_id"]
+    assert "1.0.0" not in plan["target"]["instance_id"]
+    assert artifact.is_file()
+
+
+def test_a_version_that_disagrees_with_the_resolution_is_refused(
+    capsys, registry, clock, root, offline_release, tmp_path: Path
+) -> None:
+    """Two versions in one call is a contradiction, not a preference (ADR-0021's honesty carve-out)."""
+
+    _artifact, checksums = offline_release
+    cli_root = Path(registry.path).parent.parent
+
+    code, resolved = run(
+        capsys, "--json", "--root", str(cli_root),
+        "source", "resolve", "build", "--version", "3.31.6", "--offline-checksum", str(checksums),
+    )
+    assert code == 0, resolved
+    source_file = tmp_path / "resolved.json"
+    source_file.write_text(json.dumps(resolved), encoding="utf-8")
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "build", "--version", "9.9.9", "--source-json", str(source_file),
+    )
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    evidence = " ".join(document["evidence"])
+    assert "requested_version=9.9.9" in evidence
+    assert "resolved_version=3.31.6" in evidence
+    plans = cli_root / "state" / "plans"
+    assert not plans.is_dir() or list(plans.iterdir()) == [], "a refused plan left a file behind"
+
+
+def test_the_dry_run_reports_the_version_the_real_call_would_use(
+    capsys, registry, clock, root, offline_release, tmp_path: Path
+) -> None:
+    """§155's rule, applied to the version: the dry run's verdict is the real call's verdict."""
+
+    _artifact, checksums = offline_release
+    cli_root = Path(registry.path).parent.parent
+
+    code, resolved = run(
+        capsys, "--json", "--root", str(cli_root),
+        "source", "resolve", "build", "--version", "3.31.6", "--offline-checksum", str(checksums),
+    )
+    assert code == 0, resolved
+    source_file = tmp_path / "resolved.json"
+    source_file.write_text(json.dumps(resolved), encoding="utf-8")
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root), "plan", "build", "--source-json", str(source_file), "--dry-run"
+    )
+
+    assert code == 0, document
+    assert document["version"] == "3.31.6"
+
+
+def test_a_dry_run_from_a_missing_resolution_is_refused(capsys, registry, clock, root, tmp_path: Path) -> None:
+    """A plan built from a file that is not there is not a plan, dry run or not."""
+
+    cli_root = Path(registry.path).parent.parent
+
+    code, document = run(
+        capsys, "--json", "--root", str(cli_root),
+        "plan", "build", "--source-json", str(tmp_path / "absent.json"), "--dry-run",
+    )
+
+    assert code == 8
+    assert document["reason_code"] == "INVALID_INPUT"
+    assert "file not found" in document["message"]
+
+
 def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
     capsys, registry, clock, root, offline_release, tmp_path: Path
 ) -> None:
@@ -543,3 +642,11 @@ def test_cli_plan_from_a_resolved_source_installs_a_real_artifact(
     finally:
         registry_handle.close()
     assert artifact.is_file(), "the source artifact is never consumed"
+
+    # §156: the installed instance answers to the version it actually is. Before that stage this
+    # resolved to `VERSION_UNSATISFIED` — cmake 3.31.6 was registered as 1.0.0, so a version query
+    # could not find the artifact that had just been installed.
+    code, where = run(capsys, "--json", "--root", str(cli_root), "where", "build", "--version", ">=3.31")
+    assert code == 0, where
+    assert where["found"] is True
+    assert where["version"] == "3.31.6"
