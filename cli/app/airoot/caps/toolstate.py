@@ -29,6 +29,7 @@ from ..exits import AirootError
 from ..paths import from_root_relative
 from ..registry.entities import is_store_path, load_json
 from .health import observe_payload
+from .lifecycle import projected_lifecycle_status
 from .version import satisfies
 
 
@@ -45,7 +46,9 @@ def _binding_for(registry: Any, instance_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _instance_document(registry: Any, row: Any) -> dict[str, Any]:
+def _instance_document(
+    registry: Any, row: Any, *, bound: set[str] | None = None
+) -> dict[str, Any]:
     instance_id = str(row["instance_id"])
     payload = load_json(row["payload_json"], {})
     source = payload.get("source") or {}
@@ -57,7 +60,10 @@ def _instance_document(registry: Any, row: Any) -> dict[str, Any]:
         "platform": str(row["platform"]),
         "architecture": str(row["architecture"]),
         "install_backend_id": str(row["install_backend_id"]),
-        "lifecycle_status": str(row["lifecycle_status"]),
+        # The reading, derived from the active binding (draft §166: `caps.lifecycle` owns the one
+        # derivation). The recorded column is reported next to it, never instead of it.
+        "lifecycle_status": projected_lifecycle_status(registry, row, bound=bound),
+        "recorded_lifecycle_status": str(row["lifecycle_status"]),
         "health": str(row["health"]),
         "store_path": str(row["store_path"]),
         "entrypoints": [str(item) for item in load_json(row["entrypoints_json"], [])],
@@ -95,11 +101,15 @@ def list_tools(registry: Any, *, capability_id: str | None = None, root: Path | 
     """Every owned instance, newest state, no writes. Pins are shown when a root is given."""
 
     desired = _desired_index(root)
+    # One scan for the whole listing: "which instances hold an active binding" is asked once per row
+    # by the projection, and a listing that re-read the bindings table per row would answer the same
+    # question n times (draft §166).
+    bound = {str(item["instance_id"]) for item in registry.bindings(active_only=True)}
     instances = []
     for row in registry.instances():
         if capability_id is not None and str(row["capability_id"]) != capability_id:
             continue
-        document = _instance_document(registry, row)
+        document = _instance_document(registry, row, bound=bound)
         pin = desired.get(str(row["capability_id"]))
         document["desired_version"] = pin.version if pin else None
         document["in_sync"] = (
@@ -223,15 +233,13 @@ def tool_status(registry: Any, instance_id: str, *, root: Path) -> ToolStatus:
                 )
             )
 
+    # `binding is None and the recorded lifecycle says active` used to be a warning here. That
+    # combination is not a defect to report, it is the ordinary shape of every superseded version
+    # (draft §166): the recorded column is a record, and `lifecycle_status` above is now derived from
+    # the active binding, so the reading can never be `active` without one. The warning was the
+    # symptom of the lie it was reporting, so it is gone rather than downgraded — an info line that
+    # fires on every healthy superseded instance is noise, not a diagnosis.
     binding = document["active_binding"]
-    if binding is None and str(row["lifecycle_status"]) == "active" and not row["collected_at"]:
-        finding_list.append(
-            StatusFinding(
-                "warning",
-                "DEGRADED",
-                "lifecycle says active but no active binding exists for this instance",
-            )
-        )
     if binding is not None and not payload_present and not row["collected_at"]:
         finding_list.append(
             StatusFinding("error", "BINDING_TARGET_MISSING", "an active binding points at a missing payload")

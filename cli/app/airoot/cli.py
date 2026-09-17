@@ -1704,7 +1704,7 @@ def _locate_gc_plan(context: Context, args: argparse.Namespace, token: dict[str,
 def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str, Any], int]:
     """``uninstall`` = retire + gc. It never deletes without an approval token."""
 
-    from .caps.lifecycle import apply_gc_plan, require_owned, uninstall_target
+    from .caps.lifecycle import apply_gc_plan, projected_lifecycle_status, require_owned, uninstall_target
 
     registry = context.registry()
     plan_file: Path | None = None
@@ -1724,7 +1724,11 @@ def cmd_uninstall(args: argparse.Namespace, context: Context) -> tuple[dict[str,
                 "operation": "uninstall",
                 "dry_run": True,
                 "instance_id": str(row["instance_id"]),
-                "lifecycle_status": str(row["lifecycle_status"]),
+                # The reading, not the column: a superseded instance reads `installed`, because
+                # `$defs.lifecycle`'s `active` means "has an active binding" (draft §166, one
+                # derivation in `caps.lifecycle`). No second field here — this report carries no
+                # `recorded_lifecycle_status` and does not need one.
+                "lifecycle_status": projected_lifecycle_status(registry, row),
                 "payload_removed": False,
                 "plan": None,
                 "plan_file": None,

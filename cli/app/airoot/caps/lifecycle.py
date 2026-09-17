@@ -102,6 +102,43 @@ def expected_launchers(registry: Any) -> list[str]:
     return sorted(set(expected))
 
 
+def projected_lifecycle_status(registry: Any, row: Any, *, bound: set[str] | None = None) -> str:
+    """The lifecycle a **reader** reports: ``active`` only where an active binding says so.
+
+    The ``instances.lifecycle_status`` column is a *record*, and it is right about every value except
+    one. ``ACTIVE_BOUND`` writes the incoming instance's row and ``bind_active`` only clears the
+    binding it replaces — nothing goes back and rewrites the superseded row (draft §166; the write
+    side is deliberately unchanged, because the published enum and a migration are a different job).
+    So after installing 9.9.10 over 9.9.9 the column reads ``active`` for both while ``bindings``
+    holds exactly one ``active=1``, and a reader that passes the column through verbatim asserts
+    something the same document contradicts.
+
+    ``common.schema.json#/$defs.lifecycle`` defines ``active`` as "has an active binding", so this is
+    a derivation rather than a policy:
+
+    * this instance is the target of an active binding -> ``active``;
+    * it is not, and the record says ``active`` (a superseded row, or a hand-edited database) ->
+      ``installed``: it was committed into the store and simply is not the bound one;
+    * every other recorded value (``retired`` / ``broken`` / an already-honest ``installed``) is
+      passed through untouched.
+
+    ``bound`` is the caller's option to compute "which instances hold an active binding" **once**:
+    ``tool list`` walks every row, and re-scanning the bindings table per row would make one question
+    cost two scans. The rule itself still has exactly one spelling, here.
+
+    This is the read-side half of the same split the repository already made for ``health``
+    (draft §162): the column stays the audit record, and the projection says what is true now.
+    """
+
+    instance_id = str(row["instance_id"])
+    if bound is None:
+        bound = {str(item["instance_id"]) for item in registry.bindings(active_only=True)}
+    if instance_id in bound:
+        return "active"
+    recorded = str(row["lifecycle_status"])
+    return "installed" if recorded == "active" else recorded
+
+
 def find_target(registry: Any, target: str) -> tuple[str, Any]:
     """Resolve a user-supplied target to either an instance row or a reference row.
 
@@ -340,6 +377,9 @@ def gc_candidates(registry: Any, *, target: str | None = None) -> list[Collectab
         for row in registry.transactions(unfinished_only=True)
         if row["instance_id"]
     }
+    # One scan for the whole report, for the same reason `tool list` does it once: the derivation
+    # must not add a per-row read of the bindings table to a function that already walks every row.
+    bound = {str(item["instance_id"]) for item in registry.bindings(active_only=True)}
     for row in registry.instances():
         instance_id = str(row["instance_id"])
         blockers: list[str] = []
@@ -348,7 +388,10 @@ def gc_candidates(registry: Any, *, target: str | None = None) -> list[Collectab
             continue
         if not is_owned(row):
             blockers.append("not_owned_by_airoot")
-        status = str(row["lifecycle_status"])
+        # The reading, not the column (draft §166): a superseded instance is `installed`, and the
+        # admission rule below is unchanged — `installed` is still not `retired`, so the verdict and
+        # every blocker are the same as before. What changes is that the sentence is now true.
+        status = projected_lifecycle_status(registry, row, bound=bound)
         if status != "retired":
             blockers.append(f"lifecycle_status={status} (must be retired first)")
         if str(row["health"]) == "broken" and status == "retired":
@@ -647,6 +690,7 @@ __all__ = [
     "find_target",
     "gc_candidates",
     "is_owned",
+    "projected_lifecycle_status",
     "require_owned",
     "retire",
     "uninstall_target",

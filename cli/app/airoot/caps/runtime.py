@@ -34,7 +34,7 @@ from typing import Any
 from ..exits import AirootError
 from ..paths import from_root_relative
 from ..registry.entities import load_json
-from .lifecycle import find_target
+from .lifecycle import find_target, projected_lifecycle_status
 
 #: How much of a child's output is kept, and **why the tail**: a runaway child must not be able to
 #: make the CLI unusable, and the end of the stream is what a reader needs (a stack trace ends
@@ -160,7 +160,7 @@ def resolve_run_target(registry: Any, root: Path, target: str) -> RunTarget:
         store_dir=store_dir,
         entrypoint=entrypoint,
         entrypoint_relative=entrypoint_relative,
-        lifecycle_status=str(row["lifecycle_status"]),
+        lifecycle_status=projected_lifecycle_status(registry, row),
         health=str(row["health"]),
         artifact_digest=str(row["artifact_digest"]),
         collected_at=row["collected_at"],

@@ -14167,3 +14167,78 @@ C 的守卫走的是 **simulate runner**——也就是说这条修复当时在*
 | 改过的既有期望 | `test_l1_lifecycle.py::test_gc_apply_removes_only_the_store_payload` 的快照时点从"retire 之前"移到"retire 之后、gc 之前"（断言一字未改——retire 现在合法地删掉入口，旧时点会把 retire 的删除记到 gc 账上）；`real_machine_acceptance.py` 的两处 retire 断言改成新的真话（见 §165.4 的实测读数）。**没有为变绿放宽任何断言** |
 | 已知残余缺口（未改，记录在此） | registry 读不出来时，`path verify` 会把**存在的**入口报成孤儿（它拿到的是 `expected=[]` + 一条 note）——"未知读成空"。改它属于改 `path verify` 的行为（本阶段明确不动它），而现在 `path repair` 在同一状态下**拒绝动手**，两者的差别本身就是一条可读的信号 |
 | 没有做 | 让 repair 删孤儿（那要动规划 §9.6 的"root 内删除走 plan/approval"）；`lifecycle_status` 的投影化（§164 已记为下一批） |
+
+## 166. F12 §1.1：`lifecycle_status` 也投影化——"记录值被当成事实读"这一族收口
+
+裁决见 **ADR-0065**。§162 修的是 `health`（记录值被当成重测值），§164 修的是绑定/闩锁/回滚，
+这是这一族的**最后一处**：`instances.lifecycle_status` 那一列被**原样当事实报给调用方**。
+
+### 166.1 缺陷
+
+`ACTIVE_BOUND` 只写**新进来那个** instance 的行，`Registry.bind_active` 只把被取代的那条绑定的
+`active` 清掉——**没有任何写者回头改被取代那一行**。于是同一个 root 装两个版本之后：
+
+```text
+tool list → {"instance_id":"…/9.9.10/win-x64","lifecycle_status":"active","active_binding":{…gen 2…}}
+            {"instance_id":"…/9.9.9/win-x64", "lifecycle_status":"active","active_binding":null}   ← 同一份文档自己打自己
+tool status <被取代的 9.9.9> → exit 2 / reason_code=DEGRADED
+            findings=[{"severity":"warning","code":"DEGRADED",
+                       "detail":"lifecycle says active but no active binding exists for this instance"}]
+```
+
+也就是说：**每一个被新版本取代过的旧版本**都会让 `tool status` 说"降级"——而它健康、payload 在盘上、
+只是不再是被绑定的那个。而 `common.schema.json#/$defs.lifecycle` 对 `active` 的定义就是
+"has an active binding"，所以这不是"文档没写清"，是**同一份 JSON 里的两个字段互相矛盾**。
+
+### 166.2 修法：读侧派生，一份实现，四处调用
+
+- `caps/lifecycle.projected_lifecycle_status(registry, row, *, bound=None)`：持有 active binding → `active`；
+  没有绑定而**记录值**是 `active`（被取代的行，或有人手工改过的库）→ **`installed`**（它确实已提交进
+  store，只是不再是被绑定那个）；其余记录值（`retired`/`broken`/本来就诚实的 `installed`）原样通过。
+- **四处报告面全部改用它**（这也是这一节真正的价值：不是修一个问题，而是让"谁在报这一列"这件事收敛成一处）：
+  ① `tool list` / `tool status` 的 instance 文档（新增 `recorded_lifecycle_status` 保留那一列原值）；
+  ② `caps/runtime.py` 的 `RunTarget`；③ `cli.py` 的 `uninstall --dry-run` 报告；④ **`tool gc --plan` 的
+  候选列表**（`gc_candidates`）——第四处是我在实现中途审计读者时找到的，它当时会让同一份候选清单里两行都读
+  `active`，而只有一行带 `active_binding=` 证据。
+- **准入判据一个字都没改**：`installed` 仍然不是 `retired`，所以被取代的版本照旧不可回收、每条 blocker 的
+  理由照旧成立。变的只有那个词，而词原来是错的（blocker 文本现在是
+  `lifecycle_status=installed (must be retired first)`）。
+- **`tool status` 里那条 warning 删掉，不是降级成 info**：它是上面那个谎的症状，派生之后永远不会为真，
+  留着只会每跑一次多一行噪音。
+- **写侧不动**：不回写被取代那一行的列。那要动已发布的枚举与一次迁移，是另一件事；本仓库在 `health` 上
+  已经用过同样的分工（列是审计记录，投影说现在什么是真的）。
+- `registry/projection.py`（`state/registry.json`）**保持记录值**：登记/事件是 declared/historical 权威，
+  投影是它的镜像（AGENTS §5.4）。
+
+### 166.3 我自己的验收（含一次并发冲突，如实记录）
+
+- **修法前/后读数**（同一场景，装 9.9.9 → 9.9.10）：`tool list` 从"两行都 `active`"变成
+  `9.9.9 = installed / recorded_lifecycle_status="active" / active_binding=null`、`9.9.10 = active`；
+  被取代那行的 `tool status` 从 `exit 2 / DEGRADED / 一条 finding` 变成 **`exit 0 / SUCCESS / findings=[]`**；
+  **当前绑定的那一行一字不变**（新增字段只有 `recorded_lifecycle_status`）。手工把一行的记录值改成 `active`
+  而不给它任何绑定：同样读 `installed` + 记录值 `active`，注册表原值不变。
+- **验红**：实现方逐条做了 9 个字节级变异（每个都命中它该命中的守卫，收尾 `byte-exact: 4 files match the
+  pre-mutation checksums`）；**第四处（gc 候选）的那条守卫是我补的**（追加在同一个测试文件里），
+  我自己验红：把 `status = projected_lifecycle_status(...)` 改回原列 → `assert 'active' == 'installed'`
+  → 按字节写回。
+- **一次并发冲突（这是这一节的第 10 条发现，写在这里而不是藏起来）**：我在做第四处的验红时，实现方
+  也在同一批文件上跑它自己的变异驱动。它的基线**正好取在我 `break` 之后、`restore` 之前**，于是它每一轮
+  "恢复"写的都是我那份**故意改坏**的字节，最终在 `pattern occurs 0 times` 上崩掉。**没有任何工作丢失**
+  （两边写的是同一份字节），但它那一次验证结果作废，而我在它崩溃后才发现树上留着 `# RED PROOF`。
+  代价与教训：**同一个阶段不要让两个执行体同时改同一批文件**——变异验红这种"先破坏、再恢复"的手法尤其
+  不能并发；发现之后我停止了对那 4 个文件的写入、自己收尾，并在提交前用**内容**（而不是脚本自己打印的
+  `restored: identical`）重新核对了那一行。
+- **真机验收脚本我自己跑了**：`closed loop: PASS (0 failed check(s))`、`isolation: PASS (0 difference(s))`。
+- 全套：见 §166.4。
+
+### 166.4 成本
+
+| 项目 | 结果 |
+|---|---|
+| 测试 | **1435 → 1450**（+15：`cli/tests/test_f12_projected_lifecycle.py`，含我补的 gc 那条） |
+| 代码 | `caps/lifecycle.py`（+45/−1）、`caps/toolstate.py`、`caps/runtime.py`、`cli.py` |
+| 契约层 | **不动**（没有 schema 描述这四个报告面；`$defs.lifecycle` 的语义没改——这一版是**代码第一次真的按它说的做**） |
+| 语料 | **零变化**（实测：按规矩重生 `golden.py` 后 `git status` 里 `fixtures/golden/` 无条目；原因是那三个读侧报告根本不在语料里——`lifecycle_status` 的 fixture 全部来自 `Instance` 构造与 `registry-projection` 投影，而投影本阶段刻意不动） |
+| 文档 | `references/field-values.md` 的 `$defs.lifecycle` 那一格补上"读出来的值由代码派生、记录值在 `recorded_lifecycle_status`"；`AGENTS.md` 图谱里 `caps/toolstate.py` 的描述补一句 |
+| 既有期望被取代 | **0 条**（实现方逐条审计过：既有断言要么断言的是持有绑定的实例、要么断言的是注册表行/投影，都不受影响） |
+| 没有做 | 回写被取代那一行（要动枚举 + 迁移）；给这三个读侧报告**新增 golden fixture**——那是"44 个 fixture"这个计数的一个决定，我没有擅自做，**记在这里** |

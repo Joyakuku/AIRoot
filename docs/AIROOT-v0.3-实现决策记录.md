@@ -3496,7 +3496,68 @@ B/E 的 `STAGED` 分类、C 的共享注册规则），其中 C 的第一版守�
 
 **状态：已裁决并已落地（草案 §165）**：守卫是 `test_l1_launcher.py` 的 7 条、`test_l1_lifecycle.py` 的 4 条与
 `test_cli_lifecycle.py` 的 1 条；三处独立合成变异（孤儿不许说 `SUCCESS`、删不掉不许说 `SUCCESS`、repair 必须
-真写）各自命中它该命中的守卫。：A 的守卫是
+真写）各自命中它该命中的守卫。
+
+## ADR-0065 — **报出来的 `lifecycle_status` 由绑定派生，而记录的那一列留在 `recorded_lifecycle_status`**
+
+### 背景
+
+`instances.lifecycle_status` 是一列**记录**：`ACTIVE_BOUND` 只写**新进来那个** instance，`bind_active`
+只清掉被取代的那条绑定，**没有任何写者回头改被取代那一行**。于是同一份文档自己打自己（§164 的调查读数
+F12 §1.1，实测）：
+
+```text
+tool list → {"…9.9.10…","lifecycle_status":"active","active_binding":{…gen 2…}}
+            {"…9.9.9…", "lifecycle_status":"active","active_binding":null}
+tool status <被取代的 9.9.9> → exit 2 / DEGRADED
+            "lifecycle says active but no active binding exists for this instance"
+```
+
+而 `common.schema.json#/$defs.lifecycle` 对 `active` 的定义正是"has an active binding"。后果不是"文档没写清"，
+而是**每个被新版本取代过的旧版本**都会让 `tool status` 说"降级"，同时 `tool list` 里出现两行 `active`。
+§162 已经为 `health` 裁决过同一族的分工（列是记录、读者必须知道这一点），这一条把**有内部矛盾的那一个**
+字段也按同一分工处理。
+
+### 决定
+
+**读侧派生，且只有一份实现。** `caps.lifecycle.projected_lifecycle_status(registry, row, *, bound=None)`：
+持有 active binding → `active`；没有绑定而记录值是 `active`（被取代的行，或手工改过的库）→ `installed`
+（它确实已提交进 store，只是不再是被绑定那个）；其余记录值原样通过。**四个报告面全部改用它**：
+`tool list`/`tool status` 的 instance 文档、`run` 的 `RunTarget`、`uninstall --dry-run` 的报告、
+以及 `tool gc --plan` 的候选列表（第四处是实现中途审计读者时找到的，它当时会让候选清单里两行都读 `active`）。
+`tool list` 把"哪些实例持有 active binding"**算一次**传进推导（一个问题不该花两次扫描）。
+
+**记录值留在 `recorded_lifecycle_status`**（只在同时携带两个值的那份文档里加），审计要留得住原值。
+
+**那条 warning 删掉，而不是降级成 info**：它是这个矛盾的**症状**——派生之后它永远不会为真，留着只会
+每跑一次 `tool status` 多一行噪音。
+
+**写侧不动**：不回写被取代那一行的列。那要动已发布的枚举并写一次迁移，是另一件事；而且读侧派生已经
+让"报出来的是真的"成立。`registry/projection.py`（`state/registry.json`）同样保持记录值——登记/事件是
+declared/historical 权威，投影是它的镜像。
+
+**准入判据不动**：`tool gc` 的 `lifecycle_status != "retired"` 原样保留。派生值 `installed` 仍然不是
+`retired`，所以被取代的版本照旧不可回收、blocker 的理由照旧成立——**变的只有那个词，而词原来是错的**。
+
+### 代价
+
+- **一处对外 JSON 的变化**：被取代实例的 `lifecycle_status` 由 `active` 变成 `installed`，并新增
+  `recorded_lifecycle_status`。**语料零变化**（实测：按规矩重生 `golden.py` 后没有 fixture 改变；原因
+  是这四个报告面不在语料里，而语料里的 `lifecycle_status` 全部来自 `Instance` 构造与 `registry-projection`
+  投影，本阶段刻意不动）。契约层不动（没有 schema 描述这四个报告面）。
+- **一处不对称，写明白**：`health` 仍然是记录值（§162 的裁决），`lifecycle_status` 是派生值。理由不是
+  偏好：`lifecycle_status` 与同一份文档里的 `active_binding` **互相矛盾**，而 `health` 没有这种内部矛盾
+  ——它的问题是读者把它当成重测值，用文档说明解决。**两个字段背后的规则不一样，是因为它们错的方式不一样。**
+- **同一个阶段里的并发冲突被记进 §166.3**：两个执行体同时改同一批文件时，变异验红这种"先破坏、再恢复"
+  的手法会让彼此的基线互相污染（实测：一次验证作废、树上短暂留下故意改坏的一行）。没有工作丢失，
+  但这是一条**流程**教训，不是代码教训。
+- **没有做的**：回写被取代那一行（枚举 + 迁移）；给这四个读侧报告新增 golden fixture（那是"44 个 fixture"
+  这个计数的一个决定）。
+
+**状态：已裁决并已落地（草案 §166）**：守卫是 `cli/tests/test_f12_projected_lifecycle.py`（15 条，含
+"四个报告面都不许把原列当报告"的源码守卫、gc 的两条、"推导只扫一次绑定表"、以及"观察不写任何东西"）；
+实现方逐条做了 9 个字节级变异，第四处（gc 候选）的守卫由我补并自己验红；`real_machine_acceptance.py`
+在改动后重跑：`closed loop: PASS` / `isolation: PASS`。：A 的守卫是
 `test_l1_plan_routing.py::test_an_unanswered_plan_records_no_requested_scope`（两处断言 + 一处验红
 `assert 'machine' is None`）；B 落在 `references/field-values.md` 与 `SKILL.md` 两处。
 
