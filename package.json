@@ -1,6 +1,7 @@
 {
   "name": "dsh-airoot",
   "version": "0.1.1",
+  "license": "MIT",
   "type": "module",
   "main": "integrations/deepseek-harness/index.mjs",
   "files": [
@@ -8,10 +9,9 @@
     "integrations/deepseek-harness/bridge.mjs",
     "integrations/deepseek-harness/policy.mjs",
     "integrations/deepseek-harness/cordis.patch.yml",
-    "integrations/deepseek-harness/skills",
+    "integrations/deepseek-harness/skills/",
     "integrations/deepseek-harness/README.md",
-    "integrations/deepseek-harness/runtime",
-    "integrations/deepseek-harness/scripts"
+    "integrations/deepseek-harness/runtime/"
   ],
   "engines": {
     "node": ">=24",
@@ -26,9 +26,5 @@
     "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "~3.18.5",
     "@deepseek-ai/dsh-sandbox": "0.2.1-rc.2"
-  },
-  "scripts": {
-    "prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File integrations/deepseek-harness/scripts/prepare-runtime.ps1",
-    "test": "node --test integrations/deepseek-harness/test/*.test.mjs"
   }
 }

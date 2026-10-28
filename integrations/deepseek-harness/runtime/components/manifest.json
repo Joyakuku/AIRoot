@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "name": "Everything",
+      "file": "Everything.exe",
+      "version": "1.4.1.1032",
+      "sha256": "f191f756996a14a11e5445fa7103d302efd510cf2fbf920e6c0c8ed51d512e36"
+    },
+    {
+      "name": "es",
+      "file": "es.exe",
+      "version": "1.1.0.38",
+      "sha256": "f7378761cf6e01f51c4123a485e628d70e3fea147d341f473ce2820844e5cee5"
+    },
+    {
+      "name": "fd",
+      "file": "fd.exe",
+      "version": "10.5.0",
+      "sha256": "d67d27a8e375ed7e9bca2b506a9dd5082bc24547aeba908b863f6f8b8ab0c3b9"
+    },
+    {
+      "name": "PET",
+      "file": "pet.exe",
+      "version": "0.1.0-static-crt",
+      "sha256": "21ad4fba4db5701d6e63e74b5b789402cb3514aef524a321bdd3582a3266f9ca"
+    }
+  ]
+}

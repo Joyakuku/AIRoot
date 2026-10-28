@@ -2,7 +2,7 @@
 
 AIRoot 是面向 Windows 的本地环境与开发工具登记、发现和维护命令行工具。Rust 核心通过当前用户专用 IPC 后台进程协调操作，并使用 SQLite 保存登记、项目关联、扫描进度与恢复信息。
 
-**当前版本：0.1.1 preview。** 本仓库提供源码、构建脚本、DeepSeek Harness 集成和 Agent SKILL。完整首版仍有未完成的 Windows 与发布许可门槛；请参阅 [脱敏验收摘要](docs/release-acceptance-summary.md)。该摘要只说明已执行的验证，不构成产品认证或再分发授权。
+**当前版本：0.1.1 preview。** 完整首版认证仍有 Windows 验收门槛；请参阅[脱敏验收摘要](docs/release-acceptance-summary.md)。
 
 ## 构建与测试
 
@@ -12,9 +12,7 @@ AIRoot 是面向 Windows 的本地环境与开发工具登记、发现和维护�
 cargo fmt --all -- --check
 cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
-Push-Location integrations/deepseek-harness
-npm test
-Pop-Location
+node --test integrations/deepseek-harness/test/*.test.mjs
 ```
 
 准备锁定的搜索组件并构建离线预览安装包：
@@ -42,16 +40,10 @@ airoot operation show <操作ID>
 
 ## Harness 集成
 
-`integrations/deepseek-harness/` 提供 Harness 插件和 `skills/airoot/SKILL.md`。插件调用会遵循 Harness 的 sandbox 与 escalation 接口；后台模式当前要求有效的 `danger-full-access`。集成测试：
+`integrations/deepseek-harness/` 提供 Harness 插件和 `skills/airoot/SKILL.md`。在 DeepSeek Harness 添加 `https://github.com/Joyakuku/AIRoot` 即安装插件；包内已包含 AIRoot 与扫描组件运行时，不执行安装期构建脚本，也不要求用户调整 pnpm `allowBuilds`。支持的 Harness 版本和运行要求见集成说明。插件调用遵循 Harness sandbox 与 escalation 接口；后台模式要求有效的 `danger-full-access`。
 
-Harness 插件入口位于仓库根目录，可在 Harness 中添加 `https://github.com/Joyakuku/AIRoot`，也可添加本地仓库目录。安装准备会从源码构建并装配插件运行时，需要 Windows Rust MSVC 工具链；PET 所需 Microsoft Visual C++ runtime 未随 GitHub 源码分发，必须从已许可的本地来源提供。Harness 可能要求批准执行构建脚本。因此这不是干净机器上的零前置安装。公开再分发资格未确认前，不会把对应二进制提交到仓库。
-
-```powershell
-Push-Location integrations/deepseek-harness
-npm test
-Pop-Location
-```
+插件测试命令同上；GitHub 安装包不包含测试源码。
 
 ## 许可
 
-AIRoot 自有代码采用 MIT，版权归 Joyakuku，见 [LICENSE](LICENSE)。第三方组件和依赖不包含在 AIRoot 自有代码的 MIT 授权内；具体通知和许可文件见 `packaging/licenses/`。
+AIRoot 自有代码采用 MIT，版权归 Joyakuku，见 [LICENSE](LICENSE)。第三方组件和依赖分别遵循其许可，随插件包附带对应通知。

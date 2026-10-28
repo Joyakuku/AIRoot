@@ -4,13 +4,13 @@ Windows plugin bundle and Agent skill for AIRoot 0.1.1 preview. The package supp
 
 ## Install from GitHub
 
-In DeepSeek Harness, add `https://github.com/Joyakuku/AIRoot` as a plugin repository. The repository root contains the Harness package manifest and points to this integration. The install preparation builds AIRoot and assembles the bundled runtime.
+In DeepSeek Harness, add `https://github.com/Joyakuku/AIRoot` as a plugin repository. The repository root contains the package manifest and the complete, hash-pinned Windows runtime. Installation does not execute package build scripts and does not require Rust, Cargo, a local Visual C++ runtime source, or a pnpm `allowBuilds` change.
 
-This source install requires the Windows Rust MSVC toolchain. The pinned component set includes PET, whose Microsoft Visual C++ runtime is not checked into GitHub. If it is not already present in the generated component bundle, supply a licensed Visual Studio redist file through `AIROOT_VCRUNTIME_SOURCE` before installation. The script verifies component hashes and does not replace an existing invalid runtime bundle. Harness may require explicit approval to run the package build script.
+For a local checkout, add the repository root as the plugin directory. To inspect the exact package payload, run `npm pack --dry-run` from the repository root.
 
-Therefore, adding the GitHub repository is supported, but a clean machine is not yet a zero-prerequisite installation. No prebuilt executable or third-party runtime binary is distributed in this source repository.
+## Licensing
 
-For a local checkout, add the repository root as the plugin directory. To build an archive manually, run `npm pack` from the repository root and add the resulting archive to the Harness profile.
+The `MIT` package metadata and root `LICENSE` cover AIRoot-owned code only. Bundled executables and their dependencies remain under their respective licenses; notices are included under `integrations/deepseek-harness/runtime/components/licenses` and `integrations/deepseek-harness/runtime/licenses`. The PET executable is a static-CRT build of Microsoft's `python-environment-tools` project. Its binary hash is pinned in the runtime manifest; the source commit used to produce this existing binary was not recorded, so this package does not claim a reproducible source-to-binary build.
 
 ## Runtime behavior
 
@@ -22,4 +22,4 @@ All calls go through Harness's public confining Shell service and shared escalat
 
 ## Validation
 
-Run `npm test` from the repository root or this directory. The package remains preview and does not imply complete AIRoot first-release certification.
+From the repository root, run `node --test integrations/deepseek-harness/test/*.test.mjs`. Test sources are kept in the repository but excluded from the install package. Runtime component hashes are checked by AIRoot against the bundled manifest. The package remains preview and does not imply complete AIRoot first-release certification.
