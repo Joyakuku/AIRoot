@@ -2,6 +2,8 @@
 /work/
 /dist/
 /components/
+/integrations/deepseek-harness/runtime/
+/integrations/deepseek-harness/runtime-stage-*/
 /acceptance-*/
 *.log
 *.sqlite3

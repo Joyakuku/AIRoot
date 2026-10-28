@@ -18,6 +18,30 @@ test('call cannot replace deployment registry, including equals syntax', () => {
   }
 });
 
+test('commands without subcommands reject extra arguments', () => {
+  for (const command of ['status', 'capabilities']) {
+    assert.doesNotThrow(() => commandScript(config, [command]));
+    assert.throws(() => commandScript(config, [command, 'unexpected']));
+  }
+});
+
+test('platform commands enforce their actual CLI argument shapes', () => {
+  assert.doesNotThrow(() => commandScript(config, ['platform-discover', 'wsl']));
+  assert.doesNotThrow(() => commandScript(config, ['platform-discover', 'docker']));
+  assert.throws(() => commandScript(config, ['platform-discover']));
+  assert.throws(() => commandScript(config, ['platform-discover', 'other']));
+  assert.throws(() => commandScript(config, ['platform-discover', 'wsl', 'extra']));
+  assert.doesNotThrow(() => commandScript(config, ['platform-inspect', 'id', '--path', 'C:\\tool']));
+  assert.throws(() => commandScript(config, ['platform-inspect', 'id']));
+  assert.throws(() => commandScript(config, ['platform-inspect', 'id', '--other', 'C:\\tool']));
+});
+
+test('command groups require an allowed subcommand', () => {
+  for (const args of [['env'], ['tool'], ['project'], ['resource'], ['operation'], ['usage']]) {
+    assert.throws(() => commandScript(config, args));
+  }
+});
+
 test('resource program flags after separator retain their identity', () => {
   const script = commandScript(config, ['resource','run','test-id','--','--json','--data-root=program-value']);
   assert.match(script, /'--' '--json' '--data-root=program-value'$/);
@@ -39,6 +63,11 @@ test('plan payload is lossless JSON data, independent of PowerShell syntax', () 
 });
 
 function result(stdout, fields = {}) { return { isError: false, value: { kind:'foreground', stdout: { text: stdout, truncated:false }, ...fields } }; }
+function shellResult(stdout, fields = {}) { return { isError: false, value: { stdout: { text: stdout, truncated:false }, ...fields } }; }
+function opsBashResult(stdout, fields = {}) { return { isError: false, value: {
+  kind: 'foreground', status: 'completed', exitCode: 0, signal: null, aborted: false,
+  stdout: { text: stdout, truncated: false }, stderr: { text: '', truncated: false }, ...fields,
+} }; }
 test('AIRoot business errors remain failure envelopes', () => {
   const expected = { api_version: 1, ok: false, data: null, error: 'Resource is in use' };
   assert.deepEqual(readResponse(result(JSON.stringify(expected))), expected);
@@ -48,6 +77,34 @@ test('denied, incomplete and incompatible results cannot become successful respo
   for (const item of [{ isError:true,error:{message:'approval denied'} }, result(valid,{sandbox:{denied:true}}), result(valid,{timedOut:true}), result(valid,{kind:'promoted'}), result(valid,{stdout:{text:valid,truncated:true}}), result('{"api_version":2,"ok":true}')]) {
     assert.throws(() => readResponse(item));
   }
+});
+
+test('response parser preserves the actual Harness execution kind', () => {
+  const valid = JSON.stringify({ api_version:1, ok:true, data:42 });
+  const expected = { api_version:1, ok:true, data:42 };
+  assert.deepEqual(readResponse(result(valid)), expected);
+  assert.deepEqual(readResponse(shellResult(valid)), expected);
+  assert.deepEqual(readResponse(opsBashResult(valid)), expected);
+  for (const kind of ['background', 'promoted', 'unknown']) {
+    assert.throws(() => readResponse(result(valid, { kind })));
+    assert.throws(() => readResponse(shellResult(valid, { kind })));
+    assert.throws(() => readResponse(opsBashResult(valid, { kind })));
+  }
+});
+
+test('dsh-ops failed and incomplete foreground results are not parsed as AIRoot responses', () => {
+  const valid = JSON.stringify({ api_version:1, ok:true, data:42 });
+  for (const fields of [
+    { status: 'failed', failure: { code: 'command_failed' } },
+    { failure: { code: 'unknown_effect' } },
+    { error: 'spawn failed' },
+    { permission: 'denied' },
+    { restriction: 'sandbox' },
+    { aborted: true },
+    { signal: 'SIGTERM' },
+    { stdout: { text: valid, truncated: true } },
+    { stdout: undefined },
+  ]) assert.throws(() => readResponse(opsBashResult(valid, fields)));
 });
 
 test('explicit tool JSON remains literal, unverified and project-associated', () => {

@@ -44,6 +44,8 @@ airoot operation show <操作ID>
 
 `integrations/deepseek-harness/` 提供 Harness 插件和 `skills/airoot/SKILL.md`。插件调用会遵循 Harness 的 sandbox 与 escalation 接口；后台模式当前要求有效的 `danger-full-access`。集成测试：
 
+Harness 插件入口位于仓库根目录，可在 Harness 中添加 `https://github.com/Joyakuku/AIRoot`，也可添加本地仓库目录。安装准备会从源码构建并装配插件运行时，需要 Windows Rust MSVC 工具链；PET 所需 Microsoft Visual C++ runtime 未随 GitHub 源码分发，必须从已许可的本地来源提供。Harness 可能要求批准执行构建脚本。因此这不是干净机器上的零前置安装。公开再分发资格未确认前，不会把对应二进制提交到仓库。
+
 ```powershell
 Push-Location integrations/deepseek-harness
 npm test

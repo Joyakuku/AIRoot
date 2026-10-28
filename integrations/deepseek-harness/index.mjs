@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Schema from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { approveEscalation, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox';
@@ -9,7 +10,7 @@ import { commandScript, planScript, registerScript, readResponse } from './bridg
 export const name = 'airoot';
 export const inject = ['tools', 'shell', 'shellEnv', 'workingDirectory', 'sandboxPolicy'];
 export const Config = Schema.object({
-  executable: Schema.string().required(),
+  executable: Schema.string(),
   dataRoot: Schema.string(),
   informationRoot: Schema.string(),
   timeoutMs: Schema.number().default(60000),
@@ -20,7 +21,13 @@ export function apply(ctx, config) {
     if (config[field] !== undefined && !isAbsolute(config[field])) throw new Error(`${field} must be absolute`);
   }
   if (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0) throw new Error('timeoutMs must be positive');
-  const resolved = { ...config, informationRoot: config.informationRoot ?? config.dataRoot ?? join(homedir(), '.airoot') };
+  const pluginRoot = dirname(fileURLToPath(import.meta.url));
+  const resolved = {
+    ...config,
+    executable: config.executable ?? process.env.AIROOT_EXE ?? join(pluginRoot, 'runtime', 'airoot.exe'),
+    informationRoot: config.informationRoot ?? config.dataRoot ?? join(homedir(), '.airoot'),
+  };
+  if (!isAbsolute(resolved.executable)) throw new Error('Bundled AIRoot executable path must be absolute');
   const escalation = {
     sandbox_permissions: { type: 'string', description: 'Harness escalation target; AIRoot daemon access needs danger-full-access. After denial retry the exact call with justification through Harness approval.' },
     justification: { type: 'string', description: 'User-facing reason for the exact Harness escalation. Never a human deletion confirmation.' },
@@ -47,7 +54,7 @@ export function apply(ctx, config) {
       dshEnv: ctx.shellEnv.collect(exec), sandboxPolicy: policy, signal: exec.signal });
     const process = await ctx.shell.execute(spec);
     const value = await process.result();
-    return readResponse({ value: { ...value, kind: 'foreground' } });
+    return readResponse({ value });
   }
 
   const output = { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] };

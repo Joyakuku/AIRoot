@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 
 const allowed = {
-  status: null, capabilities: null,
+  status: [], capabilities: [],
   env: ['list', 'show'], tool: ['list', 'show'], project: ['show'],
   resource: ['find', 'run'], scan: ['start', 'status', 'pause', 'resume'],
   registry: ['add', 'verify', 'ignore', 'restore', 'backup'],
   operation: ['apply', 'show', 'recover', 'cleanup'],
   usage: ['list', 'acquire', 'release'], log: ['show'],
   components: ['status', 'service-plan', 'start', 'stop'], config: ['show', 'set'],
-  'platform-discover': null, 'platform-inspect': null,
+  'platform-discover': ['wsl', 'docker'], 'platform-inspect': null,
 };
 
 export function quote(value) {
@@ -30,7 +30,14 @@ export function commandScript(config, args) {
     throw new Error('args must be a nonempty array of strings without NUL');
   }
   const children = allowed[args[0]];
-  if (!Object.hasOwn(allowed, args[0]) || (children && !children.includes(args[1]))) {
+  if (!Object.hasOwn(allowed, args[0]) ||
+      (args[0] === 'status' && args.length !== 1) ||
+      (args[0] === 'capabilities' && args.length !== 1) ||
+      (args.length === 1 && children?.length > 0) ||
+      (args.length > 1 && children && !children.includes(args[1])) ||
+      (args[0] === 'platform-discover' && args.length !== 2) ||
+      (args[0] === 'platform-inspect' &&
+        (args.length !== 4 || !args[1] || args[2] !== '--path' || !args[3]))) {
     throw new Error('Unsupported AIRoot command; use airoot_plan for operation plan');
   }
   // Resource arguments after -- belong to the selected program, not to AIRoot.
@@ -61,7 +68,11 @@ export function planScript(config, request) {
 export function readResponse(result) {
   if (result?.isError) throw new Error(result.error?.message ?? 'Harness denied the delegated PowerShell call');
   const value = result?.value;
-  if (value?.kind !== 'foreground' || value.timedOut || value.aborted || value.stdout?.truncated) {
+  if ((value?.kind !== undefined && value.kind !== 'foreground') ||
+      (value?.status !== undefined && value.status !== 'completed') ||
+      value?.timedOut || value?.aborted || value?.cancelled || value?.signal ||
+      value?.error || value?.permission || value?.restriction || value?.failure ||
+      value?.stdout?.truncated || typeof value?.stdout?.text !== 'string') {
     throw new Error('No complete AIRoot response; inspect operation/status before repeating maintenance');
   }
   if (value.sandbox?.denied || value.sandbox?.runnerFailed) {

@@ -10,8 +10,9 @@ use std::{
     time::Duration,
 };
 pub fn executable(s: &Store, name: &str) -> Result<PathBuf> {
-    let manifest: Value = read_json(&s.config.component_dir.join("manifest.json"))?;
-    let path = verified_file(&manifest, &s.config.component_dir, name)?;
+    let component_dir = resolve_component_dir(&s.config.component_dir)?;
+    let manifest: Value = read_json(&component_dir.join("manifest.json"))?;
+    let path = verified_file(&manifest, &component_dir, name)?;
     if let Some(dependencies) = manifest["components"]
         .as_array()
         .and_then(|items| items.iter().find(|c| c["name"] == name))
@@ -20,7 +21,7 @@ pub fn executable(s: &Store, name: &str) -> Result<PathBuf> {
         for dependency in dependencies {
             verified_file(
                 &manifest,
-                &s.config.component_dir,
+                &component_dir,
                 dependency
                     .as_str()
                     .context("Invalid component dependency")?,
@@ -28,6 +29,27 @@ pub fn executable(s: &Store, name: &str) -> Result<PathBuf> {
         }
     }
     Ok(path)
+}
+
+fn resolve_component_dir(configured: &Path) -> Result<PathBuf> {
+    let executable = std::env::current_exe().context("Cannot locate AIRoot executable")?;
+    resolve_component_dir_from(configured, &executable)
+}
+
+fn resolve_component_dir_from(configured: &Path, executable: &Path) -> Result<PathBuf> {
+    if configured.join("manifest.json").is_file() {
+        return Ok(configured.to_path_buf());
+    }
+    for parent in executable.ancestors().take(6) {
+        let candidate = parent.join("components");
+        if candidate.join("manifest.json").is_file() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "Component manifest not found at configured path '{}' or beside AIRoot executable",
+        configured.display()
+    )
 }
 fn verified_file(manifest: &Value, component_dir: &Path, name: &str) -> Result<PathBuf> {
     let record = manifest["components"]
@@ -423,4 +445,39 @@ fn ipc_window(instance: &str, pid: u32) -> Result<bool> {
 #[cfg(not(windows))]
 fn ipc_window(_: &str, _: u32) -> Result<bool> {
     Ok(false)
+}
+
+#[cfg(test)]
+mod component_path_tests {
+    use super::resolve_component_dir_from;
+    use std::fs;
+
+    #[test]
+    fn missing_configured_path_falls_back_to_executable_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("app/runtime/airoot.exe");
+        let component_dir = temp.path().join("app/runtime/components");
+        fs::create_dir_all(&component_dir).unwrap();
+        fs::write(component_dir.join("manifest.json"), "{}").unwrap();
+        let configured = temp.path().join("old-install/components");
+
+        assert_eq!(
+            resolve_component_dir_from(&configured, &executable).unwrap(),
+            component_dir
+        );
+    }
+
+    #[test]
+    fn existing_configured_path_keeps_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let configured = temp.path().join("configured");
+        fs::create_dir_all(&configured).unwrap();
+        fs::write(configured.join("manifest.json"), "{}").unwrap();
+        let executable = temp.path().join("app/airoot.exe");
+
+        assert_eq!(
+            resolve_component_dir_from(&configured, &executable).unwrap(),
+            configured
+        );
+    }
 }

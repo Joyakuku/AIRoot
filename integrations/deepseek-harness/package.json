@@ -9,11 +9,13 @@
     "policy.mjs",
     "cordis.patch.yml",
     "skills",
-    "README.md"
+    "README.md",
+    "scripts",
+    "test"
   ],
   "engines": {
     "node": ">=24",
-    "dsh": "0.2.1-rc.2"
+    "dsh": ">=0.2.1-rc.2 <0.2.1-rc.4"
   },
   "dsh": {
     "bundle": {
