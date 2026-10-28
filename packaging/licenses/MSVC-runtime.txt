@@ -1,0 +1,11 @@
+Microsoft Visual C++ app-local release runtime for PET
+
+File: vcruntime140.dll; version: 14.29.30157.0
+Copyright Microsoft Corporation. All rights reserved.
+SHA256: 270ba17bf89cc2eb6e6ce536eb78e4614ab5499f653ab7e07fe9e3d33bf3b6e3
+Source: licensed Visual Studio 2019 redist tree, VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll. Original file is unmodified; Microsoft Authenticode verified Valid.
+
+Redistributable-code list: https://learn.microsoft.com/en-us/visualstudio/releases/2019/redistribution
+Original installed Redist notice is preserved in MSVC-Redist-original.txt.
+Redistribution is subject to the applicable Visual Studio license and its distributable-code conditions. The listed release runtime may be distributed unmodified by appropriately licensed users; no debug_nonredist files are included.
+This local preview records source and conditions; it is not a legal certification or a grant of additional rights. Public distribution requires the owner to verify applicable licensing.

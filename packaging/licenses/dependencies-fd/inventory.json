@@ -1,0 +1,368 @@
+[
+  {
+    "name": "aho-corasick",
+    "version": "1.1.4",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/aho-corasick"
+  },
+  {
+    "name": "anstream",
+    "version": "1.0.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "anstyle",
+    "version": "1.0.13",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "anstyle-parse",
+    "version": "1.0.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "anstyle-query",
+    "version": "1.1.5",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "anstyle-wincon",
+    "version": "3.0.11",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "anyhow",
+    "version": "1.0.104",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/dtolnay/anyhow"
+  },
+  {
+    "name": "argmax",
+    "version": "0.4.0",
+    "license": "MIT/Apache-2.0",
+    "repository": "https://github.com/sharkdp/argmax"
+  },
+  {
+    "name": "bitflags",
+    "version": "1.3.2",
+    "license": "MIT/Apache-2.0",
+    "repository": "https://github.com/bitflags/bitflags"
+  },
+  {
+    "name": "bitflags",
+    "version": "2.11.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/bitflags/bitflags"
+  },
+  {
+    "name": "bstr",
+    "version": "1.12.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/BurntSushi/bstr"
+  },
+  {
+    "name": "cfg-if",
+    "version": "1.0.4",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/cfg-if"
+  },
+  {
+    "name": "cfg_aliases",
+    "version": "0.2.1",
+    "license": "MIT",
+    "repository": "https://github.com/katharostech/cfg_aliases"
+  },
+  {
+    "name": "clap",
+    "version": "4.6.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/clap-rs/clap"
+  },
+  {
+    "name": "clap_builder",
+    "version": "4.6.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/clap-rs/clap"
+  },
+  {
+    "name": "clap_complete",
+    "version": "4.6.5",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/clap-rs/clap"
+  },
+  {
+    "name": "clap_derive",
+    "version": "4.6.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/clap-rs/clap"
+  },
+  {
+    "name": "clap_lex",
+    "version": "1.0.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/clap-rs/clap"
+  },
+  {
+    "name": "colorchoice",
+    "version": "1.0.4",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-cli/anstyle.git"
+  },
+  {
+    "name": "crossbeam-channel",
+    "version": "0.5.16",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "crossbeam-deque",
+    "version": "0.8.6",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "crossbeam-epoch",
+    "version": "0.9.18",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "crossbeam-utils",
+    "version": "0.8.21",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "ctrlc",
+    "version": "3.5.2",
+    "license": "MIT/Apache-2.0",
+    "repository": "https://github.com/Detegr/rust-ctrlc.git"
+  },
+  {
+    "name": "etcetera",
+    "version": "0.11.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/lunacookies/etcetera"
+  },
+  {
+    "name": "faccess",
+    "version": "0.2.4",
+    "license": "MIT",
+    "repository": "https://github.com/Freaky/faccess"
+  },
+  {
+    "name": "globset",
+    "version": "0.4.19",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/ripgrep/tree/master/crates/globset"
+  },
+  {
+    "name": "heck",
+    "version": "0.5.0",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/withoutboats/heck"
+  },
+  {
+    "name": "ignore",
+    "version": "0.4.31",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore"
+  },
+  {
+    "name": "is_terminal_polyfill",
+    "version": "1.70.2",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/polyfill-rs/is_terminal_polyfill"
+  },
+  {
+    "name": "jiff",
+    "version": "0.2.29",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/jiff"
+  },
+  {
+    "name": "jiff-tzdb",
+    "version": "0.1.6",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/jiff"
+  },
+  {
+    "name": "jiff-tzdb-platform",
+    "version": "0.1.3",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/jiff"
+  },
+  {
+    "name": "libc",
+    "version": "0.2.189",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/libc"
+  },
+  {
+    "name": "log",
+    "version": "0.4.29",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/log"
+  },
+  {
+    "name": "lscolors",
+    "version": "0.21.0",
+    "license": "MIT/Apache-2.0",
+    "repository": "https://github.com/sharkdp/lscolors"
+  },
+  {
+    "name": "memchr",
+    "version": "2.8.0",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/memchr"
+  },
+  {
+    "name": "nix",
+    "version": "0.30.1",
+    "license": "MIT",
+    "repository": "https://github.com/nix-rust/nix"
+  },
+  {
+    "name": "normpath",
+    "version": "1.5.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/dylni/normpath"
+  },
+  {
+    "name": "nu-ansi-term",
+    "version": "0.50.3",
+    "license": "MIT",
+    "repository": "https://github.com/nushell/nu-ansi-term"
+  },
+  {
+    "name": "once_cell",
+    "version": "1.21.3",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/matklad/once_cell"
+  },
+  {
+    "name": "once_cell_polyfill",
+    "version": "1.70.2",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/polyfill-rs/once_cell_polyfill"
+  },
+  {
+    "name": "proc-macro2",
+    "version": "1.0.106",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/dtolnay/proc-macro2"
+  },
+  {
+    "name": "quote",
+    "version": "1.0.45",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/dtolnay/quote"
+  },
+  {
+    "name": "regex",
+    "version": "1.12.4",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/regex"
+  },
+  {
+    "name": "regex-automata",
+    "version": "0.4.14",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/regex"
+  },
+  {
+    "name": "regex-syntax",
+    "version": "0.8.11",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/rust-lang/regex"
+  },
+  {
+    "name": "same-file",
+    "version": "1.0.6",
+    "license": "Unlicense/MIT",
+    "repository": "https://github.com/BurntSushi/same-file"
+  },
+  {
+    "name": "strsim",
+    "version": "0.11.1",
+    "license": "MIT",
+    "repository": "https://github.com/rapidfuzz/strsim-rs"
+  },
+  {
+    "name": "syn",
+    "version": "2.0.117",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/dtolnay/syn"
+  },
+  {
+    "name": "terminal_size",
+    "version": "0.4.3",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/eminence/terminal-size"
+  },
+  {
+    "name": "unicode-ident",
+    "version": "1.0.24",
+    "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+    "repository": "https://github.com/dtolnay/unicode-ident"
+  },
+  {
+    "name": "utf8parse",
+    "version": "0.2.2",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/alacritty/vte"
+  },
+  {
+    "name": "walkdir",
+    "version": "2.5.0",
+    "license": "Unlicense/MIT",
+    "repository": "https://github.com/BurntSushi/walkdir"
+  },
+  {
+    "name": "winapi",
+    "version": "0.3.9",
+    "license": "MIT/Apache-2.0",
+    "repository": "https://github.com/retep998/winapi-rs"
+  },
+  {
+    "name": "winapi-util",
+    "version": "0.1.11",
+    "license": "Unlicense OR MIT",
+    "repository": "https://github.com/BurntSushi/winapi-util"
+  },
+  {
+    "name": "windows-link",
+    "version": "0.2.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/microsoft/windows-rs"
+  },
+  {
+    "name": "windows-sys",
+    "version": "0.60.2",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/microsoft/windows-rs"
+  },
+  {
+    "name": "windows-sys",
+    "version": "0.61.2",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/microsoft/windows-rs"
+  },
+  {
+    "name": "windows-targets",
+    "version": "0.53.5",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/microsoft/windows-rs"
+  },
+  {
+    "name": "windows_x86_64_msvc",
+    "version": "0.53.1",
+    "license": "MIT OR Apache-2.0",
+    "repository": "https://github.com/microsoft/windows-rs"
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "name": "dsh-airoot",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "index.mjs",
+  "files": [
+    "index.mjs",
+    "bridge.mjs",
+    "policy.mjs",
+    "cordis.patch.yml",
+    "skills",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24",
+    "dsh": "0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.5",
+    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.2"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

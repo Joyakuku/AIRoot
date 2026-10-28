@@ -1,6 +1,0 @@
-{
-  "kind": "managed_tool",
-  "name": "fake-tool",
-  "test_only": true,
-  "version": "1.0.0"
-}
