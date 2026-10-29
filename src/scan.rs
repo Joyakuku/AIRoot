@@ -199,6 +199,10 @@ pub fn worker(shared: Shared, id: &str, deadline: Option<Instant>) -> Result<()>
                 !in_boundary(&path, &excluded),
                 "AIRoot data or component directory excluded"
             );
+            anyhow::ensure!(
+                !inside_component_bundle(&path),
+                "AIRoot bundled components excluded"
+            );
             Ok(path)
         });
         if let Err(error) = &checked {
@@ -215,7 +219,12 @@ pub fn worker(shared: Shared, id: &str, deadline: Option<Instant>) -> Result<()>
                         for entry in entries {
                             match entry {
                                 Ok(e) => match child_directory(&e, &mut skipped) {
-                                    Some(p) if in_boundary(&p, &roots) => children.push(p),
+                                    Some(p)
+                                        if in_boundary(&p, &roots)
+                                            && !inside_component_bundle(&p) =>
+                                    {
+                                        children.push(p);
+                                    }
                                     _ => {}
                                 },
                                 Err(e) => skipped.push(json!({"path":path,"reason":e.to_string()})),
@@ -316,6 +325,10 @@ pub fn find(shared: Shared, query: &str, roots: Vec<PathBuf>) -> Result<serde_js
                 !in_boundary(&p, &excluded),
                 "AIRoot data or component directory excluded"
             );
+            anyhow::ensure!(
+                !inside_component_bundle(&p),
+                "AIRoot bundled components excluded"
+            );
             Ok(p)
         });
         let p = match checked {
@@ -350,7 +363,9 @@ pub fn find(shared: Shared, query: &str, roots: Vec<PathBuf>) -> Result<serde_js
                 match entry {
                     Ok(entry) => {
                         if let Some(child) = child_directory(&entry, &mut skipped) {
-                            queue.push_back(child);
+                            if !inside_component_bundle(&child) {
+                                queue.push_back(child);
+                            }
                         }
                     }
                     Err(error) => skipped.push(json!({"path":p,"reason":error.to_string()})),
@@ -492,6 +507,26 @@ fn excluded_roots(s: &Store) -> Vec<PathBuf> {
     }
     roots
 }
+
+fn inside_component_bundle(path: &Path) -> bool {
+    path.ancestors().any(|ancestor| {
+        let Ok(bytes) = fs::read(ancestor.join("manifest.json")) else {
+            return false;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return false;
+        };
+        value["schema_version"] == 1
+            && value["components"].as_array().is_some_and(|items| {
+                !items.is_empty()
+                    && items.iter().all(|item| {
+                        item["name"].is_string()
+                            && item["file"].is_string()
+                            && item["sha256"].is_string()
+                    })
+            })
+    })
+}
 fn append_skipped(destination: &mut Vec<serde_json::Value>, entries: Vec<serde_json::Value>) {
     for entry in entries {
         if destination.len() < 1000 {
@@ -568,5 +603,60 @@ mod tests {
         let saved: Scan = store.get("scans", &scan.id).unwrap();
         assert_eq!(saved.providers[0]["status"], "pending");
         assert!(store.resources().unwrap().is_empty());
+    }
+
+    #[test]
+    fn scan_skips_conda_fixtures_and_airroot_component_bundles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("scan-root");
+        let conda_fixture = root.join("pet/tests/unix/conda-env");
+        fs::create_dir_all(conda_fixture.join("conda-meta")).unwrap();
+        fs::write(conda_fixture.join("conda-meta/history"), "fixture").unwrap();
+
+        let bundle = root.join("plugin/runtime/components");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::write(
+            bundle.join("manifest.json"),
+            r#"{"schema_version":1,"components":[{"name":"fd","file":"fd.exe","sha256":"abc"}]}"#,
+        )
+        .unwrap();
+        fs::write(bundle.join("fd.exe"), b"bundled component").unwrap();
+
+        let store = Store::open(&tmp.path().join("data")).unwrap();
+        let shared = Arc::new(Mutex::new(store));
+        let root = platform::canonical(&root).unwrap();
+        let scan = Scan {
+            id: id(),
+            status: "running".into(),
+            roots: vec![root.clone()],
+            visited: 0,
+            discovered: 0,
+            skipped: vec![],
+            providers: vec![],
+            coverage: Default::default(),
+            created_at: now(),
+            updated_at: now(),
+        };
+        {
+            let store = shared.lock().unwrap();
+            store.save("scans", &scan.id, &scan).unwrap();
+            store
+                .db
+                .execute(
+                    "INSERT INTO scan_queue(scan_id,path) VALUES(?1,?2)",
+                    params![scan.id, root.to_string_lossy()],
+                )
+                .unwrap();
+        }
+
+        worker(shared.clone(), &scan.id, None).unwrap();
+
+        let store = shared.lock().unwrap();
+        assert!(store.resources().unwrap().is_empty());
+        let completed: Scan = store.get("scans", &scan.id).unwrap();
+        assert!(matches!(
+            completed.status.as_str(),
+            "completed" | "completed_with_gaps"
+        ));
     }
 }

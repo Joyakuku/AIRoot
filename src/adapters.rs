@@ -17,13 +17,14 @@ pub fn inspect(path: &Path) -> Result<Vec<Resource>> {
     let p = path.to_string_lossy();
     let mut out = vec![];
     if path.is_dir() {
-        let (kind, entry) = if path.join("conda-meta/history").is_file() {
-            ("conda", path.join("python.exe"))
-        } else if path.join("pyvenv.cfg").is_file() {
-            ("venv", path.join("Scripts/python.exe"))
-        } else {
-            ("", path.join("python.exe"))
-        };
+        let (kind, entry) =
+            if path.join("conda-meta/history").is_file() && path.join("python.exe").is_file() {
+                ("conda", path.join("python.exe"))
+            } else if path.join("pyvenv.cfg").is_file() {
+                ("venv", path.join("Scripts/python.exe"))
+            } else {
+                ("", path.join("python.exe"))
+            };
         if !kind.is_empty() {
             let mut r = Resource::new("env", kind, &name, &p);
             r.entry = entry.is_file().then(|| entry.to_string_lossy().into());
@@ -295,4 +296,34 @@ pub fn capabilities() -> Value {
      {"kind":"wsl","discovery":"platform-discover wsl","operations":["import-wsl"],"unsupported":["automatic unregister; WSL unregister addresses a reusable distribution name and cannot bind the registered identity atomically"],"status":"Discovery/internal lookup tested; import tested in isolation; system enablement remains external high-risk preparation"},
      {"kind":"docker-runtime","discovery":"platform-discover docker","operations":["pull-image","create-container","start","stop","container-delete-with-backup","image-delete"],"status":"local named-pipe context only; live engine validation pending"}
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conda_history_without_windows_interpreter_is_not_a_host_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("unix-conda-fixture");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        fs::write(prefix.join("conda-meta/history"), "# unix test fixture").unwrap();
+
+        let resources = inspect(&prefix).unwrap();
+
+        assert!(!resources.iter().any(|r| r.kind == "conda"));
+    }
+
+    #[test]
+    fn conda_prefix_with_windows_interpreter_is_discovered() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("real-conda-prefix");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        fs::write(prefix.join("conda-meta/history"), "# conda history").unwrap();
+        fs::write(prefix.join("python.exe"), b"fixture executable").unwrap();
+
+        let resources = inspect(&prefix).unwrap();
+
+        assert!(resources.iter().any(|r| r.kind == "conda"));
+    }
 }
